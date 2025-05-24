@@ -1,0 +1,141 @@
+2025-05-24 11:46:28,063 - root - INFO - Logging setup complete.
+2025-05-24 11:46:28,063 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 11:46:28,206 - database - INFO - Database tables checked/created successfully.
+2025-05-24 11:46:28,207 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 11:46:28,212 - visualizations - INFO - Visualizer initialized.
+2025-05-24 11:46:28,694 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 11:46:28,695 - __main__ - INFO - Starting interactive mode
+2025-05-24 11:47:13,582 - __main__ - INFO - Application finished
+2025-05-24 11:47:26,874 - root - INFO - Logging setup complete.
+2025-05-24 11:47:26,874 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 11:47:26,878 - database - INFO - Database tables checked/created successfully.
+2025-05-24 11:47:26,879 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 11:47:26,881 - visualizations - INFO - Visualizer initialized.
+2025-05-24 11:47:28,586 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 11:47:28,587 - __main__ - INFO - Starting interactive mode
+2025-05-24 11:47:41,534 - portfolio_tracker - INFO - Starting data synchronization...
+2025-05-24 11:47:51,551 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=10)
+2025-05-24 11:47:51,553 - portfolio_tracker - WARNING - Binance transaction fetching is a placeholder.
+2025-05-24 11:47:51,554 - portfolio_tracker - INFO - Data synchronization finished.
+2025-05-24 11:47:51,554 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 11:47:51,776 - portfolio_tracker - ERROR - Error fetching Binance balances: APIError(code=-2014): API-key format invalid.
+2025-05-24 11:48:38,474 - __main__ - INFO - Application finished
+2025-05-24 12:03:12,058 - root - INFO - Logging setup complete.
+2025-05-24 12:03:12,059 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 12:03:12,063 - database - INFO - Database tables checked/created successfully.
+2025-05-24 12:03:12,063 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 12:03:12,065 - visualizations - INFO - Visualizer initialized.
+2025-05-24 12:03:14,047 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 12:03:14,047 - __main__ - INFO - Starting interactive mode
+2025-05-24 12:03:24,696 - portfolio_tracker - INFO - Starting data synchronization...
+2025-05-24 12:03:34,713 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=10)
+2025-05-24 12:03:34,716 - portfolio_tracker - WARNING - Binance transaction fetching is a placeholder.
+2025-05-24 12:03:34,717 - portfolio_tracker - INFO - Data synchronization finished.
+2025-05-24 12:03:34,717 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:03:35,358 - portfolio_tracker - INFO - Fetched 7 balances from Binance.
+2025-05-24 12:03:35,359 - portfolio_tracker - WARNING - No CoinGecko ID for LDBTC.
+2025-05-24 12:03:35,360 - portfolio_tracker - WARNING - No CoinGecko ID for LDUSDT.
+2025-05-24 12:03:35,360 - portfolio_tracker - WARNING - No CoinGecko ID for LDETH.
+2025-05-24 12:03:35,360 - portfolio_tracker - WARNING - No CoinGecko ID for LDSOL.
+2025-05-24 12:03:35,360 - portfolio_tracker - WARNING - No CoinGecko ID for LDPEPE.
+2025-05-24 12:03:35,361 - portfolio_tracker - WARNING - No CoinGecko ID for RENDER.
+2025-05-24 12:03:35,361 - portfolio_tracker - WARNING - No CoinGecko ID for LDHMSTR.
+2025-05-24 12:03:35,367 - portfolio_tracker - INFO - Metrics Calculated: Total Value = $0.00
+2025-05-24 12:28:08,257 - __main__ - INFO - Application finished
+2025-05-24 12:28:17,507 - root - INFO - Logging setup complete.
+2025-05-24 12:28:17,507 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 12:28:17,511 - database - INFO - Database tables checked/created successfully.
+2025-05-24 12:28:17,511 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 12:28:17,513 - visualizations - INFO - Visualizer initialized.
+2025-05-24 12:28:32,538 - portfolio_tracker - ERROR - Failed to init Binance client: HTTPSConnectionPool(host='api.binance.com', port=443): Max retries exceeded with url: /api/v3/ping (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x7d690e9977d0>: Failed to resolve 'api.binance.com' ([Errno -3] Temporary failure in name resolution)"))
+2025-05-24 12:28:32,539 - __main__ - INFO - Starting interactive mode
+2025-05-24 12:29:13,688 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:29:13,696 - root - ERROR - Error in interactive mode: 'str' object has no attribute 'strftime'
+2025-05-24 12:29:27,201 - portfolio_tracker - INFO - Starting data synchronization...
+2025-05-24 12:29:27,203 - portfolio_tracker - WARNING - Binance transaction fetching is a placeholder.
+2025-05-24 12:29:27,204 - portfolio_tracker - INFO - Data synchronization finished.
+2025-05-24 12:29:27,205 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:29:40,397 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:29:40,408 - root - ERROR - Error in interactive mode: 'str' object has no attribute 'strftime'
+2025-05-24 12:31:24,640 - __main__ - INFO - Application finished
+2025-05-24 12:31:32,909 - root - INFO - Logging setup complete.
+2025-05-24 12:31:32,909 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 12:31:32,913 - database - INFO - Database tables checked/created successfully.
+2025-05-24 12:31:32,914 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 12:31:32,916 - visualizations - INFO - Visualizer initialized.
+2025-05-24 12:31:45,265 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 12:31:45,265 - __main__ - INFO - Starting interactive mode
+2025-05-24 12:31:52,642 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:32:12,682 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=20)
+2025-05-24 12:32:12,684 - root - ERROR - Error in interactive mode: 'str' object has no attribute 'strftime'
+2025-05-24 12:35:16,476 - __main__ - INFO - Application finished
+2025-05-24 12:35:22,041 - root - INFO - Logging setup complete.
+2025-05-24 12:35:22,042 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 12:35:22,046 - database - INFO - Database tables checked/created successfully.
+2025-05-24 12:35:22,046 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 12:35:22,048 - visualizations - INFO - Visualizer initialized.
+2025-05-24 12:35:42,073 - portfolio_tracker - ERROR - Failed to init Binance client: HTTPSConnectionPool(host='api.binance.com', port=443): Max retries exceeded with url: /api/v3/ping (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x7c38344ac5f0>: Failed to resolve 'api.binance.com' ([Errno -3] Temporary failure in name resolution)"))
+2025-05-24 12:35:42,073 - __main__ - INFO - Starting interactive mode
+2025-05-24 12:35:52,650 - portfolio_tracker - INFO - Starting data synchronization...
+2025-05-24 12:35:52,653 - portfolio_tracker - WARNING - Binance transaction fetching is a placeholder.
+2025-05-24 12:35:52,653 - portfolio_tracker - INFO - Data synchronization finished.
+2025-05-24 12:35:52,654 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:35:59,416 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:38:15,886 - portfolio_tracker - ERROR - CoinGecko price fetch error for bitcoin: HTTPSConnectionPool(host='api.coingecko.com', port=443): Max retries exceeded with url: /api/v3/simple/price?ids=bitcoin&vs_currencies=usd (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x7c3834580050>: Failed to resolve 'api.coingecko.com' ([Errno -3] Temporary failure in name resolution)"))
+2025-05-24 12:40:45,475 - __main__ - INFO - Application finished
+2025-05-24 12:58:56,850 - root - INFO - Logging setup complete.
+2025-05-24 12:58:56,850 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 12:58:56,855 - database - INFO - Database tables checked/created successfully.
+2025-05-24 12:58:56,856 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 12:58:56,858 - visualizations - INFO - Visualizer initialized.
+2025-05-24 12:58:57,517 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 12:58:57,517 - __main__ - INFO - Starting interactive mode
+2025-05-24 12:59:16,481 - portfolio_tracker - INFO - Starting data synchronization...
+2025-05-24 12:59:36,506 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=20)
+2025-05-24 12:59:36,508 - portfolio_tracker - WARNING - Binance transaction fetching is a placeholder.
+2025-05-24 12:59:36,509 - portfolio_tracker - INFO - Data synchronization finished.
+2025-05-24 12:59:36,509 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 12:59:38,800 - portfolio_tracker - INFO - Fetched 8 balances from Binance.
+2025-05-24 12:59:47,049 - portfolio_tracker - WARNING - No CoinGecko ID for LDUSDT.
+2025-05-24 12:59:47,050 - portfolio_tracker - WARNING - No CoinGecko ID for LDETH.
+2025-05-24 12:59:47,051 - portfolio_tracker - WARNING - No CoinGecko ID for LDSOL.
+2025-05-24 12:59:47,052 - portfolio_tracker - WARNING - No CoinGecko ID for PEPE.
+2025-05-24 12:59:47,052 - portfolio_tracker - WARNING - No CoinGecko ID for LDPEPE.
+2025-05-24 13:00:02,102 - portfolio_tracker - WARNING - No CoinGecko ID for LDHMSTR.
+2025-05-24 13:00:02,120 - portfolio_tracker - INFO - Metrics Calculated: Total Value = $74.61
+2025-05-24 13:00:45,335 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 13:01:05,363 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=20)
+2025-05-24 13:03:31,099 - __main__ - INFO - Application finished
+2025-05-24 13:15:01,090 - root - INFO - Logging setup complete.
+2025-05-24 13:15:01,090 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 13:15:01,095 - database - INFO - Database tables checked/created successfully.
+2025-05-24 13:15:01,095 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 13:15:01,097 - visualizations - INFO - Visualizer initialized.
+2025-05-24 13:15:06,957 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 13:15:06,958 - __main__ - INFO - Starting interactive mode
+2025-05-24 13:17:39,426 - portfolio_tracker - ERROR - CoinGecko price fetch error for tether: HTTPSConnectionPool(host='api.coingecko.com', port=443): Max retries exceeded with url: /api/v3/simple/price?ids=tether&vs_currencies=usd (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x765ee9b183b0>: Failed to resolve 'api.coingecko.com' ([Errno -3] Temporary failure in name resolution)"))
+2025-05-24 13:18:58,977 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 13:19:59,056 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=60)
+2025-05-24 13:21:56,772 - __main__ - INFO - Application finished
+2025-05-24 13:22:01,208 - root - INFO - Logging setup complete.
+2025-05-24 13:22:01,208 - __main__ - INFO - Starting Crypto Portfolio Tracker
+2025-05-24 13:22:01,212 - database - INFO - Database tables checked/created successfully.
+2025-05-24 13:22:01,212 - database - INFO - Database initialized at: data/portfolio.db
+2025-05-24 13:22:01,214 - visualizations - INFO - Visualizer initialized.
+2025-05-24 13:22:01,907 - portfolio_tracker - INFO - Binance client initialized.
+2025-05-24 13:22:01,907 - __main__ - INFO - Starting interactive mode
+2025-05-24 13:22:19,043 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 13:22:19,352 - portfolio_tracker - INFO - Fetched 8 balances from Binance.
+2025-05-24 13:22:30,531 - portfolio_tracker - ERROR - CoinGecko price fetch error for hamster-kombat: 429 Client Error: Too Many Requests for url: https://api.coingecko.com/api/v3/simple/price?ids=hamster-kombat&vs_currencies=usd
+2025-05-24 13:22:31,546 - portfolio_tracker - INFO - Metrics Calculated: Total Value = $104.75
+2025-05-24 13:23:48,891 - portfolio_tracker - INFO - Starting data synchronization...
+2025-05-24 13:24:48,920 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=60)
+2025-05-24 13:24:48,921 - portfolio_tracker - WARNING - Binance transaction fetching is a placeholder.
+2025-05-24 13:24:48,921 - portfolio_tracker - INFO - Data synchronization finished.
+2025-05-24 13:24:48,922 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 13:24:49,214 - portfolio_tracker - INFO - Fetched 8 balances from Binance.
+2025-05-24 13:25:01,746 - portfolio_tracker - INFO - Metrics Calculated: Total Value = $107.88
+2025-05-24 13:25:48,369 - portfolio_tracker - INFO - Calculating portfolio metrics...
+2025-05-24 13:26:48,444 - portfolio_tracker - ERROR - Error fetching Binance balances: HTTPSConnectionPool(host='api.binance.com', port=443): Read timed out. (read timeout=60)
+2025-05-24 13:26:48,446 - portfolio_tracker - WARNING - No holdings data for chart generation.
+2025-05-24 13:27:27,844 - __main__ - INFO - Application finished
