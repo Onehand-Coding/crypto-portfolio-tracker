@@ -50,6 +50,7 @@ class HtmlExporter(Exporter):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config); self.html_config = self.config.get("formats", {}).get("html", {})
         templates_path = Path(__file__).parent / "templates"
+        templates_path.mkdir(exist_ok=True, parents=True)
         self.jinja_env = Environment(loader=FileSystemLoader(templates_path))
 
     def export(self, metrics: Dict[str, Any], **kwargs):

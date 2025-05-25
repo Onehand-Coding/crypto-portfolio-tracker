@@ -3,8 +3,10 @@
 Crypto Portfolio Tracker - Main Entry Point
 Entry point for the cryptocurrency portfolio tracking application.
 """
+import os
 import sys
 import logging
+import platform
 import argparse
 from pathlib import Path
 
@@ -13,6 +15,11 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from portfolio_tracker import CryptoPortfolioTracker
 from config import setup_logging, load_config
+
+
+def clear_screen() -> None:
+    """Clears the terminal screen."""
+    os.system('cls' if platform.system() == "Windows" else 'clear')
 
 
 def create_argument_parser():
@@ -93,16 +100,17 @@ def show_interactive_menu():
     print("3. 📋 Export Reports Only")
     print("4. 📈 Generate Charts Only")
     print("5. 💾 Export Data Backup")
-    print("6. ⚙️ View Configuration")
+    print("6. ⚙️  View Configuration")
     print("7. 🧹 Clean Old Data")
-    print("8. 🔧 Test API Connections")
-    print("9. ❌ Exit")
+    print("8. ⚖️  View Rebalance Suggestions (Cost Basis)")
+    print("9. 🔧 Test API Connections")
+    print("10. ❌ Exit")
     print("="*50)
 
     while True:
         try:
-            choice = input("\nSelect option (1-9): ").strip()
-            if choice in ['1', '2', '3', '4', '5', '6', '7', '8', '9']:
+            choice = input("\nSelect option (1-10): ").strip()
+            if choice in [str(i) for i in range(1, 11)]:
                 return int(choice)
             else:
                 print("❌ Invalid choice. Please select 1-9.")
@@ -117,6 +125,7 @@ def show_interactive_menu():
 def run_interactive_mode(tracker):
     """Run the application in interactive mode"""
     while True:
+        # clear_screen()
         choice = show_interactive_menu()
 
         try:
@@ -160,11 +169,20 @@ def run_interactive_mode(tracker):
                 input("\n✅ Cleanup completed. Press Enter to continue...")
 
             elif choice == 8:
+                print("\n⚖️  Generating rebalance suggestions (Cost Basis)...")
+                suggestions_df = tracker.get_rebalance_suggestions_by_cost()
+                if suggestions_df is not None:
+                    print(suggestions_df.to_string(index=False))
+                else:
+                    print("Could not generate suggestions (Check logs - cost basis likely missing).")
+                input("\n✅ Press Enter to continue...")
+
+            elif choice == 9:
                 print("\n🔧 Testing API connections...")
                 tracker.test_connections()
                 input("\n✅ Test completed. Press Enter to continue...")
 
-            elif choice == 9:
+            elif choice == 10:
                 print("\n👋 Thank you for using Crypto Portfolio Tracker!")
                 break
 
@@ -175,6 +193,7 @@ def run_interactive_mode(tracker):
             logging.error(f"Error in interactive mode: {e}")
             print(f"\n❌ Error: {e}")
             input("Press Enter to continue...")
+            clear_screen()
 
 
 def main():

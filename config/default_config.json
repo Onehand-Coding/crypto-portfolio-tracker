@@ -4,7 +4,7 @@
     "BTC": 0.40,
     "ETH": 0.25,
     "SOL": 0.15,
-    "RNDR": 0.10,
+    "RENDER": 0.10,
     "TAO": 0.10
   },
   "apis": {
@@ -70,6 +70,11 @@
     "rebalance_threshold_percent": 2.0,
     "cost_basis_method": "fifo"
   },
+  "rebalancing_strategy": {
+    "base_on_cost": true,
+    "allow_selling": true,
+    "never_sell_symbols": ["BTC", "ETH"]
+  },
   "visualization": {
     "chart_style": "seaborn-v0_8",
     "color_palette": "husl",
@@ -106,18 +111,11 @@
       "TAO": "bittensor",
       "PEPE": "pepe",
       "LDPEPE": "pepe",
-      "ADA": "cardano",
-      "DOT": "polkadot",
-      "LINK": "chainlink",
-      "MATIC": "polygon",
-      "AVAX": "avalanche-2",
-      "ATOM": "cosmos",
-      "NEAR": "near",
-      "FTM": "fantom",
-      "ALGO": "algorand",
-      "XTZ": "tezos",
       "HMSTR": "hamster-kombat",
       "LDHMSTR": "hamster-kombat"
     }
+  },
+  "symbol_normalization_map": {
+    "RENDER": "RNDR"
   }
 }

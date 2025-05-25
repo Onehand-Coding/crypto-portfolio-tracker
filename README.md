@@ -17,6 +17,7 @@ A comprehensive cryptocurrency portfolio tracking tool that connects to Binance 
 ```
 crypto-portfolio-tracker/
 ├── src/
+│   ├── templates/                  # Directory for HTML exporter templates
 │   ├── __init__.py
 │   ├── portfolio_tracker.py       # Main tracker class
 │   ├── config.py                  # Configuration management
@@ -24,14 +25,16 @@ crypto-portfolio-tracker/
 │   ├── exporters.py               # Export functionality
 │   └── visualizations.py          # Chart generation
 ├── config/
-│   ├── .env.example              # Environment variables template
-│   └── default_config.json       # Default configuration
-├── data/                         # Database and exports
-├── logs/                         # Application logs
-├── requirements.txt              # Python dependencies
-├── README.md                     # This file
-├── main.py                       # Entry point
-└── setup.py                      # Installation script
+│   ├── .env.example               # Environment variables template
+│   └── default_config.json        # Default configuration
+├── data/                          # Database and exports
+│   └── exports/                   # Reports output directory (CSV, XLSX, HTML)
+│
+├── logs/                          # Application logs
+├── requirements.txt               # Python dependencies
+├── README.md                      # This file
+├── main.py                        # Entry point
+└── setup.py                       # Installation script
 ```
 
 ## 🛠 Installation
@@ -116,8 +119,8 @@ Options:
   --export-only        Export existing data only
   --charts-only        Generate charts only
   --format FORMAT      Export format (excel|html|csv|all)
-  --verbose           Enable verbose logging
-  --config CONFIG     Custom config file path
+  --verbose            Enable verbose logging
+  --config CONFIG      Custom config file path
 ```
 
 ### Interactive Menu
@@ -138,8 +141,11 @@ Crypto Portfolio Tracker v2.0
 5. 💾 Export Data Backup
 6. ⚙️  View Configuration
 7. 🧹 Clean Old Data
+8. ⚖️  View Rebalance Suggestions (Cost Basis)
+9. 🔧 Test API Connections
+10. ❌ Exit
 
-Select option (1-7):
+Select option (1-10):
 ```
 
 ### Programmatic Usage
