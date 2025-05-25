@@ -25,58 +25,103 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
     """
     Calculates current quantity and average cost basis using FIFO.
     Assumes transactions_df is for a single asset, sorted by timestamp.
-    NOTE: Simplified version - ignores fees, non-USD pairs, deposits/withdrawals.
+    Incorporates fee_usd into the cost of BUY/DEPOSIT transactions.
     """
-    buy_lots = deque()  # Queue to store {'qty': quantity, 'price': price_usd_per_unit}
+    buy_lots = deque()  # Queue to store {'qty': quantity, 'price': effective_price_usd_per_unit}
     current_quantity = 0.0
-    total_cost_basis = 0.0
-    logger = logging.getLogger(__name__) # Use logger if available
+    total_cost_basis = 0.0 # This will track the cost basis of *remaining* lots
+    logger = logging.getLogger(__name__)
 
     if transactions_df.empty:
+        logger.debug(f"No transactions provided to calculate_fifo_cost_basis for symbol {transactions_df['symbol'].iloc[0] if not transactions_df.empty else 'Unknown'}. Returning 0, 0.")
         return 0.0, 0.0
 
-    # Ensure it's sorted
+    # Ensure correct dtypes and sorting
+    transactions_df = transactions_df.copy()
+    transactions_df['timestamp'] = pd.to_datetime(transactions_df['timestamp'], errors='coerce')
     transactions_df = transactions_df.sort_values(by='timestamp').reset_index(drop=True)
 
+    if transactions_df['timestamp'].isna().any():
+        logger.warning(f"Found NaT timestamps for symbol {transactions_df['symbol'].iloc[0] if not transactions_df.empty else 'Unknown'} after coercion. Dropping these rows for FIFO.")
+        transactions_df.dropna(subset=['timestamp'], inplace=True)
+        if transactions_df.empty:
+            logger.warning(f"All transactions dropped for symbol due to NaT timestamps. Returning 0, 0.")
+            return 0.0,0.0
+
     for _, row in transactions_df.iterrows():
-        tx_type = row['type']
-        quantity = row['quantity']
-        price = row.get('price_usd') # Already uses .get()
+        tx_type = row.get('type')
+
+        try:
+            quantity = float(row.get('quantity', 0.0))
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid quantity '{row.get('quantity')}' for tx {row.get('transaction_hash')}. Using 0.0.")
+            quantity = 0.0
+
+        if quantity == 0.0 and tx_type in ['BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL']:
+            logger.debug(f"Skipping zero quantity {tx_type} transaction: {row.get('transaction_hash')}")
+            continue
+
+        price = row.get('price_usd')
+
+        fee_usd = row.get('fee_usd', 0.0)
+        if pd.isna(fee_usd) or not isinstance(fee_usd, (int, float)):
+            logger.debug(f"Invalid or missing fee_usd ('{row.get('fee_usd')}') for tx {row.get('transaction_hash')}. Using 0.0 for fee_usd.")
+            fee_usd = 0.0
+        else:
+            try:
+                fee_usd = float(fee_usd)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not convert fee_usd '{row.get('fee_usd')}' to float for tx {row.get('transaction_hash')}. Using 0.0 for fee_usd.")
+                fee_usd = 0.0
 
         if tx_type == 'BUY' or tx_type == 'DEPOSIT':
-            if price is None or price < 0: # Allow $0 price for gifts/airdrops
-                logger.warning(f"{tx_type} tx for {row.get('symbol', 'N/A')} has invalid/missing price: {row.get('transaction_hash', 'N/A')}. Using $0 cost for this lot.")
-                price = 0.0 # Treat as $0 cost
+            actual_tx_price_usd = 0.0
+            if price is not None and isinstance(price, (int, float)) and price > 0:
+                actual_tx_price_usd = float(price)
+            elif price == 0.0 and tx_type == 'DEPOSIT':
+                actual_tx_price_usd = 0.0
+            elif price is None or not isinstance(price, (int, float)) or price <=0 :
+                logger.warning(f"{tx_type} tx for {row.get('symbol', 'N/A')} (ID: {row.get('transaction_hash', 'N/A')}) "
+                               f"has invalid/missing price ({price}). Using $0 price component for this lot.")
+                actual_tx_price_usd = 0.0
 
-            buy_lots.append({'qty': quantity, 'price': price})
+            # <<< FEE INCORPORATION FOR BUYS/DEPOSITS >>>
+            cost_for_this_transaction_lot = (quantity * actual_tx_price_usd) + fee_usd
+            effective_price_per_unit = cost_for_this_transaction_lot / quantity if quantity > 0 else 0.0 # Price per unit *including* fee
+
+            buy_lots.append({'qty': quantity, 'price': effective_price_per_unit})
             current_quantity += quantity
-            total_cost_basis += quantity * price
+            total_cost_basis += cost_for_this_transaction_lot # Add full cost (value + fee)
 
         elif tx_type == 'SELL' or tx_type == 'WITHDRAWAL':
-            sell_qty = quantity # For withdrawals, it's the quantity withdrawn
+            sell_qty = quantity
             current_quantity -= sell_qty
 
             while sell_qty > 0 and buy_lots:
                 oldest_buy = buy_lots[0]
+                # oldest_buy['price'] is the effective_price_per_unit from its acquisition (already includes its buy fee)
+
                 if oldest_buy['qty'] <= sell_qty:
-                    qty_to_remove = oldest_buy['qty']
-                    cost_to_remove = oldest_buy['qty'] * oldest_buy['price']
-                    total_cost_basis -= cost_to_remove
-                    sell_qty -= qty_to_remove
+                    qty_removed_from_lot = oldest_buy['qty']
+                    cost_basis_removed = qty_removed_from_lot * oldest_buy['price']
+                    total_cost_basis -= cost_basis_removed
+                    sell_qty -= qty_removed_from_lot
                     buy_lots.popleft()
                 else:
-                    cost_to_remove = sell_qty * oldest_buy['price']
-                    # This was a bug in a previous version from the diff, it should be cost_to_remove
-                    total_cost_basis -= cost_to_remove
+                    cost_basis_removed = sell_qty * oldest_buy['price']
+                    total_cost_basis -= cost_basis_removed
                     oldest_buy['qty'] -= sell_qty
                     sell_qty = 0
 
             if sell_qty > 0:
-                logger.warning(f"{tx_type} of {sell_qty} {row.get('symbol', 'N/A')} more than BUY/DEPOSIT history. Check txs.")
+                logger.warning(f"{tx_type} of {sell_qty} {row.get('symbol', 'N/A')} more than available from history. Cost basis may be affected.")
 
         total_cost_basis = max(0, total_cost_basis)
 
     average_cost_basis = total_cost_basis / current_quantity if current_quantity > 0 else 0.0
+    current_quantity = max(0, current_quantity)
+
+    logger.debug(f"FIFO Result for {transactions_df['symbol'].iloc[0] if not transactions_df.empty else 'Unknown'}: Qty={current_quantity:.8f}, AvgCost={average_cost_basis:.8f}, TotalCostBasisForAsset={total_cost_basis:.8f}")
     return current_quantity, average_cost_basis
 
 
@@ -135,22 +180,19 @@ class CryptoPortfolioTracker:
         transactions = []
         norm_map = self.config.get("symbol_normalization_map", {})
         known_symbols = list(self.config.get("symbol_mappings", {}).get("coingecko_ids", {}).keys())
-        known_quotes = ['USDT', 'BUSD', 'USDC', 'BTC', 'ETH']
+        known_quotes = ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD', # Common stablecoins first
+                        'BTC', 'ETH'] # Common crypto quotes
 
         logger.info(f"Attempting to fetch trades for {len(known_symbols)} base symbols...")
-
         processed_pairs = set()
 
         for symbol_to_find in known_symbols:
-            # Skip stablecoins or LD assets when they are the primary symbol we're looking for
-            if symbol_to_find.upper() in ['USDT', 'USDC', 'BUSD', 'DAI'] or symbol_to_find.upper().startswith('LD'):
+            if symbol_to_find.upper() in ['USDT', 'USDC', 'BUSD', 'DAI', 'FDUSD', 'TUSD'] or \
+               symbol_to_find.upper().startswith('LD'):
                 continue
 
-            # Try common trading pairs
             for quote in known_quotes:
                 pair = f"{symbol_to_find.upper()}{quote.upper()}"
-
-                # Avoid self-trading pairs like BTCBTC, and already processed pairs
                 if symbol_to_find.upper() == quote.upper() or pair in processed_pairs:
                     continue
                 processed_pairs.add(pair)
@@ -158,40 +200,70 @@ class CryptoPortfolioTracker:
                 try:
                     logger.debug(f"Fetching trades for {pair}...")
                     trades = self.binance_client.get_my_trades(symbol=pair)
-
                     if not trades:
                         continue
-
                     logger.info(f"Fetched {len(trades)} trades for {pair}.")
 
                     for trade in trades:
-                        # Determine base and quote (we know it based on how we built 'pair')
                         base_asset = symbol_to_find.upper()
-                        quote_asset = quote.upper()
+                        quote_asset_from_pair = quote.upper()
 
-                        # ** Apply normalization **
                         normalized_symbol = norm_map.get(base_asset, base_asset)
 
                         tx_type = 'BUY' if trade['isBuyer'] else 'SELL'
                         quantity = float(trade['qty'])
                         price = float(trade['price'])
-                        fee = float(trade['commission'])
-                        fee_asset = trade['commissionAsset']
 
-                        price_usd = price if quote_asset in ['USDT', 'BUSD', 'USDC'] else None
-                        if price_usd is None:
-                             logger.warning(f"Trade {trade['id']} for {pair} is non-USD. Cost basis needs historical price lookup (TODO).")
+                        # --- START FEE LOGIC ---
+                        fee_quantity = float(trade['commission'])
+                        fee_currency = trade['commissionAsset'].upper()
+                        calculated_fee_usd = None
+
+                        price_usd_of_trade = None # Price of the main asset in USD for this trade
+                        if quote_asset_from_pair in ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD']:
+                            price_usd_of_trade = price
+                        else:
+                            logger.warning(f"Trade {trade['id']} for {pair} has non-stablecoin quote '{quote_asset_from_pair}'. "
+                                           f"price_usd requires historical price of {quote_asset_from_pair}/USD (Not yet implemented).")
+
+                        # Calculate fee_usd
+                        if fee_currency in ['USDT', 'BUSD', 'USDC', 'FDUSD', 'TUSD']:
+                            calculated_fee_usd = fee_quantity
+                        elif fee_currency == normalized_symbol:
+                            if price_usd_of_trade is not None:
+                                calculated_fee_usd = fee_quantity * price_usd_of_trade
+                            else:
+                                logger.warning(f"Trade {trade['id']}: Fee in {fee_currency} (base asset), but base asset USD price unknown for this trade. Fee USD not calculated.")
+                        elif fee_currency == quote_asset_from_pair:
+                            if price_usd_of_trade is not None: # Implies quote is USD-like
+                                calculated_fee_usd = fee_quantity
+                            else:
+                                # TODO: Needs historical price lookup for quote_asset_from_pair/USD
+                                logger.warning(f"Trade {trade['id']}: Fee in {fee_currency} (non-USD quote '{quote_asset_from_pair}'). Fee USD not calculated (TODO).")
+                        else: # Fee in a third currency (e.g. BNB)
+                            # TODO: Needs historical price lookup for fee_currency/USD
+                            logger.warning(f"Trade {trade['id']}: Fee in unrelated currency {fee_currency}. Fee USD not calculated (TODO).")
+                            # Example for future:
+                            # fee_coin_id_map = self.symbol_mappings.get(fee_currency) # Assuming direct mapping for fee currency
+                            # if fee_coin_id_map:
+                            #     trade_date_str = pd.to_datetime(trade['time'], unit='ms').strftime('%d-%m-%Y')
+                            #     fee_asset_price_hist_usd = self._get_coingecko_historical_price(fee_coin_id_map, trade_date_str)
+                            #     if fee_asset_price_hist_usd:
+                            #         calculated_fee_usd = fee_quantity * fee_asset_price_hist_usd
+                        # --- END FEE LOGIC ---
 
                         transactions.append({
                             "symbol": normalized_symbol,
                             "timestamp": pd.to_datetime(trade['time'], unit='ms').to_pydatetime(),
                             "type": tx_type,
                             "quantity": quantity,
-                            "price_usd": price_usd,
-                            "fee_usd": None,
+                            "price_usd": price_usd_of_trade, # Use price_usd_of_trade
+                            "fee_quantity": fee_quantity,    # <<< NEW
+                            "fee_currency": fee_currency,    # <<< NEW
+                            "fee_usd": calculated_fee_usd,   # <<< NEW
                             "source": "Binance",
                             "transaction_hash": f"binance_{trade['id']}",
-                            "notes": f"Pair: {pair}, Fee: {fee} {fee_asset}, Price:{price} {quote_asset}"
+                            "notes": f"Pair: {pair}, Price:{price} {quote_asset_from_pair}, Fee: {fee_quantity} {fee_currency}"
                         })
 
                 except BinanceAPIException as e:
@@ -200,7 +272,7 @@ class CryptoPortfolioTracker:
                 except Exception as e:
                     logger.error(f"Unexpected error fetching trades for {pair}: {e}")
 
-                time.sleep(0.5) # Be nice to the API
+                time.sleep(0.5) # This was correctly placed outside the try/except for the API call
 
         logger.info(f"Fetched a total of {len(transactions)} trades.")
         return transactions
@@ -360,21 +432,16 @@ class CryptoPortfolioTracker:
         self.sync_data(); return self.calculate_portfolio_metrics()
 
     def get_rebalance_suggestions_by_cost(self) -> Optional[pd.DataFrame]:
-        """
-        Calculates buy/sell USD amounts and coin quantities to reach target allocation
-        based on cost basis.
-        """
         logger.info("Calculating rebalance suggestions by cost basis...")
-        holdings_df = self.db_manager.get_holdings()
+        holdings_df = self.db_manager.get_holdings() # Symbols here should be normalized from DB
         strategy_config = self.config.get("rebalancing_strategy", {})
-        target_allocation = self.config.get("target_allocation", {})
-        # For normalization consistency in rebalancing output
+        target_allocation_config = self.config.get("target_allocation", {}) # Raw from config
         norm_map = self.config.get("symbol_normalization_map", {})
 
         allow_selling = strategy_config.get("allow_selling", True)
         never_sell = [s.upper() for s in strategy_config.get("never_sell_symbols", [])]
 
-        if holdings_df.empty or not target_allocation:
+        if holdings_df.empty or not target_allocation_config:
             logger.warning("Need holdings with cost basis and target allocation for suggestions.")
             return None
         if 'average_cost_basis' not in holdings_df.columns or 'quantity' not in holdings_df.columns:
@@ -383,57 +450,75 @@ class CryptoPortfolioTracker:
             return None
 
         holdings_df['current_cost_basis'] = holdings_df['quantity'] * holdings_df['average_cost_basis']
-        total_portfolio_cost_basis = holdings_df['current_cost_basis'].sum()
 
-        if total_portfolio_cost_basis == 0:
-            logger.warning("Total cost basis is zero. Cannot calculate suggestions.")
-            return None
+        # --- MODIFICATION FOR RELEVANT COST BASIS ---
+        # 1. Normalize the keys from your target_allocation in the config
+        #    so they match the symbols stored in holdings_df (which should already be normalized)
+        target_allocation_normalized = {}
+        for symbol_key, pct_val in target_allocation_config.items():
+            normalized_key = norm_map.get(symbol_key.upper(), symbol_key.upper())
+            target_allocation_normalized[normalized_key] = pct_val
 
-        logger.info(f"Total Portfolio Cost Basis: ${total_portfolio_cost_basis:,.2f}")
+        # 2. Filter holdings_df to include only assets that are in these normalized target_allocation keys
+        #    AND have a target percentage greater than 0.
+        target_asset_symbols = [s for s, p in target_allocation_normalized.items() if p > 0]
+        relevant_holdings_df = holdings_df[holdings_df['symbol'].isin(target_asset_symbols)]
+
+        # 3. Calculate the total cost basis using ONLY these relevant target assets
+        total_relevant_portfolio_cost_basis = relevant_holdings_df['current_cost_basis'].sum()
+
+        if total_relevant_portfolio_cost_basis == 0 and any(p > 0 for p in target_allocation_normalized.values()):
+            logger.warning(
+                "Total cost basis for assets in target_allocation is $0.00. "
+                "Rebalance suggestions to 'buy' will be $0 for these targets. "
+                "This typically means no cost basis has been established for target assets yet, "
+                "or they are not currently held."
+            )
+        logger.info(f"Total Portfolio Cost Basis (for target assets only): ${total_relevant_portfolio_cost_basis:,.2f}")
+        # --- END MODIFICATION ---
 
         suggestions = []
-        # Create a consistent list of symbols, normalizing those from target_allocation
-        target_symbols_normalized = {norm_map.get(s.upper(), s.upper()): p for s, p in target_allocation.items()}
-        holdings_symbols_normalized = holdings_df['symbol'].unique().tolist() # Already normalized from DB
+        # Iterate through all unique symbols from both normalized targets and current holdings
+        # to ensure we list all relevant assets (targets and non-targets held)
+        all_symbols_to_consider = sorted(list(set(list(target_allocation_normalized.keys()) + holdings_df['symbol'].tolist())))
 
-        all_display_symbols = sorted(list(set(list(target_symbols_normalized.keys()) + holdings_symbols_normalized)))
+        current_prices = self.get_current_prices(all_symbols_to_consider)
 
+        for symbol in all_symbols_to_consider:
+            # Use the normalized target percentage
+            target_pct = target_allocation_normalized.get(symbol, 0.0)
 
-        # Get current prices for all relevant symbols for quantity calculation
-        current_prices = self.get_current_prices(all_display_symbols)
+            # Target cost basis is now based on the sum of costs of *only the target assets*
+            target_cost_basis_for_symbol = total_relevant_portfolio_cost_basis * target_pct
 
-        for symbol_display in all_display_symbols: # Iterate using normalized symbols
-            target_pct = target_symbols_normalized.get(symbol_display, 0)
-            target_cost_basis = total_portfolio_cost_basis * target_pct
+            current_row = holdings_df[holdings_df['symbol'] == symbol]
+            current_actual_cost_for_symbol = current_row['current_cost_basis'].iloc[0] if not current_row.empty else 0.0
 
-            current_row = holdings_df[holdings_df['symbol'] == symbol_display]
-            current_cost = current_row['current_cost_basis'].iloc[0] if not current_row.empty else 0.0
-
-            rebalance_amount_usd = target_cost_basis - current_cost
+            rebalance_amount_usd = target_cost_basis_for_symbol - current_actual_cost_for_symbol
 
             amount_to_buy_usd = 0.0
             amount_to_sell_usd = 0.0
             buy_qty_coin = 0.0
             sell_qty_coin = 0.0
-            current_price = current_prices.get(symbol_display, 0.0)
+            current_price = current_prices.get(symbol, 0.0)
 
             if rebalance_amount_usd > 0:
                 amount_to_buy_usd = rebalance_amount_usd
                 if current_price and current_price > 0:
                     buy_qty_coin = amount_to_buy_usd / current_price
-            elif rebalance_amount_usd < 0:
-                if allow_selling and symbol_display.upper() not in never_sell:
+            elif rebalance_amount_usd < 0: # Asset is overweight based on *relevant total cost* or is not in target_allocation
+                if allow_selling and symbol.upper() not in never_sell:
                     amount_to_sell_usd = abs(rebalance_amount_usd)
                     if current_price and current_price > 0:
                         sell_qty_coin = amount_to_sell_usd / current_price
 
-            # Only add to suggestions if there's a target or current cost
-            if target_pct > 0 or current_cost > 0:
+            # Add to suggestions if it's a target asset OR if it's currently held (even if not a target)
+            if target_pct > 0 or current_actual_cost_for_symbol > 0:
                 suggestions.append({
-                    "Symbol": symbol_display,
+                    "Symbol": symbol,
                     "Target %": f"{target_pct * 100:.2f}%",
-                    "Cost (USD)": f"${current_cost:,.2f}", # Renamed for brevity
-                    "Target Cost (USD)": f"${target_cost_basis:,.2f}",
+                    "Cost (USD)": f"${current_actual_cost_for_symbol:,.2f}",
+                    "Target Cost (USD)": f"${target_cost_basis_for_symbol:,.2f}",
                     "Buy (USD)": f"${amount_to_buy_usd:,.2f}",
                     "Buy (Qty)": f"{buy_qty_coin:,.6f}".rstrip('0').rstrip('.'),
                     "Sell (USD)": f"${amount_to_sell_usd:,.2f}",
@@ -441,16 +526,15 @@ class CryptoPortfolioTracker:
                 })
 
         if not suggestions:
-            return pd.DataFrame()
+            return pd.DataFrame() # Return empty DataFrame if no suggestions
 
         df = pd.DataFrame(suggestions)
-        # Define column order
         cols = ["Symbol", "Target %", "Cost (USD)", "Target Cost (USD)",
                 "Buy (USD)", "Buy (Qty)", "Sell (USD)", "Sell (Qty)"]
-        # Ensure all columns are present, add if missing (e.g., if no buys/sells happen)
+        # Ensure all columns exist, filling with defaults if necessary
         for col in cols:
             if col not in df.columns:
-                df[col] = "$0.00" if "USD" in col else "0" # Default values
+                df[col] = "$0.00" if "USD" in col else "0"
         return df[cols]
 
     def print_portfolio_summary(self, metrics: Dict[str, Any]):

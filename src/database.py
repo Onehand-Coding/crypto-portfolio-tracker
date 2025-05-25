@@ -46,7 +46,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL,
                 timestamp DATETIME NOT NULL, type TEXT NOT NULL CHECK (type IN ('BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL', 'TRANSFER')),
-                quantity REAL NOT NULL, price_usd REAL, fee_usd REAL, source TEXT, notes TEXT,
+                quantity REAL NOT NULL, price_usd REAL, fee_quantity REAL, fee_currency TEXT, fee_usd REAL, source TEXT, notes TEXT,
                 transaction_hash TEXT UNIQUE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (asset_id) REFERENCES assets (id)
             );""", """
@@ -97,11 +97,15 @@ class DatabaseManager:
 
     def bulk_insert_transactions(self, transactions: List[Dict[str, Any]]):
         """Bulk insert transactions into the database."""
+        # <<< CORRECTED SQL STATEMENT: Added fee_quantity, fee_currency and matching placeholders >>>
         sql = """
         INSERT OR IGNORE INTO transactions
-        (asset_id, timestamp, type, quantity, price_usd, fee_usd, source, notes, transaction_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
+        (asset_id, timestamp, type, quantity, price_usd,
+         fee_quantity, fee_currency, fee_usd,
+         source, notes, transaction_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """ # Now 11 columns and 11 placeholders
+
         data_to_insert = []
         for tx_dict in transactions:
             asset_id = self.get_asset_id(tx_dict.get('symbol'), create_if_missing=True)
@@ -109,33 +113,34 @@ class DatabaseManager:
                 timestamp_val = tx_dict.get('timestamp')
                 timestamp_for_db = None
 
-                # <<< MODIFICATION START >>>
                 if isinstance(timestamp_val, datetime.datetime):
-                    timestamp_for_db = timestamp_val.isoformat(sep=' ', timespec='milliseconds') # Standard ISO format, space separator
+                    timestamp_for_db = timestamp_val.isoformat(sep=' ', timespec='milliseconds')
                 elif isinstance(timestamp_val, pd.Timestamp):
                     timestamp_for_db = timestamp_val.to_pydatetime().isoformat(sep=' ', timespec='milliseconds')
                 elif timestamp_val is not None:
                     logger.warning(f"Timestamp for tx {tx_dict.get('transaction_hash')} is not a standard datetime object: {timestamp_val} (type: {type(timestamp_val)}). Storing as string: {str(timestamp_val)}")
                     timestamp_for_db = str(timestamp_val)
-                # <<< MODIFICATION END >>>
 
-                if tx_dict.get('type') == 'DEPOSIT':
+                if tx_dict.get('type') == 'DEPOSIT': # Your existing debug log, still useful
                     logger.debug(
                         f"Preparing DEPOSIT tx for DB insert: "
                         f"asset_id={asset_id}, "
                         f"symbol={tx_dict.get('symbol')}, "
-                        f"timestamp_for_db='{timestamp_for_db}' (type: {type(timestamp_for_db)}), " # Log the string
+                        f"timestamp_for_db='{timestamp_for_db}' (type: {type(timestamp_for_db)}), "
                         f"price_usd={tx_dict.get('price_usd')} (type: {type(tx_dict.get('price_usd'))}), "
                         f"quantity={tx_dict.get('quantity')}"
                     )
 
+                # Ensure all 11 values are provided in the correct order for the SQL statement
                 data_to_insert.append((
                     asset_id,
-                    timestamp_for_db, # This will now be a standard ISO string or None
+                    timestamp_for_db,
                     tx_dict.get('type'),
                     tx_dict.get('quantity'),
                     tx_dict.get('price_usd'),
-                    tx_dict.get('fee_usd'),
+                    tx_dict.get('fee_quantity'),  # Corresponds to 6th ?
+                    tx_dict.get('fee_currency'),  # Corresponds to 7th ?
+                    tx_dict.get('fee_usd'),       # Corresponds to 8th ?
                     tx_dict.get('source'),
                     tx_dict.get('notes'),
                     tx_dict.get('transaction_hash')
