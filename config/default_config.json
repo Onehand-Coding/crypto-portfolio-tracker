@@ -116,6 +116,10 @@
     }
   },
   "symbol_normalization_map": {
-    "RENDER": "RNDR"
+    "RNDR": "RENDER"
+  },
+  "pepe_gift_details": {
+  "symbol": "PEPE",
+  "amount": "322.6452382"
   }
 }

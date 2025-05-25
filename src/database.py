@@ -97,16 +97,66 @@ class DatabaseManager:
 
     def bulk_insert_transactions(self, transactions: List[Dict[str, Any]]):
         """Bulk insert transactions into the database."""
-        sql = "INSERT OR IGNORE INTO transactions (asset_id, timestamp, type, quantity, price_usd, fee_usd, source, notes, transaction_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        data_to_insert = [(self.get_asset_id(tx['symbol']), tx['timestamp'], tx['type'], tx['quantity'], tx.get('price_usd'), tx.get('fee_usd'), tx.get('source'), tx.get('notes'), tx.get('transaction_hash')) for tx in transactions if self.get_asset_id(tx['symbol'])]
-        if not data_to_insert: logger.info("No new transactions to insert."); return
+        sql = """
+        INSERT OR IGNORE INTO transactions
+        (asset_id, timestamp, type, quantity, price_usd, fee_usd, source, notes, transaction_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        data_to_insert = []
+        for tx_dict in transactions:
+            asset_id = self.get_asset_id(tx_dict.get('symbol'), create_if_missing=True)
+            if asset_id:
+                timestamp_val = tx_dict.get('timestamp')
+                timestamp_for_db = None
+
+                # <<< MODIFICATION START >>>
+                if isinstance(timestamp_val, datetime.datetime):
+                    timestamp_for_db = timestamp_val.isoformat(sep=' ', timespec='milliseconds') # Standard ISO format, space separator
+                elif isinstance(timestamp_val, pd.Timestamp):
+                    timestamp_for_db = timestamp_val.to_pydatetime().isoformat(sep=' ', timespec='milliseconds')
+                elif timestamp_val is not None:
+                    logger.warning(f"Timestamp for tx {tx_dict.get('transaction_hash')} is not a standard datetime object: {timestamp_val} (type: {type(timestamp_val)}). Storing as string: {str(timestamp_val)}")
+                    timestamp_for_db = str(timestamp_val)
+                # <<< MODIFICATION END >>>
+
+                if tx_dict.get('type') == 'DEPOSIT':
+                    logger.debug(
+                        f"Preparing DEPOSIT tx for DB insert: "
+                        f"asset_id={asset_id}, "
+                        f"symbol={tx_dict.get('symbol')}, "
+                        f"timestamp_for_db='{timestamp_for_db}' (type: {type(timestamp_for_db)}), " # Log the string
+                        f"price_usd={tx_dict.get('price_usd')} (type: {type(tx_dict.get('price_usd'))}), "
+                        f"quantity={tx_dict.get('quantity')}"
+                    )
+
+                data_to_insert.append((
+                    asset_id,
+                    timestamp_for_db, # This will now be a standard ISO string or None
+                    tx_dict.get('type'),
+                    tx_dict.get('quantity'),
+                    tx_dict.get('price_usd'),
+                    tx_dict.get('fee_usd'),
+                    tx_dict.get('source'),
+                    tx_dict.get('notes'),
+                    tx_dict.get('transaction_hash')
+                ))
+            else:
+                logger.warning(f"Could not get or create asset_id for symbol: {tx_dict.get('symbol')}. Skipping transaction: {tx_dict}")
+
+        if not data_to_insert:
+            logger.info("No new transactions prepared for DB insert.")
+            return
+
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.executemany(sql, data_to_insert)
                 conn.commit()
-                logger.info(f"Inserted/Ignored {len(data_to_insert)} transactions.")
-        except sqlite3.Error as e: logger.error(f"Error bulk inserting transactions: {e}")
+                logger.info(f"Attempted to insert/ignore {len(data_to_insert)} transactions. Rows newly inserted: {cursor.rowcount}")
+        except sqlite3.Error as e:
+            logger.error(f"Error bulk inserting transactions: {e}")
+            if data_to_insert:
+                 logger.error(f"First data item in batch (potential cause): {data_to_insert[0]}")
 
     def get_all_transactions(self) -> pd.DataFrame:
         """Fetch all transactions from the database."""
