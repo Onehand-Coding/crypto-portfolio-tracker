@@ -2,8 +2,9 @@
 Crypto Portfolio Tracker - Main Class
 Handles API interactions, data processing, analysis, and orchestration.
 """
-import logging
+import json
 import time
+import logging
 import datetime
 from collections import deque
 from typing import Dict, Any, Optional, List
@@ -594,7 +595,7 @@ class CryptoPortfolioTracker:
         print("\n" + "="*50 + "\n⚙️ Current Configuration\n" + "="*50)
         safe_config = self.config.copy()
         if "api_keys" in safe_config: safe_config["api_keys"] = {k: '********' for k in safe_config["api_keys"]}
-        print(pd.io.json.dumps(safe_config, indent=2) + "\n" + "="*50)
+        print(json.dumps(safe_config, indent=2) + "\n" + "="*50)
 
     def cleanup_old_data(self): self.db_manager.cleanup_old_data()
 

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Portfolio Report - Dark Mode</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a2e; /* Dark blue/purple background */
+            color: #e0e0e0; /* Light grey text for body */
+            line-height: 1.6;
+        }
+        .container {
+            width: 90%;
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #24283b; /* Slightly lighter dark shade for container */
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3); /* Adjusted shadow for dark theme */
+        }
+        h1, h2 {
+            color: #f1f1f1; /* Brighter white for headers */
+            border-bottom: 2px solid #3a3f58; /* Darker accent for borders */
+            padding-bottom: 10px;
+            margin-top: 30px;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 0;
+            color: #e94560; /* Accent color for main title */
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+            padding: 15px;
+            background-color: #1f2430; /* Slightly different dark for grid background */
+            border-radius: 5px;
+        }
+        .summary-item {
+            background-color: #2a2f45; /* Darker elements */
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .summary-item strong {
+            display: block;
+            color: #58a6ff; /* Lighter blue for emphasis */
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        .summary-item span {
+            color: #c9d1d9; /* Light text for values */
+        }
+        .table-container {
+            overflow-x: auto;
+        }
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .table th, .table td {
+            border: 1px solid #444a5f; /* Lighter border for dark theme */
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 0.95em;
+        }
+        .table th {
+            background-color: #3a3f58; /* Darker header for table */
+            color: #e0e0e0;
+            font-weight: bold;
+        }
+        .table tr:nth-child(even) {
+            background-color: #2a2f45; /* Slightly different dark for even rows */
+        }
+        .table tr:hover {
+            background-color: #333950; /* Hover effect */
+        }
+        .table td.number, .table th.number {
+            text-align: right;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #3a3f58;
+            font-size: 0.85em;
+            color: #8b949e; /* Lighter grey for footer */
+        }
+        .positive { color: #3fb950; } /* Adjusted green for dark mode */
+        .negative { color: #f85149; } /* Adjusted red for dark mode */
+
+        @media (max-width: 768px) {
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+            .table th, .table td {
+                font-size: 0.85em;
+                padding: 8px 10px;
+            }
+            h1 { font-size: 1.8em; }
+            h2 { font-size: 1.4em; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Crypto Portfolio Report</h1>
+        <p class="footer">Generated on: {{ timestamp if timestamp else 'N/A' }}</p>
+
+        <div class="summary">
+            <h2>📊 Portfolio Summary</h2>
+            <div class="summary-grid">
+                <div class="summary-item">
+                    <strong>Total Portfolio Value (USD)</strong>
+                    <span>
+                        {% if metrics and 'total_value_usd' in metrics and metrics.total_value_usd is not none %}
+                            ${{ "{:,.2f}".format(metrics.total_value_usd) }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="summary-item">
+                    <strong>Total Cost Basis (USD)</strong>
+                    <span>
+                        {% if metrics and 'total_cost_basis_usd' in metrics and metrics.total_cost_basis_usd is not none %}
+                            ${{ "{:,.2f}".format(metrics.total_cost_basis_usd) }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="summary-item">
+                    <strong>Unrealized P/L (USD)</strong>
+                    <span class="{{ 'positive' if metrics and 'unrealized_pl_usd' in metrics and metrics.unrealized_pl_usd is not none and metrics.unrealized_pl_usd >= 0 else 'negative' }}">
+                        {% if metrics and 'unrealized_pl_usd' in metrics and metrics.unrealized_pl_usd is not none %}
+                            ${{ "{:,.2f}".format(metrics.unrealized_pl_usd) }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="summary-item">
+                    <strong>Unrealized P/L (%)</strong>
+                    <span class="{{ 'positive' if metrics and 'unrealized_pl_percent' in metrics and metrics.unrealized_pl_percent is not none and metrics.unrealized_pl_percent >= 0 else 'negative' }}">
+                        {% if metrics and 'unrealized_pl_percent' in metrics and metrics.unrealized_pl_percent is not none %}
+                            {{ "{:,.2f}%".format(metrics.unrealized_pl_percent) }}
+                        {% else %}
+                            N/A
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="holdings">
+            <h2>💰 Current Holdings</h2>
+            <div class="table-container">
+                {% if holdings_table and holdings_table|trim != "" %}
+                    {{ holdings_table|safe }}
+                {% else %}
+                    <p>No holdings data available.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <p class="footer">Disclaimer: This report is for informational purposes only and not financial advice.</p>
+    </div>
+</body>
+</html>
