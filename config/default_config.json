@@ -11,12 +11,16 @@
     "coingecko": {
       "base_url": "https://api.coingecko.com/api/v3",
       "rate_limit": 100,
-      "timeout": 30
+      "timeout": 30,
+      "request_delay_ms_internal_transfer": 1200,
+      "request_delay_ms_deposit": 1200,
+      "request_delay_ms_csv": 1200
     },
     "binance": {
       "rate_limit": 1200,
       "timeout": 30,
-      "testnet": false
+      "testnet": false,
+      "request_delay_ms": 700
     }
   },
   "database": {
@@ -68,7 +72,9 @@
     "minimum_value_usd": 1.0,
     "stablecoin_symbols": ["USDT", "USDC", "BUSD", "DAI"],
     "rebalance_threshold_percent": 2.0,
-    "cost_basis_method": "fifo"
+    "cost_basis_method": "fifo",
+    "p2p_fiat_currency": "PHP",
+    "binance_csv_path": "data/binance_export.csv"
   },
   "rebalancing_strategy": {
     "base_on_cost": true,
@@ -109,6 +115,7 @@
       "RNDR": "render-token",
       "RENDER": "render-token",
       "TAO": "bittensor",
+      "LDTAO": "bittensor",
       "PEPE": "pepe",
       "LDPEPE": "pepe",
       "HMSTR": "hamster-kombat",
@@ -121,5 +128,11 @@
   "pepe_gift_details": {
   "symbol": "PEPE",
   "amount": "322.6452382"
+  },
+  "history_lookback_days": {
+  "deposits": 90,
+  "withdrawals": 90,
+  "internal_transfers": 365,
+  "p2p_buys": 365
   }
 }
