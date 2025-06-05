@@ -1,14 +1,10 @@
-"""
-Database Management Module
-Handles all interactions with the SQLite database.
-"""
 import sqlite3
 import pandas as pd
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import shutil
-import datetime
+import datetime # Ensure this is imported
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +14,17 @@ class DatabaseManager:
     def __init__(self, config: Dict[str, Any]):
         """Initialize database manager"""
         self.db_path = Path(config.get("database", {}).get("path", "data/portfolio.db"))
-        self.config = config.get("database", {})
+        self.db_config = config.get("database", {}) # Store the 'database' sub-dictionary
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection_timeout = self.config.get("connection_timeout", 30)
+        self.connection_timeout = self.db_config.get("connection_timeout", 30)
+
+        # Define table names as instance attributes
+        self.ASSETS_TABLE_NAME = "assets"
+        self.TRANSACTIONS_TABLE_NAME = "transactions"
+        self.HOLDINGS_TABLE_NAME = "holdings"
+        self.HISTORICAL_PRICES_TABLE_NAME = "historical_prices"
+        self.PORTFOLIO_SNAPSHOTS_TABLE_NAME = "portfolio_snapshots"
+
         self._create_tables()
         logger.info(f"Database initialized at: {self.db_path}")
 
@@ -95,73 +99,106 @@ class DatabaseManager:
             logger.error(f"Error getting/creating asset ID for {symbol}: {e}")
             return None
 
-    def bulk_insert_transactions(self, transactions: List[Dict[str, Any]]):
-        """Bulk insert transactions into the database."""
-        # <<< CORRECTED SQL STATEMENT: Added fee_quantity, fee_currency and matching placeholders >>>
-        sql = """
-        INSERT OR IGNORE INTO transactions
+    def bulk_insert_transactions(self, transactions: List[Dict[str, Any]]) -> Optional[int]:
+        """Bulk insert or update transactions using ON CONFLICT DO UPDATE."""
+        if not transactions:
+            logger.info("No transactions provided for bulk insert.")
+            return 0
+
+        sql = f"""
+        INSERT INTO {self.TRANSACTIONS_TABLE_NAME}
         (asset_id, timestamp, type, quantity, price_usd,
          fee_quantity, fee_currency, fee_usd,
          source, notes, transaction_hash)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """ # Now 11 columns and 11 placeholders
+        ON CONFLICT(transaction_hash) DO UPDATE SET
+            asset_id = excluded.asset_id,
+            timestamp = excluded.timestamp,
+            type = excluded.type,
+            quantity = excluded.quantity,
+            price_usd = excluded.price_usd,
+            fee_quantity = excluded.fee_quantity,
+            fee_currency = excluded.fee_currency,
+            fee_usd = excluded.fee_usd,
+            source = excluded.source,
+            notes = excluded.notes;
+        """
 
         data_to_insert = []
         for tx_dict in transactions:
-            asset_id = self.get_asset_id(tx_dict.get('symbol'), create_if_missing=True)
-            if asset_id:
-                timestamp_val = tx_dict.get('timestamp')
-                timestamp_for_db = None
+            symbol = tx_dict.get('symbol')
+            asset_id = self.get_asset_id(symbol, create_if_missing=True)
+            if asset_id is None:
+                logger.warning(f"Could not get or create asset_id for symbol: {symbol}. Skipping transaction: {tx_dict.get('transaction_hash')}")
+                continue
 
-                if isinstance(timestamp_val, datetime.datetime):
-                    timestamp_for_db = timestamp_val.isoformat(sep=' ', timespec='milliseconds')
-                elif isinstance(timestamp_val, pd.Timestamp):
-                    timestamp_for_db = timestamp_val.to_pydatetime().isoformat(sep=' ', timespec='milliseconds')
-                elif timestamp_val is not None:
-                    logger.warning(f"Timestamp for tx {tx_dict.get('transaction_hash')} is not a standard datetime object: {timestamp_val} (type: {type(timestamp_val)}). Storing as string: {str(timestamp_val)}")
-                    timestamp_for_db = str(timestamp_val)
+            timestamp_val = tx_dict.get('timestamp')
+            timestamp_for_db = None
+            if isinstance(timestamp_val, datetime.datetime):
+                if timestamp_val.tzinfo is None:
+                    timestamp_val = timestamp_val.replace(tzinfo=datetime.timezone.utc) # Ensure UTC
+                else:
+                    timestamp_val = timestamp_val.astimezone(datetime.timezone.utc) # Convert to UTC
+                timestamp_for_db = timestamp_val.isoformat(sep=' ', timespec='milliseconds')
+            elif isinstance(timestamp_val, pd.Timestamp): # Handle pandas Timestamps
+                if timestamp_val.tzinfo is None:
+                     timestamp_for_db = timestamp_val.tz_localize('utc').to_pydatetime().isoformat(sep=' ', timespec='milliseconds')
+                else:
+                     timestamp_for_db = timestamp_val.astimezone('utc').to_pydatetime().isoformat(sep=' ', timespec='milliseconds')
+            elif timestamp_val is not None: # Fallback for other types, store as string
+                logger.warning(f"Timestamp for tx {tx_dict.get('transaction_hash')} is not standard datetime/pandas ({type(timestamp_val)}). Storing as string: {timestamp_val}")
+                timestamp_for_db = str(timestamp_val)
+            else: # Skip if timestamp is None
+                logger.warning(f"Transaction {tx_dict.get('transaction_hash')} has a None timestamp. Skipping.")
+                continue
 
-                if tx_dict.get('type') == 'DEPOSIT': # Your existing debug log, still useful
-                    logger.debug(
-                        f"Preparing DEPOSIT tx for DB insert: "
-                        f"asset_id={asset_id}, "
-                        f"symbol={tx_dict.get('symbol')}, "
-                        f"timestamp_for_db='{timestamp_for_db}' (type: {type(timestamp_for_db)}), "
-                        f"price_usd={tx_dict.get('price_usd')} (type: {type(tx_dict.get('price_usd'))}), "
-                        f"quantity={tx_dict.get('quantity')}"
-                    )
 
-                # Ensure all 11 values are provided in the correct order for the SQL statement
-                data_to_insert.append((
-                    asset_id,
-                    timestamp_for_db,
-                    tx_dict.get('type'),
-                    tx_dict.get('quantity'),
-                    tx_dict.get('price_usd'),
-                    tx_dict.get('fee_quantity'),  # Corresponds to 6th ?
-                    tx_dict.get('fee_currency'),  # Corresponds to 7th ?
-                    tx_dict.get('fee_usd'),       # Corresponds to 8th ?
-                    tx_dict.get('source'),
-                    tx_dict.get('notes'),
-                    tx_dict.get('transaction_hash')
-                ))
-            else:
-                logger.warning(f"Could not get or create asset_id for symbol: {tx_dict.get('symbol')}. Skipping transaction: {tx_dict}")
+            data_to_insert.append((
+                asset_id, timestamp_for_db, tx_dict.get('type'),
+                float(tx_dict.get('quantity', 0.0)),
+                float(tx_dict.get('price_usd', 0.0) if tx_dict.get('price_usd') is not None else 0.0),
+                float(tx_dict.get('fee_quantity', 0.0) if tx_dict.get('fee_quantity') is not None else 0.0),
+                tx_dict.get('fee_currency'),
+                float(tx_dict.get('fee_usd', 0.0) if tx_dict.get('fee_usd') is not None else 0.0),
+                tx_dict.get('source'), tx_dict.get('notes'), tx_dict.get('transaction_hash')
+            ))
 
         if not data_to_insert:
-            logger.info("No new transactions prepared for DB insert.")
-            return
+            logger.info("No valid transactions prepared for DB insert/update after type checks.")
+            return 0
+
+        logger.info(f"Attempting to insert/update {len(data_to_insert)} transactions using ON CONFLICT DO UPDATE...")
 
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.executemany(sql, data_to_insert)
                 conn.commit()
-                logger.info(f"Attempted to insert/ignore {len(data_to_insert)} transactions. Rows newly inserted: {cursor.rowcount}")
+
+                rows_affected = cursor.rowcount
+                # For SQLite, rowcount after executemany with "ON CONFLICT DO UPDATE"
+                # might be -1 or the number of rows *inserted*. It's not consistently
+                # the total number of rows affected (inserted + updated).
+                # A more reliable way to get changes in SQLite is `SELECT changes()`.
+                if rows_affected == -1: # Check if SQLite reported -1 (common for complex executemany)
+                    changes_cursor = conn.cursor()
+                    changes_cursor.execute("SELECT changes()")
+                    changes_result = changes_cursor.fetchone()
+                    rows_affected_fallback = changes_result[0] if changes_result else 0
+                    logger.info(f"DB: `executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes.")
+                    return rows_affected_fallback
+                else:
+                    logger.info(f"DB: `executemany` reported {rows_affected} rows affected (inserted or updated).")
+                return rows_affected
         except sqlite3.Error as e:
-            logger.error(f"Error bulk inserting transactions: {e}")
-            if data_to_insert:
-                 logger.error(f"First data item in batch (potential cause): {data_to_insert[0]}")
+            logger.error(f"Database error during bulk insert/update: {e}", exc_info=True)
+            if data_to_insert: # Log the first problematic item for easier debugging
+                logger.error(f"First data item in problematic batch: {data_to_insert[0]}")
+            return 0 # Indicate 0 rows affected on error
+        except Exception as e_generic: # Catch any other non-SQLite errors
+            logger.error(f"Generic error during bulk insert/update: {e_generic}", exc_info=True)
+            return 0
+
 
     def get_all_transactions(self) -> pd.DataFrame:
         """Fetch all transactions from the database."""
@@ -175,14 +212,34 @@ class DatabaseManager:
         sql = "INSERT OR REPLACE INTO holdings (asset_id, quantity, average_cost_basis, last_updated) VALUES (?, ?, ?, ?)"
         try:
             with self._get_connection() as conn:
-                 cursor = conn.cursor(); now = datetime.datetime.now()
-                 data_to_update = [(self.get_asset_id(row['symbol'], create_if_missing=False), row['quantity'], row['average_cost_basis'], now) for _, row in holdings_data.iterrows() if self.get_asset_id(row['symbol'], create_if_missing=False)]
-                 if data_to_update: cursor.executemany(sql, data_to_update); conn.commit(); logger.info(f"Updated {len(data_to_update)} holdings records.")
-        except sqlite3.Error as e: logger.error(f"Error updating holdings: {e}")
+                 cursor = conn.cursor(); now = datetime.datetime.now(datetime.timezone.utc).isoformat(sep=' ', timespec='milliseconds') # Store as UTC
+                 data_to_update = []
+                 for _, row in holdings_data.iterrows():
+                     asset_id = self.get_asset_id(row['symbol'], create_if_missing=False) # Don't create if missing for holdings
+                     if asset_id:
+                         logger.info(f"DB: Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}")
+                         data_to_update.append((
+                             asset_id,
+                             row['quantity'],
+                             row['average_cost_basis'],
+                             now
+                         ))
+                     else:
+                         logger.warning(f"DB: Could not find asset_id for {row['symbol']} during holdings update. Skipping.")
+
+                 if data_to_update:
+                     cursor.executemany(sql, data_to_update)
+                     conn.commit()
+                     logger.info(f"DB: Holdings update executed. Cursor rowcount: {cursor.rowcount}. Attempted: {len(data_to_update)} records.")
+                 else:
+                     logger.info("DB: No holdings data prepared for update.")
+        except sqlite3.Error as e:
+            logger.error(f"Error updating holdings: {e}")
+
 
     def get_holdings(self) -> pd.DataFrame:
         """Fetch current holdings."""
-        query = "SELECT h.*, a.symbol, a.name, a.coingecko_id FROM holdings h JOIN assets a ON h.asset_id = a.id WHERE h.quantity > 0;"
+        query = "SELECT h.*, a.symbol, a.name, a.coingecko_id FROM holdings h JOIN assets a ON h.asset_id = a.id WHERE h.quantity > 0.000000001;" # More robust zero check
         try:
             with self._get_connection() as conn: return pd.read_sql_query(query, conn, parse_dates=['last_updated'])
         except sqlite3.Error as e: logger.error(f"Error fetching holdings: {e}"); return pd.DataFrame()
@@ -190,7 +247,18 @@ class DatabaseManager:
     def insert_historical_prices(self, prices_df: pd.DataFrame):
         """Insert historical prices, ignoring duplicates."""
         sql = "INSERT OR IGNORE INTO historical_prices (asset_id, date, price_usd) VALUES (?, ?, ?)"
-        data_to_insert = [(self.get_asset_id(row['symbol'], create_if_missing=False), pd.to_datetime(row['date']).strftime('%Y-%m-%d'), row['price_usd']) for _, row in prices_df.iterrows() if self.get_asset_id(row['symbol'], create_if_missing=False)]
+        data_to_insert = []
+        for _, row in prices_df.iterrows():
+            asset_id = self.get_asset_id(row['symbol'], create_if_missing=False)
+            if asset_id:
+                try:
+                    # Ensure date is correctly formatted as YYYY-MM-DD string
+                    date_str = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
+                    data_to_insert.append((asset_id, date_str, row['price_usd']))
+                except Exception as e:
+                    logger.warning(f"Could not process date for historical price for {row['symbol']} (Date: {row['date']}): {e}")
+            # else: Asset not in DB, skip.
+
         if not data_to_insert: return
         try:
             with self._get_connection() as conn:
@@ -209,7 +277,8 @@ class DatabaseManager:
 
     def backup_database(self):
         """Create a backup of the database file."""
-        if not self.config.get("backup_enabled", False): logger.info("Database backup is disabled."); return
+        # Assuming self.config is available from __init__; if not, it should be self.db_config
+        if not self.db_config.get("backup_enabled", False): logger.info("Database backup is disabled."); return
         backup_dir = self.db_path.parent / "backups"; backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = backup_dir / f"{self.db_path.stem}_backup_{timestamp}.db"
@@ -218,15 +287,67 @@ class DatabaseManager:
 
     def cleanup_old_data(self):
         """Clean up old data based on configuration."""
-        cleanup_days = self.config.get("cleanup_days", 90)
+        cleanup_days = self.db_config.get("cleanup_days", 90) # Use self.db_config
         if cleanup_days <= 0: logger.info("Data cleanup is disabled."); return
-        cutoff_date = (datetime.datetime.now() - datetime.timedelta(days=cleanup_days)).strftime('%Y-%m-%d %H:%M:%S')
-        commands = [f"DELETE FROM transactions WHERE timestamp < '{cutoff_date}';", f"DELETE FROM portfolio_snapshots WHERE timestamp < '{cutoff_date}';"]
+        cutoff_date_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=cleanup_days)
+        cutoff_date_str = cutoff_date_dt.isoformat(sep=' ', timespec='milliseconds') # Match inserted format
+
+        commands = [
+            f"DELETE FROM {self.TRANSACTIONS_TABLE_NAME} WHERE timestamp < '{cutoff_date_str}';",
+            f"DELETE FROM {self.PORTFOLIO_SNAPSHOTS_TABLE_NAME} WHERE timestamp < '{cutoff_date_str}';"
+            # Add historical_prices cleanup if desired:
+            # f"DELETE FROM {self.HISTORICAL_PRICES_TABLE_NAME} WHERE date < '{cutoff_date_dt.strftime('%Y-%m-%d')}';"
+        ]
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor(); total_deleted = 0
-                for command in commands: cursor.execute(command); total_deleted += cursor.rowcount
+                for command in commands:
+                    logger.debug(f"Executing cleanup command: {command}")
+                    cursor.execute(command);
+                    # SELECT changes() is more reliable for DELETE statements
+                    changes_cursor = conn.cursor()
+                    changes_cursor.execute("SELECT changes()")
+                    changes_result = changes_cursor.fetchone()
+                    deleted_this_command = changes_result[0] if changes_result else 0
+                    total_deleted += deleted_this_command
+                    logger.debug(f"Command affected {deleted_this_command} rows.")
                 conn.commit()
                 if total_deleted > 0: logger.info(f"Cleaned up {total_deleted} old records.")
                 else: logger.info("No old data found to clean up.")
         except sqlite3.Error as e: logger.error(f"Error cleaning up old data: {e}")
+
+    def get_latest_timestamp_for_source(self, source_name: str) -> Optional[datetime.datetime]:
+        """Fetch the latest transaction timestamp for a given source."""
+        query = f"""
+            SELECT MAX(timestamp) as latest_timestamp
+            FROM {self.TRANSACTIONS_TABLE_NAME}
+            WHERE source = ?;
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (source_name,))
+                row = cursor.fetchone()
+                if row and row['latest_timestamp']:
+                    latest_ts_str = row['latest_timestamp']
+                    # Assuming timestamps are stored as ISO format strings UTC (e.g., 'YYYY-MM-DD HH:MM:SS.sss')
+                    # The pd.to_datetime will parse it, then convert to python datetime
+                    dt_obj = pd.to_datetime(latest_ts_str).to_pydatetime()
+
+                    # Ensure the datetime object is timezone-aware (UTC)
+                    if dt_obj.tzinfo is None:
+                        dt_obj = dt_obj.replace(tzinfo=datetime.timezone.utc)
+                    else:
+                        dt_obj = dt_obj.astimezone(datetime.timezone.utc)
+
+                    logger.info(f"Latest timestamp found for source '{source_name}': {dt_obj}")
+                    return dt_obj
+                else:
+                    logger.info(f"No previous transactions found for source '{source_name}'.")
+                    return None
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching latest timestamp for source {source_name}: {e}")
+            return None
+        except Exception as ex: # Catch other potential errors like parsing
+            logger.error(f"Unexpected error processing latest timestamp for source {source_name}: {ex}", exc_info=True)
+            return None

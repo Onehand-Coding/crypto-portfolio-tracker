@@ -1,26 +1,27 @@
 {
   "version": "2.0.0",
-  "target_allocation": {
-    "BTC": 0.40,
-    "ETH": 0.25,
-    "SOL": 0.15,
-    "RENDER": 0.10,
-    "TAO": 0.10
-  },
   "apis": {
     "coingecko": {
       "base_url": "https://api.coingecko.com/api/v3",
       "rate_limit": 100,
       "timeout": 30,
-      "request_delay_ms_internal_transfer": 1200,
-      "request_delay_ms_deposit": 1200,
-      "request_delay_ms_csv": 1200
+      "request_delay_ms": 15000
     },
     "binance": {
+      "base_url": "https://api.binance.com",
+      "sapi_url": "https://api.binance.com/sapi/v1",
+      "futures_url": "https://fapi.binance.com/fapi/v1",
       "rate_limit": 1200,
-      "timeout": 30,
       "testnet": false,
-      "request_delay_ms": 700
+      "timeout": 500,
+      "max_retries_per_batch": 2,
+      "retry_delay_sec": 30,
+      "recv_window": 10000,
+      "request_delay_ms": 500,
+      "batch_days": 7
+    },
+    "yfinance": {
+      "request_delay_ms": 1000
     }
   },
   "database": {
@@ -31,11 +32,11 @@
     "connection_timeout": 30
   },
   "logging": {
-    "level": "INFO",
+    "level": "DEBUG",
     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     "file_config": {
       "enabled": true,
-      "path": "logs/portfolio_tracker.log",
+      "path": "portfolio_tracker.log",
       "max_size_mb": 10,
       "backup_count": 5,
       "rotation": "size"
@@ -70,23 +71,83 @@
   },
   "portfolio": {
     "minimum_value_usd": 1.0,
-    "stablecoin_symbols": ["USDT", "USDC", "BUSD", "DAI"],
+    "stablecoin_symbols": ["USDT"],
+    "crypto_quotes": [],
     "rebalance_threshold_percent": 2.0,
     "cost_basis_method": "fifo",
     "p2p_fiat_currency": "PHP",
-    "binance_csv_path": "data/binance_export.csv"
+    "binance_csv_path": "data/binance_export.csv",
+    "copy_trading_csv_path": "data/copy_trading_transfers.csv",
+    "assets_for_internal_transfer_check": ["USDT"]
+  },
+  "target_allocation": {
+    "BTC": 0.35,
+    "ETH": 0.20,
+    "SOL": 0.12,
+    "RENDER": 0.08,
+    "TAO": 0.08,
+    "AVAX": 0.06,
+    "LINK": 0.06,
+    "ONDO": 0.05
   },
   "rebalancing_strategy": {
     "base_on_cost": true,
     "allow_selling": true,
-    "never_sell_symbols": ["BTC", "ETH"]
+    "never_sell_symbols": []
+  },
+  "symbol_mappings": {
+    "coingecko_ids": {
+      "USDT": "tether",
+      "LDUSDT": "tether",
+      "BTC": "bitcoin",
+      "LDBTC": "bitcoin",
+      "ETH": "ethereum",
+      "LDETH": "ethereum",
+      "SOL": "solana",
+      "LDSOL": "solana",
+      "RNDR": "render-token",
+      "LDRNDR": "render-token",
+      "RENDER": "render-token",
+      "LDRENDER": "render-token",
+      "TAO": "bittensor",
+      "LDTAO": "bittensor",
+      "ONDO": "ondo-finance",
+      "LDONDO": "ondo-finance",
+      "AVAX": "avalanche-2",
+      "LDAVAX": "avalanche-2",
+      "LINK": "chainlink",
+      "LDLINK": "chainlink",
+      "AXS": "axie-infinity",
+      "LDAXS": "axie-infinity",
+      "XRP": "ripple",
+      "LDXRP": "ripple",
+      "PEPE": "pepe",
+      "LDPEPE": "pepe",
+      "HMSTR": "hamster-kombat",
+      "LDHMSTR": "hamster-kombat",
+      "DOGS": "dog",
+      "LDDOGS": "dog"
+    }
+  },
+  "symbol_normalization_map": {
+    "RNDR": "RENDER"
+  },
+  "pepe_gift_details": {
+    "symbol": "PEPE",
+    "amount": "322.6452382"
   },
   "visualization": {
     "chart_style": "seaborn-v0_8",
     "color_palette": "husl",
-    "figure_size": [15, 12],
+    "figure_size": [
+      15,
+      12
+    ],
     "dpi": 300,
-    "formats": ["png", "svg"]
+    "formats": [
+      "png",
+      "svg"
+    ]
   },
   "notifications": {
     "enabled": false,
@@ -102,37 +163,18 @@
       "enabled": false
     }
   },
-  "symbol_mappings": {
-    "coingecko_ids": {
-      "USDT": "tether",
-      "LDUSDT": "tether",
-      "BTC": "bitcoin",
-      "LDBTC": "bitcoin",
-      "ETH": "ethereum",
-      "LDETH": "ethereum",
-      "SOL": "solana",
-      "LDSOL": "solana",
-      "RNDR": "render-token",
-      "RENDER": "render-token",
-      "TAO": "bittensor",
-      "LDTAO": "bittensor",
-      "PEPE": "pepe",
-      "LDPEPE": "pepe",
-      "HMSTR": "hamster-kombat",
-      "LDHMSTR": "hamster-kombat"
-    }
-  },
-  "symbol_normalization_map": {
-    "RNDR": "RENDER"
-  },
-  "pepe_gift_details": {
-  "symbol": "PEPE",
-  "amount": "322.6452382"
-  },
   "history_lookback_days": {
-  "deposits": 90,
-  "withdrawals": 90,
-  "internal_transfers": 365,
-  "p2p_buys": 365
+    "trades": 90,
+    "deposits": 90,
+    "withdrawals": 90,
+    "p2p_buys": 90,
+    "internal_transfers": 90,
+    "spot_futures_transfers": 90,
+    "spot_convert_history": 90,
+    "simple_earn_rewards": 90,
+    "simple_earn_subscriptions": 90,
+  "simple_earn_redemptions": 90,
+  "dividend_history": 90,
+  "staking_history": 90
   }
 }
