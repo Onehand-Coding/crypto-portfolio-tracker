@@ -9,6 +9,9 @@ import asyncio
 import logging
 import datetime
 import functools
+import diskcache
+from pathlib import Path
+from diskcache import Cache
 from collections import deque
 from typing import Dict, Any, Optional, List
 from datetime import timezone, timedelta
@@ -151,8 +154,13 @@ class CryptoPortfolioTracker:
         self.symbol_mappings = self.config.get("symbol_mappings", {}).get("coingecko_ids", {})
         self.norm_map = self.config.get("symbol_normalization_map", {})
         self.stablecoin_symbols = [s.upper() for s in self.config.get("portfolio", {}).get("stablecoin_symbols", ["USDT", "USDC", "BUSD", "DAI"])]
-        self.historical_price_cache: Dict[str, Optional[float]] = {}
         self.fiat_exchange_rate_cache: Dict[str, Optional[float]] = {}
+        self.cache_dir = Path("data") / "cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.coingecko_historical_price_disk_cache = Cache(str(self.cache_dir / "coingecko_historical"))
+        logger.info(f"Disk cache for CoinGecko historical prices initialized at: {self.cache_dir / 'coingecko_historical'}")
+        self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_ohlcv"))
+        logger.info(f"Disk cache for yfinance historical data initialized at: {self.cache_dir / 'yfinance_ohlcv'}")
         self.yfinance_config = self.config.get("apis", {}).get("yfinance", {})
         target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
@@ -193,72 +201,94 @@ class CryptoPortfolioTracker:
         except requests.exceptions.RequestException as e: logger.error(f"CoinGecko price fetch error for {coin_id}: {e}"); return None
 
     def _get_coingecko_historical_price(self, coin_id: str, date_str: str) -> Optional[float]:
-        """
-        Fetches the historical price of a coin from CoinGecko for a specific date.
-        Uses a cache and includes robust retry logic with exponential backoff.
-        Date string should be in 'dd-mm-yyyy' format.
-        """
+        """Fetch historical price from CoinGecko for a specific date, using disk cache."""
         if not coin_id or not date_str:
+            logger.error("Coin ID or date string is missing for CoinGecko historical price fetch.")
             return None
 
-        cache_key = f"{coin_id}_{date_str}"
-        if cache_key in self.historical_price_cache:
-            logger.debug(f"Cache HIT for {coin_id} on {date_str}.")
-            return self.historical_price_cache[cache_key]
+        cache_key = f"{coin_id}_{date_str}" # Unique key for coin_id and date
 
-        logger.debug(f"Cache MISS. Fetching historical price for {coin_id} on {date_str}.")
+        # Check cache first
+        cached_price = self.coingecko_historical_price_disk_cache.get(cache_key, default=None)
+        if cached_price is not None:
+            logger.debug(f"Disk Cache HIT for CoinGecko: {coin_id} on {date_str} -> ${cached_price:.6f}")
+            return cached_price
+
+        logger.debug(f"Disk Cache MISS for CoinGecko: {coin_id} on {date_str}. Fetching from API.")
 
         base_url = self.coingecko_api.get("base_url")
         timeout = self.coingecko_api.get("timeout", 30)
-        url = f"{base_url}/coins/{coin_id}/history?date={date_str}&localization=false"
+        # CoinGecko API expects date in dd-mm-yyyy for /history endpoint
+        # Ensure date_str is in this format before making API call
+        try:
+            # Attempt to parse date_str to ensure it's valid, then reformat
+            parsed_date = pd.to_datetime(date_str, errors='coerce') # Try to parse flexibly
+            if pd.isna(parsed_date): # If parsing failed
+                # Try common alternative if original was YYYY-MM-DD
+                parsed_date = pd.to_datetime(date_str, format='%Y-%m-%d', errors='coerce')
+
+            if pd.isna(parsed_date):
+                logger.error(f"Invalid date format for CoinGecko historical price: {date_str}. Expected dd-mm-yyyy or YYYY-MM-DD.")
+                self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600) # Cache None for an hour for bad format
+                return None
+
+            api_date_str = parsed_date.strftime('%d-%m-%Y')
+        except ValueError:
+            logger.error(f"Could not parse date '{date_str}' for CoinGecko API. Expected format like dd-mm-yyyy or YYYY-MM-DD.")
+            self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600)
+            return None
+
+        url = f"{base_url}/coins/{coin_id}/history?date={api_date_str}&localization=false"
 
         max_retries = 3
-        initial_wait_seconds = 60
+        initial_wait_seconds = 60 # For 429 errors (rate limit)
+        # Define which server error codes might warrant a retry
         server_error_codes_to_retry = [500, 502, 503, 504]
-
         retries_left = max_retries
+
         while retries_left >= 0:
             try:
                 response = requests.get(url, timeout=timeout)
-                response.raise_for_status()
+                response.raise_for_status() # Will raise HTTPError for 4xx/5xx
                 data = response.json()
                 price = None
                 if "market_data" in data and "current_price" in data["market_data"] and "usd" in data["market_data"]["current_price"]:
                     price = float(data["market_data"]["current_price"]["usd"])
+                    logger.info(f"Fetched price for {coin_id} on {api_date_str} (requested {date_str}): ${price:.6f}")
+                    self.coingecko_historical_price_disk_cache.set(cache_key, price) # Cache successful fetch indefinitely
+                    return price
                 else:
-                    logger.warning(f"Could not find USD price in historical data for {coin_id} on {date_str}. Response: {data}")
-
-                self.historical_price_cache[cache_key] = price
-                return price
-
+                    logger.warning(f"No price data in 'usd' found for {coin_id} on {api_date_str} in API response: {data}")
+                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache None for a day for missing data
+                    return None
             except requests.exceptions.HTTPError as e:
                 should_retry = False
-                if e.response.status_code == 429:
+                if e.response.status_code == 429: # Too Many Requests
                     should_retry = True
-                    logger.error(f"Rate limited (429) by CoinGecko for {coin_id} on {date_str}.")
+                    logger.error(f"Rate limited (429) by CoinGecko for {coin_id} on {api_date_str}.")
                 elif e.response.status_code in server_error_codes_to_retry:
                     should_retry = True
-                    logger.error(f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {date_str}.")
+                    logger.error(f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {api_date_str}.")
 
                 if should_retry and retries_left > 0:
                     wait_time = initial_wait_seconds * (max_retries - retries_left + 1)
-                    logger.info(f"Waiting {wait_time}s before retry... ({retries_left} retries left)")
+                    logger.info(f"Waiting {wait_time}s before retry... ({retries_left} retries left for {coin_id} on {api_date_str})")
                     time.sleep(wait_time)
                     retries_left -= 1
-                else:
+                else: # If not a retryable error, or no retries left
                     if e.response.status_code == 404:
-                         logger.warning(f"No historical data found on CoinGecko for {coin_id} on {date_str}.")
-                    elif not (e.response.status_code == 404):
-                         logger.error(f"HTTP error fetching historical price for {coin_id} on {date_str} after all retries (if any): {e}")
-                    self.historical_price_cache[cache_key] = None
-                    return None
+                        logger.warning(f"No historical data found on CoinGecko (404) for {coin_id} on {api_date_str}.")
+                    elif not (e.response.status_code == 404): # Don't log other 4xx errors as "failure" if they are not retryable
+                        logger.error(f"Failed to fetch CoinGecko historical price for {coin_id} on {api_date_str}: {e}", exc_info=True)
+                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24) # Cache None for a day
+                    return None # Break from loop and function
             except Exception as e:
-                logger.error(f"Unexpected error fetching historical price for {coin_id} on {date_str}: {e}", exc_info=True)
-                self.historical_price_cache[cache_key] = None
-                return None
+                logger.error(f"Unexpected error fetching CoinGecko historical price for {coin_id} on {api_date_str}: {e}", exc_info=True)
+                self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600) # Cache None for an hour on unexpected errors
+                return None # Break from loop and function
 
-        logger.error(f"Failed to fetch historical price for {coin_id} on {date_str} due to exhausted retries.")
-        self.historical_price_cache[cache_key] = None
+        logger.error(f"Failed to fetch historical price for {coin_id} on {api_date_str} due to exhausted retries.")
+        self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24) # Cache None for a day after exhausted retries
         return None
 
     def _get_historical_fiat_exchange_rate(self, date_str_orig: str, from_currency: str, to_currency: str) -> Optional[float]:
@@ -453,6 +483,22 @@ class CryptoPortfolioTracker:
         if not yf_ticker:
             logger.warning("yf_ticker was empty in _fetch_historical_data_yfinance_async.")
             return None
+
+        cache_key = f"{yf_ticker}_{period_str}_{interval_str}"
+
+        # --- Caching logic START ---
+        cached_data = self.yfinance_disk_cache.get(cache_key, default=None)
+        if cached_data is not None:
+            # If 'None' was explicitly cached for a known failure, this will also be a hit
+            if isinstance(cached_data, pd.DataFrame):
+                 logger.debug(f"Disk Cache HIT for yfinance: {cache_key} -> {len(cached_data)} rows.")
+            else: # Handle the case where None was cached
+                 logger.debug(f"Disk Cache HIT for yfinance (known failure): {cache_key} -> None")
+            return cached_data
+
+        logger.debug(f"Disk Cache MISS for yfinance: {cache_key}. Fetching from API.")
+        # --- Caching logic END ---
+
         try:
             logger.debug(f"Preparing yfinance historical data fetch for {yf_ticker}, period_str='{period_str}', interval_str='{interval_str}'")
 
@@ -473,12 +519,9 @@ class CryptoPortfolioTracker:
                 start_date_dt = end_date_dt - pd.DateOffset(years=1)
 
             start_date_str_for_yf = start_date_dt.strftime('%Y-%m-%d')
-            # For yfinance, end date is exclusive, so fetching up to tomorrow ensures today's data is included if available after market close.
             end_date_str_for_yf = (end_date_dt + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
-
             loop = asyncio.get_event_loop()
-            # functools.partial is correctly used here from our previous fix
             partial_yf_download = functools.partial(
                 yf.download,
                 tickers=yf_ticker,
@@ -486,45 +529,44 @@ class CryptoPortfolioTracker:
                 end=end_date_str_for_yf,
                 interval=interval_str,
                 progress=False,
-                auto_adjust=True # auto_adjust=True usually gives simple column names
+                auto_adjust=True
             )
 
             logger.debug(f"Executing yfinance download via executor: Ticker='{yf_ticker}', Start='{start_date_str_for_yf}', End='{end_date_str_for_yf}', Interval='{interval_str}'")
             data = await loop.run_in_executor(None, partial_yf_download)
 
             if data.empty:
-                logger.warning(f"No historical data from yfinance for {yf_ticker} (Start:{start_date_str_for_yf}, End:{end_date_str_for_yf}, Int:{interval_str}).")
+                logger.warning(f"No historical data from yfinance for {yf_ticker} (Start:{start_date_str_for_yf}, End:{end_date_str_for_yf}, Int:{interval_str}). Caching this failure.")
+                self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure for 1 day
                 return None
 
-            # --- Grok's suggested fix area, with slight enhancement ---
+            # --- Flatten MultiIndex logic from before ---
             if isinstance(data.columns, pd.MultiIndex):
                 logger.info(f"yfinance returned MultiIndex columns for {yf_ticker}: {data.columns}. Attempting to flatten.")
-                # Check if the ticker name is in the second level of the column index
                 if yf_ticker in data.columns.get_level_values(1):
                     try:
                         data = data.xs(yf_ticker, axis=1, level=1)
                         logger.info(f"Successfully flattened columns for {yf_ticker} using level 1. New columns: {data.columns}")
                     except KeyError as e_xs:
-                        logger.warning(f"KeyError during .xs() for {yf_ticker} at level 1, despite it being in level_values: {e_xs}. Columns remain MultiIndex.")
-                # Check if the ticker name is in the first level (less common for single ticker, but possible if yf.download grouped differently)
+                        logger.warning(f"KeyError during .xs() for {yf_ticker} at level 1: {e_xs}. Columns remain MultiIndex.")
                 elif yf_ticker in data.columns.get_level_values(0) and isinstance(data[yf_ticker], pd.DataFrame):
-                     data = data[yf_ticker] # This should return a DataFrame with simple columns if structure is (Ticker, Measure)
-                     logger.info(f"Successfully flattened columns for {yf_ticker} using level 0. New columns: {data.columns}")
+                    data = data[yf_ticker]
+                    logger.info(f"Successfully flattened columns for {yf_ticker} using level 0. New columns: {data.columns}")
                 else:
-                    logger.warning(f"Could not confidently flatten MultiIndex for {yf_ticker} based on ticker name in levels. Columns: {data.columns}. TA calculations might still fail if pandas-ta cannot find standard column names.")
+                    logger.warning(f"Could not confidently flatten MultiIndex for {yf_ticker}. TA might fail.")
 
-            # Standardize column names to ensure 'Close', 'Open', etc. are as expected by pandas-ta
-            # pandas-ta is generally case-insensitive for common names, but this adds robustness
-            data.columns = [str(col).lower().capitalize() for col in data.columns] # Ensure they are simple strings and consistently cased
-
+            data.columns = [str(col).lower().capitalize() for col in data.columns]
             data.index = pd.to_datetime(data.index, utc=True)
-            logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker} (Start:{start_date_str_for_yf}, End:{end_date_str_for_yf}, Int:{interval_str}). Columns after processing: {data.columns}")
+            logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker}. Caching result.")
+            self.yfinance_disk_cache.set(cache_key, data) # Cache successful result indefinitely
             return data
-        except ValueError as ve: # Handle potential errors during date parsing or other value issues
+        except ValueError as ve:
             logger.error(f"ValueError during yfinance data fetch preparation for {yf_ticker}: {ve}", exc_info=True)
+            self.yfinance_disk_cache.set(cache_key, None, expire=3600) # Cache failure for 1 hour
             return None
-        except Exception as e: # Catch-all for other unexpected errors during the fetch process
+        except Exception as e:
             logger.error(f"Generic error fetching yfinance data for {yf_ticker}: {e}", exc_info=True)
+            self.yfinance_disk_cache.set(cache_key, None, expire=3600) # Cache failure for 1 hour
             return None
 
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
@@ -2681,87 +2723,62 @@ class CryptoPortfolioTracker:
         else:
             logger.warning("No holdings to update after FIFO calculation for all symbols.")
 
-    def sync_data(self):
-        """Synchronize data from APIs, P2P, CSV, and update holdings."""
+    async def sync_data(self):
+        """Asynchronously synchronize data from all sources, and update holdings."""
         logger.info("Starting data synchronization...")
+
+        # This part remains synchronous as it's just config loading
         target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
         self.target_assets_for_sync.add("USDT")
         logger.info(f"SYNC FOCUS: Will be focusing on transactions for target assets: {list(self.target_assets_for_sync)}")
 
-        # Fetch data using the updated methods that implement selective syncing
-        # The `days_back` parameter in these calls now acts as a fallback for the initial sync.
         lookback_config = self.config.get("history_lookback_days", {})
 
-        logger.info("Fetching new spot trades...")
-        binance_trades = self.fetch_binance_transactions() # Uses lookback_config['trades']
+        # Create tasks for each data fetching method using asyncio.to_thread
+        # This allows the synchronous, network-blocking calls inside each method to run concurrently without blocking the main program
+        tasks = [
+            asyncio.to_thread(self.fetch_binance_transactions),
+            asyncio.to_thread(self.fetch_deposit_history, days_back=lookback_config.get("deposits", 90)),
+            asyncio.to_thread(self.fetch_withdrawal_history, days_back=lookback_config.get("withdrawals", 90)),
+            asyncio.to_thread(self.fetch_p2p_usdt_buys, days_back=lookback_config.get("p2p_buys", 90)),
+            asyncio.to_thread(self.fetch_internal_transfers, days_back=lookback_config.get("internal_transfers", 90)),
+            asyncio.to_thread(self.fetch_spot_futures_transfers, asset="USDT", days_back=lookback_config.get("spot_futures_transfers", 90)),
+            asyncio.to_thread(self.fetch_spot_convert_history, days_back=lookback_config.get("spot_convert_history", 90)),
+            asyncio.to_thread(self.fetch_simple_earn_flexible_rewards, days_back=lookback_config.get("simple_earn_rewards", 90)),
+            asyncio.to_thread(self.fetch_simple_earn_flexible_subscriptions, days_back=lookback_config.get("simple_earn_subscriptions", 90)),
+            asyncio.to_thread(self.fetch_simple_earn_flexible_redemptions, days_back=lookback_config.get("simple_earn_redemptions", 90)),
+            asyncio.to_thread(self.fetch_dividend_history, days_back=lookback_config.get("dividend_history", 90)),
+            asyncio.to_thread(self.fetch_staking_history, days_back=lookback_config.get("staking_history", 90)),
+        ]
 
-        logger.info("Fetching new external deposits...")
-        binance_deposits = self.fetch_deposit_history(days_back=lookback_config.get("deposits", 90))
+        logger.info(f"Launching {len(tasks)} data fetching tasks concurrently...")
 
-        logger.info("Fetching new withdrawals...")
-        binance_withdrawals = self.fetch_withdrawal_history(days_back=lookback_config.get("withdrawals", 90))
+        # asyncio.gather runs all tasks concurrently and waits for them all to complete
+        results_from_all_tasks = await asyncio.gather(*tasks)
 
-        logger.info("Fetching P2P USDT buy history...")
-        p2p_buys = self.fetch_p2p_usdt_buys(days_back=lookback_config.get("p2p_buys", 90))
-
-        logger.info("Fetching internal transfers (Funding <-> Spot)...")
-        binance_internal_transfers = self.fetch_internal_transfers(days_back=lookback_config.get("internal_transfers", 90))
-
-        logger.info("Fetching USDT transfers (Spot <-> Futures)...")
-        # Assuming you only track USDT for spot-futures, otherwise, you might loop through target assets
-        spot_futures_transfers = self.fetch_spot_futures_transfers(asset="USDT", days_back=lookback_config.get("spot_futures_transfers", 90))
-
-        logger.info("Fetching Spot Convert History from API...")
-        spot_convert_api_txs = self.fetch_spot_convert_history(days_back=lookback_config.get("spot_convert_history", 90))
-
-        logger.info("Fetching Simple Earn Flexible rewards from API...")
-        simple_earn_rewards_txs = self.fetch_simple_earn_flexible_rewards(days_back=lookback_config.get("simple_earn_rewards", 90))
-
-        logger.info("Fetching Simple Earn Flexible subscriptions from API...")
-        simple_earn_subscriptions_txs = self.fetch_simple_earn_flexible_subscriptions(days_back=lookback_config.get("simple_earn_subscriptions", 90))
-
-        logger.info("Fetching Simple Earn Flexible redemptions from API...")
-        simple_earn_redemptions_txs = self.fetch_simple_earn_flexible_redemptions(days_back=lookback_config.get("simple_earn_redemptions", 90))
-
-        logger.info("Fetching dividend history from API...")
-        dividend_txs = self.fetch_dividend_history(days_back=lookback_config.get("dividend_history", 90))
-
-        logger.info("Fetching staking history from API...")
-        staking_txs = self.fetch_staking_history(days_back=lookback_config.get("staking_history", 90))
-
-        all_new_transactions = (
-                            binance_trades +
-                            binance_deposits +
-                            binance_withdrawals +
-                            binance_internal_transfers +
-                            p2p_buys +
-                            spot_futures_transfers +
-                            spot_convert_api_txs +
-                            simple_earn_rewards_txs +
-                            simple_earn_subscriptions_txs +
-                            simple_earn_redemptions_txs +
-                            dividend_txs +
-                            staking_txs
-                            )
+        # Combine results from all tasks into a single list
+        all_new_transactions = []
+        for result_list in results_from_all_tasks:
+            if result_list:
+                all_new_transactions.extend(result_list)
 
         if all_new_transactions:
             logger.info(f"Processing a total of {len(all_new_transactions)} fetched/parsed transaction items.")
-            # Sort transactions by timestamp before inserting
-            all_new_transactions.sort(key=lambda x: x['timestamp'])
-
-            # Filter out transactions older than the overall selective sync start time if necessary,
-            # though the individual fetch methods should already handle this.
-            # This step is more of a final guard.
-            # However, with the overlap strategy, it's better to let `bulk_insert_transactions` handle conflicts.
+            all_new_transactions.sort(key=lambda x: x['timestamp']) # Sort all txs chronologically before DB insertion
 
             num_inserted_updated = self.db_manager.bulk_insert_transactions(all_new_transactions)
             logger.info(f"Attempted to process {len(all_new_transactions)} transaction records. Database reported {num_inserted_updated if num_inserted_updated is not None else 'unknown'} changes/insertions.")
         else:
-            logger.info("No new transactions fetched or processed.")
+            logger.info("No new transactions fetched or processed from any source.")
 
         self.update_holdings_from_transactions()
         logger.info("Data synchronization finished.")
+
+    async def run_full_sync(self) -> Dict[str, Any]:
+        """Runs the full async data sync and then calculates metrics."""
+        await self.sync_data()
+        return self.calculate_portfolio_metrics()
 
     def get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """Get current prices for a list of symbols using CoinGecko (Batched with Retry).
@@ -3089,7 +3106,6 @@ class CryptoPortfolioTracker:
     def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
     def export_csv_backup(self): self.csv_exporter.export(transactions_df=self.db_manager.get_all_transactions(), holdings_df=self.db_manager.get_holdings())
     def cleanup_old_data(self): self.db_manager.cleanup_old_data()
-    def run_full_sync(self) -> Dict[str, Any]: self.sync_data(); return self.calculate_portfolio_metrics()
 
     def create_portfolio_charts(self, metrics: Dict[str, Any]):
         """Generate portfolio charts."""
