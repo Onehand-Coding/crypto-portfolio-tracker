@@ -36,7 +36,7 @@
     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     "file_config": {
       "enabled": true,
-      "path": "portfolio_tracker.log",
+      "path": "logs/portfolio_tracker.log",
       "max_size_mb": 10,
       "backup_count": 5,
       "rotation": "size"

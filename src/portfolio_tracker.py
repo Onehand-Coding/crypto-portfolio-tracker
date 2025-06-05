@@ -587,15 +587,19 @@ class CryptoPortfolioTracker:
 
         if total_portfolio_value == 0:
             logger.warning("Total portfolio value is $0. Cannot generate rebalancing suggestions.")
-            return pd.DataFrame(columns=["Symbol", "Target %", "Current %", "Current Value (USD)",
-                                         "Target Value (USD)", "Alloc. Drift (%)", "RSI (14D)",
-                                         "Price vs 200w MA (%)", "Signal", "Action"])
+            return pd.DataFrame()
 
         target_allocation_normalized = {
             self.norm_map.get(k.upper(), k.upper()): v
             for k, v in self.config.get("target_allocation", {}).items()
         }
         suggestions_data = []
+
+        def format_coin_amount(amount):
+            if amount > 1:
+                return f"{amount:,.2f}"
+            else:
+                return f"{amount:,.6f}".rstrip('0').rstrip('.')
 
         for symbol_upper_case in target_allocation_normalized.keys():
             logger.info(f"--- Analyzing: {symbol_upper_case} ---")
@@ -616,35 +620,17 @@ class CryptoPortfolioTracker:
             df_weekly_hist = None
             df_daily_hist = None
             if yf_ticker:
-                # CORRECTED CALLS
                 df_weekly_hist = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str="4y", interval_str="1wk")
                 df_daily_hist = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str="60d", interval_str="1d")
 
             ta_indicators = self._calculate_technical_indicators(symbol_upper_case, df_weekly_hist, df_daily_hist)
             rsi_14d = ta_indicators.get("rsi_14d")
             price_vs_200w_ma_percent = ta_indicators.get("price_vs_200w_ma_percent")
-            price_from_ta_candidate = ta_indicators.get("current_price")
-            price_for_ta_eval = live_current_price # Default to live_current_price
 
-            if isinstance(price_from_ta_candidate, (float, int)): # Check if it's already a scalar number
-                if pd.notna(price_from_ta_candidate): # Ensure it's not NaN
-                    price_for_ta_eval = price_from_ta_candidate
-                else:
-                    logger.warning(f"TA 'current_price' for {symbol_upper_case} was NaN. Using live market price for TA evaluation.")
-            elif isinstance(price_from_ta_candidate, pd.Series):
-                if not price_from_ta_candidate.empty and pd.notna(price_from_ta_candidate.iloc[0]):
-                    price_for_ta_eval = float(price_from_ta_candidate.iloc[0]) # Extract scalar from Series
-                    logger.info(f"TA 'current_price' for {symbol_upper_case} was a Series; using its first value: {price_for_ta_eval} for TA evaluation.")
-                else:
-                    logger.warning(f"TA 'current_price' for {symbol_upper_case} was an empty or all-NaN Series. Using live market price for TA evaluation.")
-            elif price_from_ta_candidate is not None: # It's not None, not a scalar, not a usable Series
-                logger.warning(f"TA 'current_price' for {symbol_upper_case} was an unexpected type (type: {type(price_from_ta_candidate)}, value: {price_from_ta_candidate}). Using live market price for TA evaluation.")
-            # If price_from_ta_candidate was None, price_for_ta_eval correctly remains live_current_price as set by default
-
-            signal_light = "🟡 HOLD"
-            action_text = "Hold."
+            signal_light = "HOLD"
+            action_text = "Hold: Allocation is within tolerance."
             action_value_usd = 0.0
-            action_type = "NONE"
+
             is_significantly_overweight = allocation_drift_abs_val_vs_target_val > 0.5
             is_significantly_underweight = allocation_drift_abs_val_vs_target_val < -0.5
             rsi_very_overbought = rsi_14d is not None and rsi_14d > 75
@@ -653,44 +639,43 @@ class CryptoPortfolioTracker:
             price_near_or_below_ma = price_vs_200w_ma_percent is not None and price_vs_200w_ma_percent <= 0
 
             if (rsi_very_overbought and price_well_above_ma) or is_significantly_overweight:
-                signal_light = "🔴 SELL"
+                signal_light = "SELL"
                 sell_percentage_of_position = 0.075
                 action_value_usd = current_value * sell_percentage_of_position
-                action_type = "SELL_PERCENT"
-                action_text = f"Sell ~{sell_percentage_of_position*100:.1f}% of position (${action_value_usd:,.2f})"
+
+                coin_amount_to_sell = action_value_usd / live_current_price if live_current_price > 0 else 0
+
+                # --- THIS IS THE MODIFIED LINE ---
+                action_text = (f"Sell ~{sell_percentage_of_position * 100:.1f}% of position (~${action_value_usd:,.2f}), "
+                               f"which is {format_coin_amount(coin_amount_to_sell)} {symbol_upper_case}")
+
+
             elif (rsi_very_oversold and price_near_or_below_ma) or is_significantly_underweight:
-                signal_light = "🟢 BUY"
+                signal_light = "BUY"
                 underweight_amount_usd = target_value_for_symbol - current_value
                 action_value_usd = underweight_amount_usd * 0.5
-                if action_value_usd < 0 : action_value_usd = 0
-                action_type = "BUY_VALUE"
-                action_text = f"Buy ~${action_value_usd:,.2f} worth"
+                if action_value_usd < 0: action_value_usd = 0
+
+                coin_amount_to_buy = action_value_usd / live_current_price if live_current_price > 0 else 0
+                action_text = (f"Buy ~${action_value_usd:,.2f} worth "
+                               f"({format_coin_amount(coin_amount_to_buy)} {symbol_upper_case})")
 
             suggestions_data.append({
-                "Symbol": symbol_upper_case, "Target %": f"{target_pct * 100:.2f}%",
-                "Current %": f"{current_pct_of_portfolio:.2f}%", "Current Value (USD)": current_value,
-                "Target Value (USD)": target_value_for_symbol,
-                "Alloc. Drift (%)": f"{allocation_drift_abs_val_vs_target_val * 100:.2f}%" if allocation_drift_abs_val_vs_target_val != float('inf') else "N/A",
-                "RSI (14D)": f"{rsi_14d:.2f}" if rsi_14d is not None else "N/A",
-                "Price vs 200w MA (%)": f"{price_vs_200w_ma_percent:.2f}%" if price_vs_200w_ma_percent is not None else "N/A",
-                "Signal": signal_light, "Suggested Action Detail": action_text,
-                "Action Value (USD)": action_value_usd, "Action Type": action_type,
-                "Current Qty": current_qty, "Live Price (USD)": live_current_price
+                "Symbol": symbol_upper_case,
+                "Target %": target_pct * 100,
+                "Current %": current_pct_of_portfolio,
+                "Current Value (USD)": current_value,
+                "RSI (14D)": rsi_14d,
+                "Price vs 200w MA (%)": price_vs_200w_ma_percent,
+                "Signal": signal_light,
+                "Suggested Action Detail": action_text
             })
-            yf_delay_ms = self.yfinance_config.get("request_delay_ms", 200) # Use self.yfinance_config
+            yf_delay_ms = self.yfinance_config.get("request_delay_ms", 200)
             await asyncio.sleep(yf_delay_ms / 1000.0)
 
         if not suggestions_data: return pd.DataFrame()
+
         df_suggestions = pd.DataFrame(suggestions_data)
-        cols_order = [
-            "Symbol", "Target %", "Current %", "Current Value (USD)", "Target Value (USD)",
-            "Alloc. Drift (%)", "RSI (14D)", "Price vs 200w MA (%)",
-            "Signal", "Suggested Action Detail", "Action Value (USD)", "Action Type",
-            "Current Qty", "Live Price (USD)"
-        ]
-        for col in ["Current Value (USD)", "Target Value (USD)", "Action Value (USD)", "Live Price (USD)"]:
-            df_suggestions[col] = df_suggestions[col].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "N/A")
-        df_suggestions = df_suggestions.reindex(columns=cols_order)
         return df_suggestions
 
     def fetch_binance_balances(self) -> pd.DataFrame:
@@ -757,6 +742,11 @@ class CryptoPortfolioTracker:
         if not self.binance_client:
             logger.warning("Binance client not initialized. Cannot fetch transactions.")
             return []
+
+        # --- TEMPORARY MODIFICATION FOR FULL HISTORY SYNC ---
+        # days_back = 1095  # Override to 3 years for one-time full sync
+        # logger.warning(f"TEMPORARY OVERRIDE: Fetching full trade history for the last {days_back} days.")
+        # --- END TEMPORARY MODIFICATION ---
 
         transactions = []
         norm_map = self.config.get("symbol_normalization_map", {})
@@ -2279,134 +2269,6 @@ class CryptoPortfolioTracker:
         logger.info(f"Fetched and processed {len(all_redemption_transactions)} new Simple Earn Flexible redemption transactions for target assets.")
         return all_redemption_transactions
 
-    def fetch_simple_earn_flexible_redemptions(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible redemptions.")
-            return []
-
-        source_name = "Binance API Simple Earn Redemption"
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("simple_earn_redemptions", days_back if days_back is not None else 90)
-
-        overall_start_time_dt: datetime.datetime
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        else:
-            overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_start_time_dt >= now_utc:
-            logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
-            return []
-
-        logger.info(f"Fetching Simple Earn Flexible redemptions from {overall_start_time_dt.date()}.")
-        all_redemption_transactions = []
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        batch_days = config_apis_binance.get("transfer_history_batch_days", 7)
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 2)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms", 250)
-        recv_window_ms = config_apis_binance.get("recv_window", 10000)
-        endpoint_path = 'simple-earn/flexible/history/redemptionRecord'
-        processed_ids = set()
-        current_batch_end_time_dt = now_utc
-
-        while current_batch_end_time_dt > overall_start_time_dt:
-            current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-            if current_batch_start_time_dt < overall_start_time_dt:
-                current_batch_start_time_dt = overall_start_time_dt
-            start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-            end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-            if start_ms >= end_ms: break
-
-            logger.debug(f"Fetching SE Redemptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-            current_page_api = 1; fetched_all_for_batch = False
-            while not fetched_all_for_batch:
-                history_page = None; fetched_rows_in_page = None; api_total_for_this_query = 0
-                for attempt in range(max_retries):
-                    try:
-                        params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        logger.debug(f"API Call (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
-                        history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
-                        fetched_rows_in_page = history_page.get('rows', [])
-                        api_total_for_this_query = history_page.get('total', 0)
-                        logger.debug(f"Raw API (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
-                        if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                        break
-                    except Exception as e:
-                        logger.error(f"API/Net Error attempt {attempt + 1} for SE Redemptions page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
-                        if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                        else: logger.error(f"Max retries for SE Redemptions page {current_page_api}."); fetched_all_for_batch = True
-
-                if fetched_rows_in_page:
-                    for item in fetched_rows_in_page:
-                        timestamp_ms = item.get('time')
-                        if not timestamp_ms: continue
-                        timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                        if latest_known_ts and timestamp <= latest_known_ts:
-                            continue
-
-                        redeem_id = str(item.get('redeemId', f"serd_{item.get('asset')}_{timestamp_ms}_{item.get('amount')}"))
-                        if redeem_id in processed_ids: continue
-                        processed_ids.add(redeem_id)
-
-                        asset_redeemed = item.get('asset','').upper()
-                        normalized_symbol = self.norm_map.get(asset_redeemed, asset_redeemed)
-                        if normalized_symbol not in self.target_assets_for_sync:
-                            continue
-                        quantity = float(item.get('amount', 0.0))
-                        if quantity == 0: continue
-
-                        price_usd = 0.0
-                        coingecko_called_for_item = False
-                        if normalized_symbol in self.stablecoin_symbols: price_usd = 1.0
-                        else:
-                            coin_id = self.symbol_mappings.get(normalized_symbol)
-                            if coin_id:
-                                date_str_for_price = timestamp.strftime('%d-%m-%Y')
-                                fetched_price = self._get_coingecko_historical_price(coin_id, date_str_for_price)
-                                coingecko_called_for_item = True
-                                if fetched_price is not None:
-                                    price_usd = fetched_price
-                                    logger.debug(f"SE Redemp: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                else: logger.warning(f"SE Redemp: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                            else: logger.warning(f"SE Redemp: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
-
-                        all_redemption_transactions.append({
-                            "symbol": normalized_symbol, "timestamp": timestamp, "type": "BUY",
-                            "quantity": quantity, "price_usd": price_usd,
-                            "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                            "source": source_name, "transaction_hash": redeem_id,
-                            "notes": f"Simple Earn Redemption: {quantity:.8f} {normalized_symbol}"
-                        })
-                        if coingecko_called_for_item and price_usd > 0.0 and cg_delay_ms > 0:
-                             time.sleep(cg_delay_ms / 1000.0)
-
-                    if not fetched_rows_in_page or (api_total_for_this_query > 0 and current_page_api * limit_per_page >= api_total_for_this_query) or len(fetched_rows_in_page) < limit_per_page:
-                        fetched_all_for_batch = True
-                    else: current_page_api += 1
-                else: fetched_all_for_batch = True
-
-                if fetched_all_for_batch:
-                    logger.debug(f"Completed SE Redemptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
-                    break
-
-            current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-            if current_batch_end_time_dt <= overall_start_time_dt: break
-
-        logger.info(f"Fetched and processed {len(all_redemption_transactions)} new Simple Earn Flexible redemption transactions for target assets.")
-        return all_redemption_transactions
-
     def fetch_dividend_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
             logger.warning("Binance client not initialized. Cannot fetch dividend history.")
@@ -2682,46 +2544,49 @@ class CryptoPortfolioTracker:
             logger.warning("No transactions found in DB. Cannot update holdings.")
             return
 
-        logger.debug(f"Data types of all_txs DataFrame immediately after DB read:\n{all_txs.dtypes}")
         updated_holdings = []
         for symbol, group_df in all_txs.groupby('symbol'):
             logger.debug(f"Calculating FIFO for {symbol}...")
+
             group_df_copy = group_df.copy()
             group_df_copy['price_usd'] = pd.to_numeric(group_df_copy['price_usd'], errors='coerce').fillna(0.0)
             group_df_copy['quantity'] = pd.to_numeric(group_df_copy['quantity'], errors='coerce').fillna(0.0)
             group_df_copy['timestamp'] = pd.to_datetime(group_df_copy['timestamp'], errors='coerce')
+            group_df_copy.dropna(subset=['timestamp'], inplace=True)
 
-            if symbol.upper() == 'USDT':
-                logger.info(f"USDT transactions being passed to FIFO (ALL):\n"
-                            f"{group_df_copy[['timestamp', 'type', 'quantity', 'price_usd', 'source', 'notes']].sort_values(by='timestamp').to_string()}")
+            # --- START OF THE FIX ---
+            # 1. Isolate real trades for cost basis calculation
+            cost_basis_tx_df = group_df_copy[
+                ~group_df_copy['source'].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
+            ]
+            logger.info(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
 
+            if cost_basis_tx_df.empty:
+                logger.info(f"No non-transfer transactions for {symbol}. Cannot calculate cost basis.")
+                continue  # Skip to the next symbol
 
-            if group_df_copy['timestamp'].isna().any():
-                logger.warning(f"Found NaT timestamps for {symbol} before FIFO. Dropping these rows.")
-                group_df_copy.dropna(subset=['timestamp'], inplace=True)
+            # 2. Calculate cost basis and the remaining quantity FROM THAT BASIS
+            cost_basis_qty, avg_cost = calculate_fifo_cost_basis(cost_basis_tx_df)
 
-            if group_df_copy.empty:
-                logger.info(f"No valid transactions left for {symbol} after NaT timestamp removal. Skipping FIFO.")
-                final_qty, avg_cost = 0.0, 0.0
-            else:
-                final_qty, avg_cost = calculate_fifo_cost_basis(group_df_copy)
-            if symbol.upper() == 'USDT':
-                logger.info(f"DEBUG: USDT FIFO CALCULATION RESULT -> Qty={final_qty:.8f}, AvgCost={avg_cost:.8f}")
-            if final_qty > 0.00000001:
+            # 3. If there's a valid average cost, save it.
+            # The quantity saved here is just a placeholder; the final report uses the live wallet balance.
+            if avg_cost > 0:
+                logger.info(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
                 updated_holdings.append({
                     "symbol": symbol,
-                    "quantity": final_qty,
+                    "quantity": cost_basis_qty,
                     "average_cost_basis": avg_cost
                 })
             else:
-                logger.info(f"Final quantity for {symbol} is ~zero after FIFO. Not adding/updating in holdings table.")
+                logger.info(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
+            # --- END OF THE FIX ---
 
         if updated_holdings:
             holdings_df = pd.DataFrame(updated_holdings)
             self.db_manager.update_holdings(holdings_df)
-            logger.info(f"Successfully updated/inserted {len(holdings_df)} asset holdings in the database after FIFO.")
+            logger.info(f"Successfully updated/inserted {len(holdings_df)} asset holdings in the database with new cost basis.")
         else:
-            logger.warning("No holdings to update after FIFO calculation for all symbols.")
+            logger.warning("No holdings with valid cost basis to update in the database.")
 
     async def sync_data(self):
         """Asynchronously synchronize data from all sources, and update holdings."""
@@ -2939,168 +2804,47 @@ class CryptoPortfolioTracker:
             print("No holdings data to display.")
             print("="*80)
 
-    def get_rebalance_suggestions_by_cost(self) -> Optional[pd.DataFrame]:
-        """Calculate rebalance suggestions based on target cost basis, using LIVE quantities."""
-        logger.info("Calculating rebalance suggestions by cost basis...")
-        db_holdings = self.db_manager.get_holdings()
-        if db_holdings.empty or 'average_cost_basis' not in db_holdings.columns:
-            logger.warning("Need holdings with average_cost_basis from DB. Run sync first.")
-            return None
-        cost_basis_df_to_merge = db_holdings[['symbol', 'average_cost_basis']].copy()
-        live_balances_df = self.fetch_binance_balances()
-        if live_balances_df.empty:
-            logger.error("Could not fetch LIVE balances. Cannot rebalance accurately.")
-            return None
-        holdings_df = pd.merge(live_balances_df, cost_basis_df_to_merge, on='symbol', how='left')
-        holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
-        holdings_df['current_cost_basis'] = holdings_df['quantity'] * holdings_df['average_cost_basis']
+    def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame]):
+        """Prints rebalancing suggestions in a clean, readable format."""
+        if suggestions_df is None or suggestions_df.empty:
+            print("\nCould not generate rebalancing suggestions.")
+            return
 
-        strategy_config = self.config.get("rebalancing_strategy", {})
-        target_allocation_config = self.config.get("target_allocation", {})
-        norm_map = self.config.get("symbol_normalization_map", {})
-        allow_selling = strategy_config.get("allow_selling", True)
-        never_sell = [s.upper() for s in strategy_config.get("never_sell_symbols", [])]
+        print("\n" + "="*80)
+        print("⚖️ REBALANCING SUGGESTIONS (Core Portfolio - Technical Analysis)")
+        print("="*80)
 
-        if not target_allocation_config:
-            logger.warning("Need target allocation for suggestions.")
-            return None
+        for _, row in suggestions_df.iterrows():
+            symbol = row['Symbol']
+            signal = row['Signal']
+            current_pct = row['Current %']
+            target_pct = row['Target %']
+            current_val = row['Current Value (USD)']
+            rsi = row['RSI (14D)']
+            ma_dist = row['Price vs 200w MA (%)']
+            action = row['Suggested Action Detail']
 
-        target_allocation_normalized = {norm_map.get(k.upper(), k.upper()): v for k, v in target_allocation_config.items()}
-        target_asset_symbols = [s for s, p in target_allocation_normalized.items() if p > 0]
-        relevant_holdings_df = holdings_df[holdings_df['symbol'].isin(target_asset_symbols)].copy()
-        total_relevant_portfolio_cost_basis = relevant_holdings_df['current_cost_basis'].sum()
+            # --- Set color and symbol based on signal ---
+            if signal == "BUY":
+                color_start, color_end, icon = "\033[92m", "\033[0m", "🟢"  # Green
+            elif signal == "SELL":
+                color_start, color_end, icon = "\033[91m", "\033[0m", "🔴"  # Red
+            else:
+                color_start, color_end, icon = "\033[93m", "\033[0m", "🟡"  # Yellow
 
-        if total_relevant_portfolio_cost_basis == 0 and any(p > 0 for p in target_allocation_normalized.values()):
-            logger.warning(
-                "Total cost basis for assets in target_allocation is $0.00. "
-                "Rebalance suggestions to 'buy' will be $0. "
-            )
-        logger.info(f"Total Portfolio Cost Basis (for target assets only, using LIVE Qty): ${total_relevant_portfolio_cost_basis:,.2f}")
+            print(f"{color_start}{icon} {symbol.ljust(7)} | Signal: {signal.ljust(5)}{color_end}")
+            print(f"   Allocation: {current_pct:.2f}% (Target: {target_pct:.1f}%) | Current Value: ${current_val:,.2f}")
 
-        suggestions = []
-        all_symbols_to_consider = sorted(list(set(list(target_allocation_normalized.keys()) + holdings_df['symbol'].tolist())))
-        current_prices = self.get_current_prices(all_symbols_to_consider)
+            # --- Print TA indicators only if they exist ---
+            ta_info = []
+            if pd.notna(rsi): ta_info.append(f"RSI: {rsi:.1f}")
+            if pd.notna(ma_dist): ta_info.append(f"Price vs 200w MA: {ma_dist:+.1f}%")
+            if ta_info: print(f"   TA: {', '.join(ta_info)}")
 
-        for symbol in all_symbols_to_consider:
-            target_pct = target_allocation_normalized.get(symbol, 0.0)
-            target_cost_basis_for_symbol = total_relevant_portfolio_cost_basis * target_pct
-            current_row = holdings_df[holdings_df['symbol'] == symbol]
-            current_actual_cost_for_symbol = current_row['current_cost_basis'].iloc[0] if not current_row.empty else 0.0
-            rebalance_amount_usd = target_cost_basis_for_symbol - current_actual_cost_for_symbol
-            amount_to_buy_usd = 0.0; amount_to_sell_usd = 0.0
-            buy_qty_coin = 0.0; sell_qty_coin = 0.0
-            current_price = current_prices.get(symbol, 0.0)
+            print(f"   Action: {action}")
+            print("-" * 60)
 
-            if rebalance_amount_usd > 0:
-                amount_to_buy_usd = rebalance_amount_usd
-                if current_price and current_price > 0:
-                    buy_qty_coin = amount_to_buy_usd / current_price
-            elif rebalance_amount_usd < 0:
-                if allow_selling and symbol.upper() not in never_sell:
-                    amount_to_sell_usd = abs(rebalance_amount_usd)
-                    if current_price and current_price > 0:
-                        sell_qty_coin = amount_to_sell_usd / current_price
-            if target_pct > 0 or current_actual_cost_for_symbol > 0:
-                 is_held = not current_row.empty and current_row['quantity'].iloc[0] > 0
-                 if target_pct > 0 or is_held:
-                    suggestions.append({
-                        "Symbol": symbol,
-                        "Target %": f"{target_pct * 100:.2f}%",
-                        "Cost (USD)": f"${current_actual_cost_for_symbol:,.2f}",
-                        "Target Cost (USD)": f"${target_cost_basis_for_symbol:,.2f}",
-                        "Buy (USD)": f"${amount_to_buy_usd:,.2f}",
-                        "Buy (Qty)": f"{buy_qty_coin:,.6f}".rstrip('0').rstrip('.'),
-                        "Sell (USD)": f"${amount_to_sell_usd:,.2f}",
-                        "Sell (Qty)": f"{sell_qty_coin:,.6f}".rstrip('0').rstrip('.')
-                    })
-        if not suggestions: return pd.DataFrame()
-        df = pd.DataFrame(suggestions)
-        cols = ["Symbol", "Target %", "Cost (USD)", "Target Cost (USD)",
-                "Buy (USD)", "Buy (Qty)", "Sell (USD)", "Sell (Qty)"]
-        for col in cols:
-            if col not in df.columns:
-                df[col] = "$0.00" if "USD" in col else "0"
-        return df[cols]
-
-    def get_rebalance_suggestions_by_value(self) -> Optional[pd.DataFrame]:
-        logger.info("Calculating rebalance suggestions by market value...")
-        live_balances_df = self.fetch_binance_balances()
-        if live_balances_df.empty:
-            logger.error("Could not fetch live balances. Cannot rebalance.")
-            return None
-        symbols_for_prices = live_balances_df['symbol'].unique().tolist()
-        prices = self.get_current_prices(symbols_for_prices)
-        live_balances_df['current_price'] = live_balances_df['symbol'].map(prices).fillna(0.0)
-        live_balances_df['value_usd'] = live_balances_df['quantity'] * live_balances_df['current_price']
-        total_portfolio_value = live_balances_df['value_usd'].sum()
-        if total_portfolio_value == 0:
-            logger.warning("Total portfolio value is $0. Cannot generate rebalancing suggestions.")
-            return pd.DataFrame()
-
-        target_allocation_config = self.config.get("target_allocation", {})
-        target_allocation_normalized = {
-            self.norm_map.get(k.upper(), k.upper()): v
-            for k, v in target_allocation_config.items()
-        }
-        rebalancing_config = self.config.get("rebalancing_strategy", {})
-        allow_selling = rebalancing_config.get("allow_selling", True)
-        never_sell_symbols_config = rebalancing_config.get("never_sell_symbols", [])
-        never_sell_normalized = [self.norm_map.get(s.upper(), s.upper()) for s in never_sell_symbols_config]
-        suggestions = []
-        all_symbols_in_play = sorted(list(set(
-            list(target_allocation_normalized.keys()) +
-            live_balances_df['symbol'].tolist()
-        )))
-
-        for symbol in all_symbols_in_play:
-            current_row = live_balances_df[live_balances_df['symbol'] == symbol]
-            current_value_for_symbol = current_row['value_usd'].iloc[0] if not current_row.empty else 0.0
-            current_qty_for_symbol = current_row['quantity'].iloc[0] if not current_row.empty else 0.0
-            current_price_for_symbol = prices.get(symbol, 0.0)
-            target_pct_for_symbol = target_allocation_normalized.get(symbol, 0.0)
-            target_value_for_symbol = total_portfolio_value * target_pct_for_symbol
-            current_pct_of_portfolio = (current_value_for_symbol / total_portfolio_value * 100) if total_portfolio_value > 0 else 0.0
-            rebalance_amount_usd = target_value_for_symbol - current_value_for_symbol
-            buy_usd = 0.0; sell_usd = 0.0
-            buy_qty = 0.0; sell_qty = 0.0
-
-            if rebalance_amount_usd > 0.01:
-                buy_usd = rebalance_amount_usd
-                if current_price_for_symbol > 0:
-                    buy_qty = buy_usd / current_price_for_symbol
-            elif rebalance_amount_usd < -0.01:
-                if allow_selling and symbol not in never_sell_normalized:
-                    sell_usd = abs(rebalance_amount_usd)
-                    if current_price_for_symbol > 0:
-                        sell_qty = sell_usd / current_price_for_symbol
-                elif not allow_selling:
-                    logger.info(f"Rebalancing for {symbol}: Overweight, but selling is disabled globally.")
-                elif symbol in never_sell_normalized:
-                    logger.info(f"Rebalancing for {symbol}: Overweight, but it is in 'never_sell_symbols'.")
-            if target_pct_for_symbol > 0 or current_value_for_symbol > 0.01 :
-                suggestions.append({
-                    "Symbol": symbol,
-                    "Target %": f"{target_pct_for_symbol * 100:.2f}%",
-                    "Current %": f"{current_pct_of_portfolio:.2f}%",
-                    "Current Value (USD)": f"${current_value_for_symbol:,.2f}",
-                    "Target Value (USD)": f"${target_value_for_symbol:,.2f}",
-                    "Buy (USD)": f"${buy_usd:,.2f}",
-                    "Buy (Qty)": f"{buy_qty:,.6f}".rstrip('0').rstrip('.') if buy_qty else "0",
-                    "Sell (USD)": f"${sell_usd:,.2f}",
-                    "Sell (Qty)": f"{sell_qty:,.6f}".rstrip('0').rstrip('.') if sell_qty else "0"
-                })
-        if not suggestions:
-            return pd.DataFrame()
-        df = pd.DataFrame(suggestions)
-        cols = ["Symbol", "Target %", "Current %", "Current Value (USD)", "Target Value (USD)",
-                "Buy (USD)", "Buy (Qty)", "Sell (USD)", "Sell (Qty)"]
-        for col in cols:
-            if col not in df.columns:
-                if "USD" in col or "%" in col :
-                     df[col] = "$0.00" if "USD" in col else "0.00%"
-                else:
-                     df[col] = "0"
-        return df[cols]
+        print("\n" + "="*80)
 
     def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
     def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
@@ -3131,3 +2875,25 @@ class CryptoPortfolioTracker:
         if price: print(f"✅ CoinGecko Connection: SUCCESS ({test_id.capitalize()} price: ${price})")
         else: print("❌ CoinGecko Connection: FAILED")
         print("-" * 30)
+
+    def save_snapshot(self, metrics: Dict[str, Any]):
+        """Wrapper to save a portfolio snapshot using data from calculated metrics."""
+        if "error" in metrics or "total_value_usd" not in metrics:
+            logger.warning("Skipping snapshot save due to missing data in metrics.")
+            return
+
+        # --- This is the corrected section ---
+        timestamp = metrics.get("timestamp", datetime.datetime.now(datetime.timezone.utc))
+        total_value = metrics.get("total_value_usd", 0)
+        total_cost_basis = metrics.get("total_cost_basis_usd", 0)
+        unrealized_pl_usd = metrics.get("unrealized_pl_usd", 0)
+        unrealized_pl_percent = metrics.get("unrealized_pl_percent", 0)
+
+        # Pass all relevant metrics to the database manager
+        self.db_manager.save_portfolio_snapshot(
+            timestamp=timestamp,
+            total_value=total_value,
+            total_cost_basis=total_cost_basis,
+            unrealized_pl=unrealized_pl_usd,
+            unrealized_pl_percent=unrealized_pl_percent
+        )

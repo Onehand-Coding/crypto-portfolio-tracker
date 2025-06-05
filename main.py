@@ -132,10 +132,10 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
         try:
             if choice == 1:
                 print("\n🔄 Running full sync and analysis...")
-                # The call to run_full_sync now needs asyncio.run()
                 metrics = asyncio.run(tracker.run_full_sync())
                 if "error" not in metrics:
                     tracker.print_portfolio_summary(metrics)
+                    tracker.save_snapshot(metrics) # <-- ADD THIS LINE
                 input("\n✅ Full sync & analysis complete. Press Enter to continue...")
 
             elif choice == 2:
@@ -190,7 +190,7 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 suggestions_df = asyncio.run(tracker.get_core_portfolio_rebalance_suggestions_technical())
 
                 if suggestions_df is not None and not suggestions_df.empty:
-                    print(suggestions_df.to_string())
+                    tracker.print_rebalance_suggestions(suggestions_df)
                 elif suggestions_df is not None and suggestions_df.empty:
                     print("No rebalancing suggestions based on the current technical criteria, or no core assets found.")
                 else:

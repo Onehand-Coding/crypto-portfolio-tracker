@@ -199,7 +199,6 @@ class DatabaseManager:
             logger.error(f"Generic error during bulk insert/update: {e_generic}", exc_info=True)
             return 0
 
-
     def get_all_transactions(self) -> pd.DataFrame:
         """Fetch all transactions from the database."""
         query = "SELECT t.*, a.symbol FROM transactions t JOIN assets a ON t.asset_id = a.id ORDER BY t.timestamp;"
@@ -235,7 +234,6 @@ class DatabaseManager:
                      logger.info("DB: No holdings data prepared for update.")
         except sqlite3.Error as e:
             logger.error(f"Error updating holdings: {e}")
-
 
     def get_holdings(self) -> pd.DataFrame:
         """Fetch current holdings."""
@@ -351,3 +349,41 @@ class DatabaseManager:
         except Exception as ex: # Catch other potential errors like parsing
             logger.error(f"Unexpected error processing latest timestamp for source {source_name}: {ex}", exc_info=True)
             return None
+
+    def save_portfolio_snapshot(self, timestamp: datetime, total_value: float, total_cost_basis: float, unrealized_pl: float, unrealized_pl_percent: float):
+        """Saves a snapshot of the total portfolio value and performance at a given time."""
+        # Use the correct connection method name as defined in your file
+        conn = self._get_connection()
+        if not conn:
+            logging.error("DB Error: Could not create connection for saving snapshot.")
+            return
+
+        try:
+            cursor = conn.cursor()
+
+            # The schema from your file has more columns, let's use them all.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                    timestamp DATETIME PRIMARY KEY,
+                    total_value_usd REAL NOT NULL,
+                    total_cost_basis_usd REAL NOT NULL,
+                    unrealized_pl_usd REAL NOT NULL,
+                    unrealized_pl_percent REAL NOT NULL
+                )
+            """)
+
+            # Insert all the new snapshot data
+            cursor.execute(
+                """INSERT INTO portfolio_snapshots (timestamp, total_value_usd, total_cost_basis_usd, unrealized_pl_usd, unrealized_pl_percent)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (timestamp, total_value, total_cost_basis, unrealized_pl, unrealized_pl_percent)
+            )
+            conn.commit()
+            logging.info(f"Saved portfolio snapshot: {timestamp} - Value: ${total_value:,.2f}, P/L: ${unrealized_pl:,.2f}")
+
+        except sqlite3.Error as e:
+            logging.error(f"DB Error saving portfolio snapshot: {e}", exc_info=True)
+
+        finally:
+            if conn:
+                conn.close()
