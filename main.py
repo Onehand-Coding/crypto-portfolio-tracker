@@ -220,28 +220,36 @@ def main():
     parser = create_argument_parser()
     args = parser.parse_args()
 
-    config_data_for_logging = load_config(args.config)
-    log_level_console = "DEBUG" if args.verbose else ("ERROR" if args.quiet else "INFO")
-    setup_logging(config=config_data_for_logging, level=log_level_console)
+    # Load configuration from files first
+    config_data = load_config(args.config)
+
+    # Determine the final log level based on the correct hierarchy:
+    # 1. Start with the level from the config file (which already includes .env overrides)
+    log_level = config_data.get("logging", {}).get("level", "INFO")
+
+    # 2. Let command-line flags override the file setting
+    if args.verbose:
+        log_level = "DEBUG"
+    elif args.quiet:
+        log_level = "ERROR"
+
+    # --- THIS IS THE CORRECTED LINE ---
+    # 3. Setup logging, passing ONLY the "logging" dictionary from the config
+    setup_logging(config=config_data.get("logging"), level=log_level)
 
     logger = logging.getLogger(__name__)
     logger.info("Starting Crypto Portfolio Tracker")
-    if args.verbose:
-        logger.debug("Verbose logging enabled.")
-    if args.quiet:
-        logger.info("Quiet mode enabled (console output suppressed for INFO/DEBUG).")
 
     try:
-        config_path = args.config if args.config else None
-        tracker = CryptoPortfolioTracker(config_path=config_path)
+        # Pass the pre-loaded config dictionary directly
+        tracker = CryptoPortfolioTracker(config_data=config_data)
 
         if args.sync_only:
             logger.info("Running sync-only mode")
-            # Make the call async
             asyncio.run(tracker.sync_data())
             print("✅ Data synchronization completed")
-
         elif args.export_only:
+            # ... (rest of the function is unchanged)
             logger.info("Running export-only mode")
             metrics = tracker.calculate_portfolio_metrics()
             if "error" in metrics:
@@ -264,8 +272,7 @@ def main():
                 if export_performed:
                     print("✅ Export completed (for enabled formats).")
                 else:
-                    print("No export formats enabled or specified for export-only mode.")
-
+                    print("⚠️ No export formats enabled or specified for export-only mode.")
         elif args.charts_only:
             logger.info("Running charts-only mode")
             metrics = tracker.calculate_portfolio_metrics()
@@ -274,24 +281,23 @@ def main():
             else:
                 tracker.create_portfolio_charts(metrics)
                 print("✅ Charts generated (if data available).")
-
         else:
             run_interactive_mode(tracker)
 
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye!")
-        logger.info("Application interrupted by user")
+        logging.info("Application interrupted by user")
     except FileNotFoundError as e:
-        logger.error(f"Configuration file not found or path error: {e}", exc_info=True)
+        logging.error(f"Configuration file not found or path error: {e}", exc_info=True)
         print(f"\n💥 Configuration Error: {e}")
-        print("Please ensure your config file path is correct or a default_config.json exists.")
+        print("Please ensure your config/config.json or config/default_config.json file exists.")
     except Exception as e:
-        logger.error(f"Fatal error in main execution: {e}", exc_info=True)
+        logging.error(f"Fatal error in main execution: {e}", exc_info=True)
         print(f"\n💥 A fatal error occurred: {e}")
         print("Please check logs for detailed error information.")
         sys.exit(1)
     finally:
-        logger.info("Application finished")
+        logging.info("Application finished")
 
 
 if __name__ == "__main__":

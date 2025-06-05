@@ -138,10 +138,9 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
 class CryptoPortfolioTracker:
     """Main class for the crypto portfolio tracker."""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_data: Dict[str, Any]):
         """Initialize the tracker."""
-        self.config_manager = ConfigManager(config_path)
-        self.config = self.config_manager.config
+        self.config = config_data
         self.db_manager = DatabaseManager(self.config)
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
