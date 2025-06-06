@@ -30,6 +30,7 @@ class ConfigManager:
             ("database", "path"),
             ("logging", "file_config", "path"),
             ("exports", "path"),
+            ("cache", "path"),
             ("portfolio", "binance_csv_path"),
             ("portfolio", "copy_trading_csv_path")
         }

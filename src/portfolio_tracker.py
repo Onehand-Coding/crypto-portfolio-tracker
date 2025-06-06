@@ -139,8 +139,9 @@ class CryptoPortfolioTracker:
     """Main class for the crypto portfolio tracker."""
 
     def __init__(self, config_data: Dict[str, Any]):
-        """Initialize the tracker."""
+        """Initialize the tracker with a pre-loaded configuration dictionary."""
         self.config = config_data
+
         self.db_manager = DatabaseManager(self.config)
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
@@ -154,12 +155,17 @@ class CryptoPortfolioTracker:
         self.norm_map = self.config.get("symbol_normalization_map", {})
         self.stablecoin_symbols = [s.upper() for s in self.config.get("portfolio", {}).get("stablecoin_symbols", ["USDT", "USDC", "BUSD", "DAI"])]
         self.fiat_exchange_rate_cache: Dict[str, Optional[float]] = {}
-        self.cache_dir = Path("data") / "cache"
+
+        # --- THIS IS THE CORRECTED SECTION ---
+        # Get cache path from the config, which is now an absolute path
+        self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.coingecko_historical_price_disk_cache = Cache(str(self.cache_dir / "coingecko_historical"))
         logger.info(f"Disk cache for CoinGecko historical prices initialized at: {self.cache_dir / 'coingecko_historical'}")
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_ohlcv"))
         logger.info(f"Disk cache for yfinance historical data initialized at: {self.cache_dir / 'yfinance_ohlcv'}")
+        # --- END OF CORRECTION ---
+
         self.yfinance_config = self.config.get("apis", {}).get("yfinance", {})
         target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)

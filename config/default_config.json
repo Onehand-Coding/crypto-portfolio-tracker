@@ -24,6 +24,9 @@
       "request_delay_ms": 1000
     }
   },
+  "cache": {
+        "path": "data/cache"
+      },
   "database": {
     "path": "data/portfolio.db",
     "backup_enabled": true,
