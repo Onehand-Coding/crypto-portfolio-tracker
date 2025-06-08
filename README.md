@@ -199,8 +199,6 @@ Set your local fiat currency for P2P trades:
 
 ## 🎯 Usage
 
-## 🎯 Usage
-
 The application offers both interactive and command-line modes for maximum flexibility.
 
 ### Interactive Mode (Recommended)

@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 import colorlog
 
+
 class ConfigManager:
     """Manages application configuration from multiple sources"""
 
@@ -114,6 +115,7 @@ class ConfigManager:
         except (KeyError, TypeError):
             return default
 
+
 def setup_logging(level: str = "INFO", config: Optional[Dict[str, Any]] = None):
     """Setup application logging"""
     if config is None:
@@ -156,6 +158,7 @@ def setup_logging(level: str = "INFO", config: Optional[Dict[str, Any]] = None):
 
     # This will now be the first message logged by the configured logger
     logging.info("Logging setup complete.")
+
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """Load configuration for the application"""

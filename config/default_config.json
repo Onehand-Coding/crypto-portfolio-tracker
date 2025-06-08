@@ -98,6 +98,17 @@
     "allow_selling": true,
     "never_sell_symbols": []
   },
+  "rebalance_technical": {
+  "rsi_period_weekly": 14,
+  "allocation_drift_threshold": 0.1,
+  "rsi_overbought": 70,
+  "rsi_oversold": 30,
+  "price_vs_ma_above": 25,
+  "price_vs_ma_near_below": 0,
+  "sell_percentage_multiplier": 0.15,
+  "buy_amount_multiplier": 0.75,
+  "buy_portfolio_cap": 0.1
+},
   "symbol_mappings": {
     "coingecko_ids": {
       "USDT": "tether",

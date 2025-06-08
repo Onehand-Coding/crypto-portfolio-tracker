@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from portfolio_tracker import CryptoPortfolioTracker
 from config import setup_logging, load_config
 
-# load_config is called within ConfigManager now, which is good.
 
 def clear_screen() -> None:
     """Clears the terminal screen."""
@@ -86,7 +85,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="Crypto Portfolio Tracker v2.0.0" # Ensure this matches your actual version if it changes
+        version="Crypto Portfolio Tracker v2.0.0" # Ensure this matches actual version if it changes
     )
 
     return parser
@@ -135,7 +134,7 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 metrics = asyncio.run(tracker.run_full_sync())
                 if "error" not in metrics:
                     tracker.print_portfolio_summary(metrics)
-                    tracker.save_snapshot(metrics) # <-- ADD THIS LINE
+                    tracker.save_snapshot(metrics)
                 input("\n✅ Full sync & analysis complete. Press Enter to continue...")
 
             elif choice == 2:
@@ -233,7 +232,6 @@ def main():
     elif args.quiet:
         log_level = "ERROR"
 
-    # --- THIS IS THE CORRECTED LINE ---
     # 3. Setup logging, passing ONLY the "logging" dictionary from the config
     setup_logging(config=config_data.get("logging"), level=log_level)
 
@@ -249,7 +247,6 @@ def main():
             asyncio.run(tracker.sync_data())
             print("✅ Data synchronization completed")
         elif args.export_only:
-            # ... (rest of the function is unchanged)
             logger.info("Running export-only mode")
             metrics = tracker.calculate_portfolio_metrics()
             if "error" in metrics:

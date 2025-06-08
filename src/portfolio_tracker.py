@@ -141,7 +141,6 @@ class CryptoPortfolioTracker:
     def __init__(self, config_data: Dict[str, Any]):
         """Initialize the tracker with a pre-loaded configuration dictionary."""
         self.config = config_data
-
         self.db_manager = DatabaseManager(self.config)
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
@@ -155,17 +154,12 @@ class CryptoPortfolioTracker:
         self.norm_map = self.config.get("symbol_normalization_map", {})
         self.stablecoin_symbols = [s.upper() for s in self.config.get("portfolio", {}).get("stablecoin_symbols", ["USDT", "USDC", "BUSD", "DAI"])]
         self.fiat_exchange_rate_cache: Dict[str, Optional[float]] = {}
-
-        # --- THIS IS THE CORRECTED SECTION ---
-        # Get cache path from the config, which is now an absolute path
         self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.coingecko_historical_price_disk_cache = Cache(str(self.cache_dir / "coingecko_historical"))
         logger.info(f"Disk cache for CoinGecko historical prices initialized at: {self.cache_dir / 'coingecko_historical'}")
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_ohlcv"))
         logger.info(f"Disk cache for yfinance historical data initialized at: {self.cache_dir / 'yfinance_ohlcv'}")
-        # --- END OF CORRECTION ---
-
         self.yfinance_config = self.config.get("apis", {}).get("yfinance", {})
         target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
@@ -391,97 +385,62 @@ class CryptoPortfolioTracker:
         return f"{symbol_upper}-USD"
 
     def _calculate_technical_indicators(self, symbol: str, df_weekly: Optional[pd.DataFrame], df_daily: Optional[pd.DataFrame]) -> Dict[str, Any]:
-        """
-        Calculates RSI (daily) and 200-week MA and price distance from it.
-        Ensures that scalar values or None are returned in the indicators dictionary.
-        """
         indicators = {
             "current_price": None,
-            "rsi_14d": None,
+            "rsi_weekly": None,
             "ma_200w": None,
             "price_vs_200w_ma_percent": None
         }
 
-        # Process Daily Data (RSI and Current Price)
+        # Get RSI period from config
+        rsi_period = self.config.get("rebalance_technical", {}).get("rsi_period_weekly", 14)
+        logger.debug(f"Using RSI period {rsi_period} for {symbol}")
+
+        # Process Daily Data (Current Price)
         if df_daily is not None and not df_daily.empty and 'Close' in df_daily.columns:
-            try:
-                # Get current price from the last entry of daily data
-                daily_close_series = df_daily['Close']
-                if not daily_close_series.empty:
-                    last_daily_close_raw = daily_close_series.iloc[-1]
-                    if isinstance(last_daily_close_raw, (float, int)) and pd.notna(last_daily_close_raw):
-                        indicators["current_price"] = float(last_daily_close_raw)
-                    else:
-                        logger.warning(f"Last daily close for {symbol} was not a scalar: {last_daily_close_raw}. Current price from TA will be None.")
-
-                # Calculate RSI if enough data
-                if len(df_daily) > 14: # pandas-ta rsi needs length+1, so >14 for length 14
-                    rsi_series = df_daily.ta.rsi(length=14)
-                    if rsi_series is not None and not rsi_series.empty:
-                        last_rsi_raw = rsi_series.iloc[-1]
-                        if isinstance(last_rsi_raw, (float, int)) and pd.notna(last_rsi_raw):
-                            indicators["rsi_14d"] = float(last_rsi_raw)
-                        else:
-                            logger.info(f"RSI for {symbol} was NaN or not scalar: {last_rsi_raw}.")
-                            indicators["rsi_14d"] = None # Ensure it's None if NaN
-                    else:
-                        logger.info(f"RSI series calculation for {symbol} returned None or empty.")
-                else:
-                    logger.info(f"Not enough daily data (got {len(df_daily)}, need >14) for RSI for {symbol}.")
-
-            except Exception as e:
-                # This is where the "Can only use .str accessor with Index, not MultiIndex" might originate
-                logger.warning(f"Could not calculate RSI or get current price for {symbol} from daily data: {e}", exc_info=True)
-                # Ensure keys remain None if calculation failed
-                indicators["current_price"] = None
-                indicators["rsi_14d"] = None
-
-        elif df_daily is not None and not df_daily.empty and 'Close' in df_daily.columns : # Not enough for RSI, but try current price
             daily_close_series = df_daily['Close']
             if not daily_close_series.empty:
                 last_daily_close_raw = daily_close_series.iloc[-1]
                 if isinstance(last_daily_close_raw, (float, int)) and pd.notna(last_daily_close_raw):
                     indicators["current_price"] = float(last_daily_close_raw)
+                else:
+                    logger.warning(f"Last daily close for {symbol} was not a scalar: {last_daily_close_raw}.")
 
-
-        # Process Weekly Data (200-week MA)
+        # Process Weekly Data (RSI and 200-week MA)
         if df_weekly is not None and not df_weekly.empty and 'Close' in df_weekly.columns:
             latest_weekly_close_raw = df_weekly['Close'].iloc[-1]
             latest_weekly_close: Optional[float] = None
             if isinstance(latest_weekly_close_raw, (float, int)) and pd.notna(latest_weekly_close_raw):
                 latest_weekly_close = float(latest_weekly_close_raw)
 
-            # If daily current price wasn't available, use latest weekly close as a fallback for context
             if indicators["current_price"] is None and latest_weekly_close is not None:
                 indicators["current_price"] = latest_weekly_close
 
-            try:
-                if len(df_weekly) >= 200:
-                    ma_200w_series = df_weekly.ta.sma(length=200)
-                    if ma_200w_series is not None and not ma_200w_series.empty:
-                        ma_200w_raw = ma_200w_series.iloc[-1]
-                        if isinstance(ma_200w_raw, (float, int)) and pd.notna(ma_200w_raw):
-                            indicators["ma_200w"] = float(ma_200w_raw)
-                        else:
-                            logger.info(f"200w MA for {symbol} was NaN or not scalar: {ma_200w_raw}.")
-                            indicators["ma_200w"] = None # Ensure it's None if NaN
+            # Calculate RSI
+            if len(df_weekly) > rsi_period:
+                rsi_series = df_weekly.ta.rsi(length=rsi_period)
+                if rsi_series is not None and not rsi_series.empty:
+                    last_rsi_raw = rsi_series.iloc[-1]
+                    if isinstance(last_rsi_raw, (float, int)) and pd.notna(last_rsi_raw):
+                        indicators["rsi_weekly"] = float(last_rsi_raw)
                     else:
-                         logger.info(f"200w MA calculation for {symbol} returned None or empty series.")
+                        logger.info(f"RSI for {symbol} was NaN or not scalar: {last_rsi_raw}.")
+                else:
+                    logger.info(f"RSI series calculation for {symbol} returned None or empty.")
 
-
+            # Calculate 200-week MA
+            if len(df_weekly) >= 200:
+                ma_200w_series = df_weekly.ta.sma(length=200)
+                if ma_200w_series is not None and not ma_200w_series.empty:
+                    ma_200w_raw = ma_200w_series.iloc[-1]
+                    if isinstance(ma_200w_raw, (float, int)) and pd.notna(ma_200w_raw):
+                        indicators["ma_200w"] = float(ma_200w_raw)
+                    else:
+                        logger.info(f"200w MA for {symbol} was NaN or not scalar: {ma_200w_raw}.")
                     if indicators["ma_200w"] is not None and indicators["ma_200w"] > 0 and latest_weekly_close is not None:
                         indicators["price_vs_200w_ma_percent"] = ((latest_weekly_close - indicators["ma_200w"]) / indicators["ma_200w"]) * 100
-                    elif indicators["ma_200w"] is None and latest_weekly_close is not None : # MA is None but we have price
-                         logger.info(f"Cannot calculate Price vs 200w MA for {symbol} because MA is None.")
-                else:
-                    logger.info(f"Not enough weekly data (got {len(df_weekly)}, need 200) for 200w MA for {symbol}.")
-            except Exception as e:
-                logger.warning(f"Could not calculate 200w MA or price vs MA for {symbol}: {e}", exc_info=True)
-                # Ensure keys remain None if calculation failed
-                indicators["ma_200w"] = None
-                indicators["price_vs_200w_ma_percent"] = None
 
-        logger.debug(f"Calculated TA indicators for {symbol}: RSI={indicators['rsi_14d']}, PriceForTA={indicators['current_price']}, MA200w={indicators['ma_200w']}")
+        logger.debug(f"Calculated TA indicators for {symbol}: RSI={indicators['rsi_weekly']}, PriceForTA={indicators['current_price']}, MA200w={indicators['ma_200w']}")
         return indicators
 
     async def _fetch_historical_data_yfinance_async(self, yf_ticker: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
@@ -582,16 +541,42 @@ class CryptoPortfolioTracker:
             logger.error("Could not fetch live balances from Binance. Cannot rebalance.")
             return None
 
+        # Get config parameters
+        rebalance_config = self.config.get("rebalance_technical", {})
+        rsi_period = rebalance_config.get("rsi_period_weekly", 14)
+        drift_threshold = rebalance_config.get("allocation_drift_threshold", 0.1)
+        rsi_overbought = rebalance_config.get("rsi_overbought", 70)
+        rsi_oversold = rebalance_config.get("rsi_oversold", 30)
+        price_vs_ma_above = rebalance_config.get("price_vs_ma_above", 25)
+        price_vs_ma_near_below = rebalance_config.get("price_vs_ma_near_below", 0)
+        sell_multiplier = rebalance_config.get("sell_percentage_multiplier", 0.15)
+        buy_multiplier = rebalance_config.get("buy_amount_multiplier", 0.75)
+        buy_portfolio_cap = rebalance_config.get("buy_portfolio_cap", 0.1)
+
+        logger.debug(f"Rebalance config: RSI period={rsi_period}, Drift threshold={drift_threshold:.2%}, "
+                     f"RSI overbought={rsi_overbought}, RSI oversold={rsi_oversold}, "
+                     f"MA above={price_vs_ma_above}%, MA near/below={price_vs_ma_near_below}%, "
+                     f"Sell multiplier={sell_multiplier}, Buy multiplier={buy_multiplier}, "
+                     f"Buy cap={buy_portfolio_cap:.2%}")
+
+        # Get core portfolio symbols from config
         core_portfolio_symbols_config = list(self.config.get("target_allocation", {}).keys())
-        all_symbols_to_price = list(set(live_balances_df['symbol'].tolist() + [s.upper() for s in core_portfolio_symbols_config]))
+        core_portfolio_symbols = [self.norm_map.get(k.upper(), k.upper()) for k in core_portfolio_symbols_config]
+
+        # Filter live_balances_df to only include core portfolio assets
+        core_balances_df = live_balances_df[live_balances_df['symbol'].isin(core_portfolio_symbols)].copy()
+
+        # Fetch prices for all relevant symbols
+        all_symbols_to_price = list(set(live_balances_df['symbol'].tolist() + core_portfolio_symbols))
         current_prices_dict = self.get_current_prices(all_symbols_to_price)
 
-        live_balances_df['current_price'] = live_balances_df['symbol'].map(current_prices_dict).fillna(0.0)
-        live_balances_df['value_usd'] = live_balances_df['quantity'] * live_balances_df['current_price']
-        total_portfolio_value = live_balances_df['value_usd'].sum()
+        # Calculate values
+        core_balances_df.loc[:, 'current_price'] = core_balances_df['symbol'].map(current_prices_dict).fillna(0.0)
+        core_balances_df.loc[:, 'value_usd'] = core_balances_df['quantity'] * core_balances_df['current_price']
+        total_portfolio_value = core_balances_df['value_usd'].sum()
 
         if total_portfolio_value == 0:
-            logger.warning("Total portfolio value is $0. Cannot generate rebalancing suggestions.")
+            logger.warning("Total core portfolio value is $0.00. Cannot generate rebalancing suggestions.")
             return pd.DataFrame()
 
         target_allocation_normalized = {
@@ -629,38 +614,34 @@ class CryptoPortfolioTracker:
                 df_daily_hist = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str="60d", interval_str="1d")
 
             ta_indicators = self._calculate_technical_indicators(symbol_upper_case, df_weekly_hist, df_daily_hist)
-            rsi_14d = ta_indicators.get("rsi_14d")
-            price_vs_200w_ma_percent = ta_indicators.get("price_vs_200w_ma_percent")
+            rsi = ta_indicators.get("rsi_weekly")
+            price_vs_200w_ma = ta_indicators.get("price_vs_200w_ma_percent")
 
-            signal_light = "HOLD"
+            signal = "HOLD"
             action_text = "Hold: Allocation is within tolerance."
             action_value_usd = 0.0
 
-            is_significantly_overweight = allocation_drift_abs_val_vs_target_val > 0.5
-            is_significantly_underweight = allocation_drift_abs_val_vs_target_val < -0.5
-            rsi_very_overbought = rsi_14d is not None and rsi_14d > 75
-            rsi_very_oversold = rsi_14d is not None and rsi_14d < 25
-            price_well_above_ma = price_vs_200w_ma_percent is not None and price_vs_200w_ma_percent > 25
-            price_near_or_below_ma = price_vs_200w_ma_percent is not None and price_vs_200w_ma_percent <= 0
+            # Apply thresholds from config
+            is_significantly_overweight = allocation_drift_abs_val_vs_target_val > drift_threshold
+            is_significantly_underweight = allocation_drift_abs_val_vs_target_val < -drift_threshold
+            rsi_very_overbought = rsi is not None and rsi > rsi_overbought
+            rsi_very_oversold = rsi is not None and rsi < rsi_oversold
+            price_well_above_ma = price_vs_200w_ma is not None and price_vs_200w_ma > price_vs_ma_above
+            price_near_or_below_ma = price_vs_200w_ma is not None and price_vs_200w_ma <= price_vs_ma_near_below
 
-            if (rsi_very_overbought and price_well_above_ma) or is_significantly_overweight:
-                signal_light = "SELL"
-                sell_percentage_of_position = 0.075
+            if is_significantly_overweight or (rsi_very_overbought and price_well_above_ma):
+                signal = "SELL"
+                sell_percentage_of_position = min(0.1, allocation_drift_abs_val_vs_target_val * sell_multiplier)
                 action_value_usd = current_value * sell_percentage_of_position
-
                 coin_amount_to_sell = action_value_usd / live_current_price if live_current_price > 0 else 0
-
-                # --- THIS IS THE MODIFIED LINE ---
                 action_text = (f"Sell ~{sell_percentage_of_position * 100:.1f}% of position (~${action_value_usd:,.2f}), "
                                f"which is {format_coin_amount(coin_amount_to_sell)} {symbol_upper_case}")
-
-
-            elif (rsi_very_oversold and price_near_or_below_ma) or is_significantly_underweight:
-                signal_light = "BUY"
+            elif is_significantly_underweight or (rsi_very_oversold and price_near_or_below_ma):
+                signal = "BUY"
                 underweight_amount_usd = target_value_for_symbol - current_value
-                action_value_usd = underweight_amount_usd * 0.5
-                if action_value_usd < 0: action_value_usd = 0
-
+                action_value_usd = min(underweight_amount_usd * buy_multiplier, abs(allocation_drift_abs_val_vs_target_val) * total_portfolio_value * buy_portfolio_cap)
+                if action_value_usd < 0:
+                    action_value_usd = 0
                 coin_amount_to_buy = action_value_usd / live_current_price if live_current_price > 0 else 0
                 action_text = (f"Buy ~${action_value_usd:,.2f} worth "
                                f"({format_coin_amount(coin_amount_to_buy)} {symbol_upper_case})")
@@ -670,17 +651,20 @@ class CryptoPortfolioTracker:
                 "Target %": target_pct * 100,
                 "Current %": current_pct_of_portfolio,
                 "Current Value (USD)": current_value,
-                "RSI (14D)": rsi_14d,
-                "Price vs 200w MA (%)": price_vs_200w_ma_percent,
-                "Signal": signal_light,
+                f"RSI ({rsi_period}W)": rsi,
+                "Price vs 200w MA (%)": price_vs_200w_ma,
+                "Signal": signal,
                 "Suggested Action Detail": action_text
             })
             yf_delay_ms = self.yfinance_config.get("request_delay_ms", 200)
             await asyncio.sleep(yf_delay_ms / 1000.0)
 
-        if not suggestions_data: return pd.DataFrame()
+        if not suggestions_data:
+            return pd.DataFrame()
 
         df_suggestions = pd.DataFrame(suggestions_data)
+        df_suggestions['Drift %'] = df_suggestions['Current %'] - df_suggestions['Target %']
+        df_suggestions = df_suggestions.sort_values(by='Drift %', key=abs, ascending=False)
         return df_suggestions
 
     def fetch_binance_balances(self) -> pd.DataFrame:
@@ -748,10 +732,10 @@ class CryptoPortfolioTracker:
             logger.warning("Binance client not initialized. Cannot fetch transactions.")
             return []
 
-        # --- TEMPORARY MODIFICATION FOR FULL HISTORY SYNC ---
+        # # --- TEMPORARY MODIFICATION FOR FULL HISTORY SYNC ---
         # days_back = 1095  # Override to 3 years for one-time full sync
         # logger.warning(f"TEMPORARY OVERRIDE: Fetching full trade history for the last {days_back} days.")
-        # --- END TEMPORARY MODIFICATION ---
+        # # --- END TEMPORARY MODIFICATION ---
 
         transactions = []
         norm_map = self.config.get("symbol_normalization_map", {})
@@ -2559,7 +2543,6 @@ class CryptoPortfolioTracker:
             group_df_copy['timestamp'] = pd.to_datetime(group_df_copy['timestamp'], errors='coerce')
             group_df_copy.dropna(subset=['timestamp'], inplace=True)
 
-            # --- START OF THE FIX ---
             # 1. Isolate real trades for cost basis calculation
             cost_basis_tx_df = group_df_copy[
                 ~group_df_copy['source'].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
@@ -2584,7 +2567,6 @@ class CryptoPortfolioTracker:
                 })
             else:
                 logger.info(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
-            # --- END OF THE FIX ---
 
         if updated_holdings:
             holdings_df = pd.DataFrame(updated_holdings)
@@ -2810,10 +2792,13 @@ class CryptoPortfolioTracker:
             print("="*80)
 
     def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame]):
-        """Prints rebalancing suggestions in a clean, readable format."""
+        """Prints rebalancing suggestions with drift in a clean, readable format."""
         if suggestions_df is None or suggestions_df.empty:
             print("\nCould not generate rebalancing suggestions.")
             return
+
+        # Calculate drift (Current % - Target %)
+        suggestions_df['Drift %'] = suggestions_df['Current %'] - suggestions_df['Target %']
 
         print("\n" + "="*80)
         print("⚖️ REBALANCING SUGGESTIONS (Core Portfolio - Technical Analysis)")
@@ -2824,8 +2809,9 @@ class CryptoPortfolioTracker:
             signal = row['Signal']
             current_pct = row['Current %']
             target_pct = row['Target %']
+            drift = row['Drift %']
             current_val = row['Current Value (USD)']
-            rsi = row['RSI (14D)']
+            rsi = row['RSI (14W)']  # Updated to 14W
             ma_dist = row['Price vs 200w MA (%)']
             action = row['Suggested Action Detail']
 
@@ -2838,11 +2824,11 @@ class CryptoPortfolioTracker:
                 color_start, color_end, icon = "\033[93m", "\033[0m", "🟡"  # Yellow
 
             print(f"{color_start}{icon} {symbol.ljust(7)} | Signal: {signal.ljust(5)}{color_end}")
-            print(f"   Allocation: {current_pct:.2f}% (Target: {target_pct:.1f}%) | Current Value: ${current_val:,.2f}")
+            print(f"   Allocation: {current_pct:.2f}% (Target: {target_pct:.1f}%) | Drift: {drift:+.2f}% | Current Value: ${current_val:,.2f}")
 
             # --- Print TA indicators only if they exist ---
             ta_info = []
-            if pd.notna(rsi): ta_info.append(f"RSI: {rsi:.1f}")
+            if pd.notna(rsi): ta_info.append(f"RSI (14W): {rsi:.1f}")  # Updated to 14W
             if pd.notna(ma_dist): ta_info.append(f"Price vs 200w MA: {ma_dist:+.1f}%")
             if ta_info: print(f"   TA: {', '.join(ta_info)}")
 
