@@ -13,10 +13,10 @@
       "futures_url": "https://fapi.binance.com/fapi/v1",
       "rate_limit": 1200,
       "testnet": false,
-      "timeout": 500,
+      "timeout": 60,
       "max_retries_per_batch": 2,
       "retry_delay_sec": 30,
-      "recv_window": 10000,
+      "recv_window": 60000,
       "request_delay_ms": 500,
       "batch_days": 7
     },
@@ -81,7 +81,8 @@
     "p2p_fiat_currency": "PHP",
     "binance_csv_path": "data/binance_export.csv",
     "copy_trading_csv_path": "data/copy_trading_transfers.csv",
-    "assets_for_internal_transfer_check": ["USDT"]
+    "assets_for_internal_transfer_check": ["USDT"],
+    "minimum_trade_usd": 5
   },
   "target_allocation": {
     "BTC": 0.35,
@@ -99,6 +100,7 @@
     "never_sell_symbols": []
   },
   "rebalance_technical": {
+  "live_trading_enabled": false,
   "rsi_period_weekly": 14,
   "allocation_drift_threshold": 0.1,
   "rsi_overbought": 70,
@@ -190,5 +192,33 @@
   "simple_earn_redemptions": 90,
   "dividend_history": 90,
   "staking_history": 90
+  },
+  "trend_analyzer": {
+    "cryptocurrencies": [],
+    "timeframe_settings": {
+      "long_term": {
+        "period": "1y",
+        "sma_short_window": 20,
+        "sma_long_window": 50
+      },
+      "swing": {
+        "period": "3mo",
+        "sma_short_window": 10,
+        "sma_long_window": 30
+      },
+      "day": {
+        "period": "1mo",
+        "sma_short_window": 5,
+        "sma_long_window": 15
+      }
+    },
+    "rsi_period": 14,
+    "rsi_oversold": 30,
+    "rsi_overbought": 70,
+    "confidence_thresholds": {
+      "strong": 0.75,
+      "moderate": 0.5
+    },
+    "report_directory": "data/trend_reports"
   }
 }

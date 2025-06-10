@@ -2,6 +2,7 @@
 Crypto Portfolio Tracker - Main Class
 Handles API interactions, data processing, analysis, and orchestration.
 """
+import re
 import os
 import json
 import time
@@ -13,6 +14,7 @@ import diskcache
 from pathlib import Path
 from diskcache import Cache
 from collections import deque
+from urllib3.util.retry import Retry
 from typing import Dict, Any, Optional, List
 from datetime import timezone, timedelta
 
@@ -21,12 +23,16 @@ import pandas as pd
 import yfinance as yf
 import pandas_ta as ta
 from binance.client import Client
+from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
 from config import ConfigManager
+from backtester import Backtester
 from database import DatabaseManager
-from exporters import ExcelExporter, HtmlExporter, CsvExporter
 from visualizations import Visualizer
+from crypto_trend_analyzer import CryptoTrendAnalyzer
+from rebalancing_backtester import RebalancingBacktester
+from exporters import ExcelExporter, HtmlExporter, CsvExporter
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +147,7 @@ class CryptoPortfolioTracker:
     def __init__(self, config_data: Dict[str, Any]):
         """Initialize the tracker with a pre-loaded configuration dictionary."""
         self.config = config_data
+        self.logger = logging.getLogger(__name__)
         self.db_manager = DatabaseManager(self.config)
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
@@ -167,27 +174,45 @@ class CryptoPortfolioTracker:
         logger.info(f"Tracker initialized. Will focus sync on target assets: {list(self.target_assets_for_sync)}")
 
     def _init_binance_client(self) -> Optional[Client]:
-        """Initialize and return Binance client."""
+        """Initialize and return Binance client with robust session and retries."""
         api_keys = self.config.get("api_keys", {})
         api_key = api_keys.get("binance_key")
         api_secret = api_keys.get("binance_secret")
 
         if not api_key or not api_secret:
-            logger.warning("Binance API key/secret not found. Binance disabled.")
+            self.logger.warning("Binance API key/secret not found. Binance disabled.")
             return None
+
         try:
             client_timeout = self.config.get("apis", {}).get("binance", {}).get("timeout", 180)
-            logger.info(f"Initializing Binance client with timeout: {client_timeout}s")
+            self.logger.info(f"Initializing Binance client with timeout: {client_timeout}s and retries.")
+
+            # Initialize the client, which creates its own session with default headers.
             client = Client(api_key, api_secret, requests_params={'timeout': client_timeout})
+
+            # Create the retry strategy.
+            retry_strategy = Retry(
+                total=5,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+            )
+            # Create the adapter with the retry strategy.
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+
+            # Mount the adapter to the client's EXISTING session.
+            # This adds our retry logic without overwriting the client's default headers.
+            client.session.mount("https://", adapter)
+            client.session.mount("http://", adapter)
 
             if self.config.get("apis", {}).get("binance", {}).get("testnet", False):
                 client.API_URL = 'https://testnet.binance.vision/api'
 
+            # Ping to confirm connection works with the modified session.
             client.ping()
-            logger.info("Binance client initialized.")
+            self.logger.info("Binance client initialized with robust session.")
             return client
         except Exception as e:
-            logger.error(f"Failed to init Binance client: {e}")
+            self.logger.error(f"Failed to init Binance client: {e}", exc_info=True)
             return None
 
     def _get_coingecko_price(self, coin_id: str) -> Optional[float]:
@@ -202,92 +227,86 @@ class CryptoPortfolioTracker:
     def _get_coingecko_historical_price(self, coin_id: str, date_str: str) -> Optional[float]:
         """Fetch historical price from CoinGecko for a specific date, using disk cache."""
         if not coin_id or not date_str:
-            logger.error("Coin ID or date string is missing for CoinGecko historical price fetch.")
+            self.logger.error("Coin ID or date string is missing for CoinGecko historical price fetch.")
             return None
 
-        cache_key = f"{coin_id}_{date_str}" # Unique key for coin_id and date
-
-        # Check cache first
-        cached_price = self.coingecko_historical_price_disk_cache.get(cache_key, default=None)
+        cache_key = f"{coin_id}_{date_str}"
+        cached_price = self.coingecko_historical_price_disk_cache.get(cache_key)
         if cached_price is not None:
-            logger.debug(f"Disk Cache HIT for CoinGecko: {coin_id} on {date_str} -> ${cached_price:.6f}")
+            self.logger.debug(f"Disk Cache HIT for CoinGecko: {coin_id} on {date_str} -> ${cached_price:.6f}")
             return cached_price
 
-        logger.debug(f"Disk Cache MISS for CoinGecko: {coin_id} on {date_str}. Fetching from API.")
+        self.logger.debug(f"Disk Cache MISS for CoinGecko: {coin_id} on {date_str}. Fetching from API.")
 
         base_url = self.coingecko_api.get("base_url")
         timeout = self.coingecko_api.get("timeout", 30)
-        # CoinGecko API expects date in dd-mm-yyyy for /history endpoint
-        # Ensure date_str is in this format before making API call
-        try:
-            # Attempt to parse date_str to ensure it's valid, then reformat
-            parsed_date = pd.to_datetime(date_str, errors='coerce') # Try to parse flexibly
-            if pd.isna(parsed_date): # If parsing failed
-                # Try common alternative if original was YYYY-MM-DD
-                parsed_date = pd.to_datetime(date_str, format='%Y-%m-%d', errors='coerce')
 
-            if pd.isna(parsed_date):
-                logger.error(f"Invalid date format for CoinGecko historical price: {date_str}. Expected dd-mm-yyyy or YYYY-MM-DD.")
-                self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600) # Cache None for an hour for bad format
-                return None
+        try:
+            parsed_date = pd.to_datetime(date_str, errors='coerce', dayfirst=True).date()
+            today = datetime.datetime.now(timezone.utc).date()
+
+            # --- FIX: Prevent requests for today or future dates ---
+            if parsed_date >= today:
+                self.logger.warning(f"Requested date {date_str} is today or in the future. Fetching previous day's data instead.")
+                parsed_date = today - timedelta(days=1)
 
             api_date_str = parsed_date.strftime('%d-%m-%Y')
-        except ValueError:
-            logger.error(f"Could not parse date '{date_str}' for CoinGecko API. Expected format like dd-mm-yyyy or YYYY-MM-DD.")
+
+        except (ValueError, TypeError):
+            self.logger.error(f"Could not parse date '{date_str}' for CoinGecko API.")
             self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600)
             return None
 
         url = f"{base_url}/coins/{coin_id}/history?date={api_date_str}&localization=false"
 
+        # Retry logic remains the same
         max_retries = 3
-        initial_wait_seconds = 60 # For 429 errors (rate limit)
-        # Define which server error codes might warrant a retry
+        initial_wait_seconds = 60
         server_error_codes_to_retry = [500, 502, 503, 504]
         retries_left = max_retries
 
         while retries_left >= 0:
             try:
                 response = requests.get(url, timeout=timeout)
-                response.raise_for_status() # Will raise HTTPError for 4xx/5xx
+                response.raise_for_status()
                 data = response.json()
-                price = None
                 if "market_data" in data and "current_price" in data["market_data"] and "usd" in data["market_data"]["current_price"]:
                     price = float(data["market_data"]["current_price"]["usd"])
-                    logger.info(f"Fetched price for {coin_id} on {api_date_str} (requested {date_str}): ${price:.6f}")
-                    self.coingecko_historical_price_disk_cache.set(cache_key, price) # Cache successful fetch indefinitely
+                    self.logger.info(f"Fetched price for {coin_id} on {api_date_str}: ${price:.6f}")
+                    self.coingecko_historical_price_disk_cache.set(cache_key, price)
                     return price
                 else:
-                    logger.warning(f"No price data in 'usd' found for {coin_id} on {api_date_str} in API response: {data}")
-                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache None for a day for missing data
+                    self.logger.warning(f"No price data in 'usd' found for {coin_id} on {api_date_str}.")
+                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600 * 24)
                     return None
             except requests.exceptions.HTTPError as e:
                 should_retry = False
-                if e.response.status_code == 429: # Too Many Requests
+                if e.response.status_code == 429:
                     should_retry = True
-                    logger.error(f"Rate limited (429) by CoinGecko for {coin_id} on {api_date_str}.")
+                    self.logger.error(f"Rate limited (429) by CoinGecko for {coin_id} on {api_date_str}.")
                 elif e.response.status_code in server_error_codes_to_retry:
                     should_retry = True
-                    logger.error(f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {api_date_str}.")
+                    self.logger.error(f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {api_date_str}.")
 
                 if should_retry and retries_left > 0:
                     wait_time = initial_wait_seconds * (max_retries - retries_left + 1)
-                    logger.info(f"Waiting {wait_time}s before retry... ({retries_left} retries left for {coin_id} on {api_date_str})")
+                    self.logger.info(f"Waiting {wait_time}s before retry... ({retries_left} retries left)")
                     time.sleep(wait_time)
                     retries_left -= 1
-                else: # If not a retryable error, or no retries left
+                else:
                     if e.response.status_code == 404:
-                        logger.warning(f"No historical data found on CoinGecko (404) for {coin_id} on {api_date_str}.")
-                    elif not (e.response.status_code == 404): # Don't log other 4xx errors as "failure" if they are not retryable
-                        logger.error(f"Failed to fetch CoinGecko historical price for {coin_id} on {api_date_str}: {e}", exc_info=True)
-                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24) # Cache None for a day
-                    return None # Break from loop and function
+                        self.logger.warning(f"No historical data found on CoinGecko (404) for {coin_id} on {api_date_str}.")
+                    else:
+                        self.logger.error(f"Failed to fetch CoinGecko historical price for {coin_id} on {api_date_str}: {e}", exc_info=True)
+                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
+                    return None
             except Exception as e:
-                logger.error(f"Unexpected error fetching CoinGecko historical price for {coin_id} on {api_date_str}: {e}", exc_info=True)
-                self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600) # Cache None for an hour on unexpected errors
-                return None # Break from loop and function
+                self.logger.error(f"Unexpected error fetching CoinGecko historical price for {coin_id}: {e}", exc_info=True)
+                self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600)
+                return None
 
-        logger.error(f"Failed to fetch historical price for {coin_id} on {api_date_str} due to exhausted retries.")
-        self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24) # Cache None for a day after exhausted retries
+        self.logger.error(f"Failed to fetch historical price for {coin_id} after exhausted retries.")
+        self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
         return None
 
     def _get_historical_fiat_exchange_rate(self, date_str_orig: str, from_currency: str, to_currency: str) -> Optional[float]:
@@ -443,94 +462,117 @@ class CryptoPortfolioTracker:
         logger.debug(f"Calculated TA indicators for {symbol}: RSI={indicators['rsi_weekly']}, PriceForTA={indicators['current_price']}, MA200w={indicators['ma_200w']}")
         return indicators
 
+    async def _fetch_historical_data_async(self, symbol: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
+        """
+        Fetches historical OHLCV data, trying yfinance first and falling back to Binance API.
+        This increases reliability for assets on Binance that may have poor yfinance coverage.
+        """
+        yf_ticker = self._get_yfinance_ticker(symbol)
+        # Use a more descriptive cache key that includes the source
+        cache_key = f"historical_data_{yf_ticker}_{period_str}_{interval_str}"
+
+        # --- Caching logic ---
+        cached_data = self.yfinance_disk_cache.get(cache_key)
+        if cached_data is not None:
+            logger.debug(f"Disk Cache HIT for historical data: {cache_key}")
+            return cached_data
+
+        logger.debug(f"Disk Cache MISS for historical data: {cache_key}. Fetching from APIs.")
+
+        # --- Fallback Strategy ---
+        # 1. Try yfinance first
+        data = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str, interval_str)
+
+        # 2. If yfinance fails, try Binance API as a fallback
+        if data is None or data.empty:
+            logger.warning(f"yfinance failed for {yf_ticker}. Falling back to Binance API.")
+            try:
+                # Define mapping from our interval string to the Binance client's constants
+                interval_map = {
+                    "1d": Client.KLINE_INTERVAL_1DAY,
+                    "1wk": Client.KLINE_INTERVAL_1WEEK,
+                    "1mo": Client.KLINE_INTERVAL_1MONTH,
+                }
+                binance_interval = interval_map.get(interval_str)
+
+                if not binance_interval:
+                    logger.error(f"Unsupported interval '{interval_str}' for Binance API fallback.")
+                    return None
+
+                # The python-binance client can interpret human-readable start strings
+                start_str = f"{period_str.replace('y', ' years').replace('mo', ' months')} ago UTC"
+
+                # Fetch klines from Binance
+                binance_pair = f"{symbol.upper()}USDT"
+                logger.info(f"Fetching from Binance API: Pair='{binance_pair}', Interval='{binance_interval}', Start='{start_str}'")
+                klines = self.binance_client.get_historical_klines(binance_pair, binance_interval, start_str)
+
+                if not klines:
+                    logger.warning(f"Binance API returned no kline data for {binance_pair}.")
+                    self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure
+                    return None
+
+                # Convert to a clean DataFrame, matching the yfinance format
+                cols = ['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time',
+                        'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore']
+                data = pd.DataFrame(klines, columns=cols)
+                data['timestamp'] = pd.to_datetime(data['timestamp'], unit='ms', utc=True)
+                data.set_index('timestamp', inplace=True)
+
+                # Keep only the necessary columns and ensure they are numeric
+                data = data[['Open', 'High', 'Low', 'Close', 'Volume']].apply(pd.to_numeric, errors='coerce')
+                logger.info(f"Successfully fetched {len(data)} data points for {symbol} from Binance API fallback.")
+
+            except Exception as e:
+                logger.error(f"Binance API fallback also failed for {symbol}: {e}", exc_info=True)
+                self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure
+                return None
+
+        # Cache the successful result (from either yfinance or Binance) and return it
+        self.yfinance_disk_cache.set(cache_key, data)
+        return data
+
     async def _fetch_historical_data_yfinance_async(self, yf_ticker: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
+        """
+        Asynchronously fetches historical data from yfinance with improved error handling.
+        This function is now designed to be called by the main _fetch_historical_data_async wrapper.
+        """
         if not yf_ticker:
             logger.warning("yf_ticker was empty in _fetch_historical_data_yfinance_async.")
             return None
 
-        cache_key = f"{yf_ticker}_{period_str}_{interval_str}"
-
-        # --- Caching logic START ---
-        cached_data = self.yfinance_disk_cache.get(cache_key, default=None)
-        if cached_data is not None:
-            # If 'None' was explicitly cached for a known failure, this will also be a hit
-            if isinstance(cached_data, pd.DataFrame):
-                 logger.debug(f"Disk Cache HIT for yfinance: {cache_key} -> {len(cached_data)} rows.")
-            else: # Handle the case where None was cached
-                 logger.debug(f"Disk Cache HIT for yfinance (known failure): {cache_key} -> None")
-            return cached_data
-
-        logger.debug(f"Disk Cache MISS for yfinance: {cache_key}. Fetching from API.")
-        # --- Caching logic END ---
-
         try:
-            logger.debug(f"Preparing yfinance historical data fetch for {yf_ticker}, period_str='{period_str}', interval_str='{interval_str}'")
-
-            end_date_dt = datetime.datetime.now(datetime.timezone.utc)
-            start_date_dt = None
-
-            if period_str.endswith('y'):
-                years = int(period_str[:-1])
-                start_date_dt = end_date_dt - pd.DateOffset(years=years)
-            elif period_str.endswith('mo'):
-                months = int(period_str[:-2])
-                start_date_dt = end_date_dt - pd.DateOffset(months=months)
-            elif period_str.endswith('d'):
-                days_offset = int(period_str[:-1])
-                start_date_dt = end_date_dt - pd.DateOffset(days=days_offset)
-            else:
-                logger.warning(f"Unsupported period string format: {period_str} for yfinance. Defaulting to 1 year.")
-                start_date_dt = end_date_dt - pd.DateOffset(years=1)
-
-            start_date_str_for_yf = start_date_dt.strftime('%Y-%m-%d')
-            end_date_str_for_yf = (end_date_dt + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-
             loop = asyncio.get_event_loop()
+            # yfinance can be slow, run it in a thread pool executor
             partial_yf_download = functools.partial(
                 yf.download,
                 tickers=yf_ticker,
-                start=start_date_str_for_yf,
-                end=end_date_str_for_yf,
+                period=period_str, # yfinance handles periods like "4y", "60d" well
                 interval=interval_str,
                 progress=False,
                 auto_adjust=True
             )
 
-            logger.debug(f"Executing yfinance download via executor: Ticker='{yf_ticker}', Start='{start_date_str_for_yf}', End='{end_date_str_for_yf}', Interval='{interval_str}'")
+            logger.debug(f"Executing yfinance download: Ticker='{yf_ticker}', Period='{period_str}', Interval='{interval_str}'")
             data = await loop.run_in_executor(None, partial_yf_download)
 
             if data.empty:
-                logger.warning(f"No historical data from yfinance for {yf_ticker} (Start:{start_date_str_for_yf}, End:{end_date_str_for_yf}, Int:{interval_str}). Caching this failure.")
-                self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure for 1 day
+                logger.warning(f"No historical data from yfinance for {yf_ticker} (Period:{period_str}, Interval:{interval_str}).")
                 return None
 
-            # --- Flatten MultiIndex logic from before ---
+            # --- Flatten MultiIndex logic ---
             if isinstance(data.columns, pd.MultiIndex):
-                logger.info(f"yfinance returned MultiIndex columns for {yf_ticker}: {data.columns}. Attempting to flatten.")
-                if yf_ticker in data.columns.get_level_values(1):
-                    try:
-                        data = data.xs(yf_ticker, axis=1, level=1)
-                        logger.info(f"Successfully flattened columns for {yf_ticker} using level 1. New columns: {data.columns}")
-                    except KeyError as e_xs:
-                        logger.warning(f"KeyError during .xs() for {yf_ticker} at level 1: {e_xs}. Columns remain MultiIndex.")
-                elif yf_ticker in data.columns.get_level_values(0) and isinstance(data[yf_ticker], pd.DataFrame):
-                    data = data[yf_ticker]
-                    logger.info(f"Successfully flattened columns for {yf_ticker} using level 0. New columns: {data.columns}")
-                else:
-                    logger.warning(f"Could not confidently flatten MultiIndex for {yf_ticker}. TA might fail.")
+                data.columns = data.columns.droplevel(1)
 
-            data.columns = [str(col).lower().capitalize() for col in data.columns]
+            data.columns = [str(col).capitalize() for col in data.columns]
             data.index = pd.to_datetime(data.index, utc=True)
-            logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker}. Caching result.")
-            self.yfinance_disk_cache.set(cache_key, data) # Cache successful result indefinitely
+            logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker}.")
             return data
-        except ValueError as ve:
-            logger.error(f"ValueError during yfinance data fetch preparation for {yf_ticker}: {ve}", exc_info=True)
-            self.yfinance_disk_cache.set(cache_key, None, expire=3600) # Cache failure for 1 hour
-            return None
+
         except Exception as e:
-            logger.error(f"Generic error fetching yfinance data for {yf_ticker}: {e}", exc_info=True)
-            self.yfinance_disk_cache.set(cache_key, None, expire=3600) # Cache failure for 1 hour
+            # This is broad, but yfinance can raise various errors.
+            # The YFInvalidPeriodError for TAO is one example.
+            logger.error(f"yfinance download failed for {yf_ticker} with period '{period_str}': {e}", exc_info=True)
             return None
 
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
@@ -541,7 +583,6 @@ class CryptoPortfolioTracker:
             logger.error("Could not fetch live balances from Binance. Cannot rebalance.")
             return None
 
-        # Get config parameters
         rebalance_config = self.config.get("rebalance_technical", {})
         rsi_period = rebalance_config.get("rsi_period_weekly", 14)
         drift_threshold = rebalance_config.get("allocation_drift_threshold", 0.1)
@@ -553,43 +594,23 @@ class CryptoPortfolioTracker:
         buy_multiplier = rebalance_config.get("buy_amount_multiplier", 0.75)
         buy_portfolio_cap = rebalance_config.get("buy_portfolio_cap", 0.1)
 
-        logger.debug(f"Rebalance config: RSI period={rsi_period}, Drift threshold={drift_threshold:.2%}, "
-                     f"RSI overbought={rsi_overbought}, RSI oversold={rsi_oversold}, "
-                     f"MA above={price_vs_ma_above}%, MA near/below={price_vs_ma_near_below}%, "
-                     f"Sell multiplier={sell_multiplier}, Buy multiplier={buy_multiplier}, "
-                     f"Buy cap={buy_portfolio_cap:.2%}")
-
-        # Get core portfolio symbols from config
         core_portfolio_symbols_config = list(self.config.get("target_allocation", {}).keys())
         core_portfolio_symbols = [self.norm_map.get(k.upper(), k.upper()) for k in core_portfolio_symbols_config]
-
-        # Filter live_balances_df to only include core portfolio assets
         core_balances_df = live_balances_df[live_balances_df['symbol'].isin(core_portfolio_symbols)].copy()
-
-        # Fetch prices for all relevant symbols
         all_symbols_to_price = list(set(live_balances_df['symbol'].tolist() + core_portfolio_symbols))
         current_prices_dict = self.get_current_prices(all_symbols_to_price)
-
-        # Calculate values
-        core_balances_df.loc[:, 'current_price'] = core_balances_df['symbol'].map(current_prices_dict).fillna(0.0)
-        core_balances_df.loc[:, 'value_usd'] = core_balances_df['quantity'] * core_balances_df['current_price']
+        core_balances_df['current_price'] = core_balances_df['symbol'].map(current_prices_dict).fillna(0.0)
+        core_balances_df['value_usd'] = core_balances_df['quantity'] * core_balances_df['current_price']
         total_portfolio_value = core_balances_df['value_usd'].sum()
 
         if total_portfolio_value == 0:
-            logger.warning("Total core portfolio value is $0.00. Cannot generate rebalancing suggestions.")
             return pd.DataFrame()
 
-        target_allocation_normalized = {
-            self.norm_map.get(k.upper(), k.upper()): v
-            for k, v in self.config.get("target_allocation", {}).items()
-        }
+        target_allocation_normalized = { self.norm_map.get(k.upper(), k.upper()): v for k, v in self.config.get("target_allocation", {}).items() }
         suggestions_data = []
 
         def format_coin_amount(amount):
-            if amount > 1:
-                return f"{amount:,.2f}"
-            else:
-                return f"{amount:,.6f}".rstrip('0').rstrip('.')
+            return f"{amount:,.8g}"
 
         for symbol_upper_case in target_allocation_normalized.keys():
             logger.info(f"--- Analyzing: {symbol_upper_case} ---")
@@ -600,30 +621,23 @@ class CryptoPortfolioTracker:
             target_pct = target_allocation_normalized.get(symbol_upper_case, 0.0)
             target_value_for_symbol = total_portfolio_value * target_pct
             current_pct_of_portfolio = (current_value / total_portfolio_value * 100) if total_portfolio_value > 0 else 0.0
-            allocation_drift_abs_val_vs_target_val = 0.0
-            if target_value_for_symbol > 0:
-                allocation_drift_abs_val_vs_target_val = (current_value - target_value_for_symbol) / target_value_for_symbol
-            elif current_value > 0:
-                allocation_drift_abs_val_vs_target_val = float('inf')
 
-            yf_ticker = self._get_yfinance_ticker(symbol_upper_case)
-            df_weekly_hist = None
-            df_daily_hist = None
-            if yf_ticker:
-                df_weekly_hist = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str="4y", interval_str="1wk")
-                df_daily_hist = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str="60d", interval_str="1d")
+            # --- THIS IS THE KEY CALCULATION ---
+            relative_drift = (current_value - target_value_for_symbol) / target_value_for_symbol if target_value_for_symbol > 0 else float('inf') if current_value > 0 else 0.0
 
+            df_weekly_hist = await self._fetch_historical_data_async(symbol_upper_case, period_str="4y", interval_str="1wk")
+            df_daily_hist = await self._fetch_historical_data_async(symbol_upper_case, period_str="60d", interval_str="1d")
             ta_indicators = self._calculate_technical_indicators(symbol_upper_case, df_weekly_hist, df_daily_hist)
             rsi = ta_indicators.get("rsi_weekly")
             price_vs_200w_ma = ta_indicators.get("price_vs_200w_ma_percent")
 
             signal = "HOLD"
             action_text = "Hold: Allocation is within tolerance."
-            action_value_usd = 0.0
 
-            # Apply thresholds from config
-            is_significantly_overweight = allocation_drift_abs_val_vs_target_val > drift_threshold
-            is_significantly_underweight = allocation_drift_abs_val_vs_target_val < -drift_threshold
+            # Use the 'relative_drift' for the logic check
+            is_significantly_overweight = relative_drift > drift_threshold
+            is_significantly_underweight = relative_drift < -drift_threshold
+
             rsi_very_overbought = rsi is not None and rsi > rsi_overbought
             rsi_very_oversold = rsi is not None and rsi < rsi_oversold
             price_well_above_ma = price_vs_200w_ma is not None and price_vs_200w_ma > price_vs_ma_above
@@ -631,47 +645,223 @@ class CryptoPortfolioTracker:
 
             if is_significantly_overweight or (rsi_very_overbought and price_well_above_ma):
                 signal = "SELL"
-                sell_percentage_of_position = min(0.1, allocation_drift_abs_val_vs_target_val * sell_multiplier)
+                sell_percentage_of_position = min(0.1, relative_drift * sell_multiplier)
                 action_value_usd = current_value * sell_percentage_of_position
                 coin_amount_to_sell = action_value_usd / live_current_price if live_current_price > 0 else 0
-                action_text = (f"Sell ~{sell_percentage_of_position * 100:.1f}% of position (~${action_value_usd:,.2f}), "
-                               f"which is {format_coin_amount(coin_amount_to_sell)} {symbol_upper_case}")
+                action_text = (f"Sell ~{sell_percentage_of_position * 100:.1f}% of position (~${action_value_usd:,.2f}), which is {format_coin_amount(coin_amount_to_sell)} {symbol_upper_case}")
+
             elif is_significantly_underweight or (rsi_very_oversold and price_near_or_below_ma):
                 signal = "BUY"
                 underweight_amount_usd = target_value_for_symbol - current_value
-                action_value_usd = min(underweight_amount_usd * buy_multiplier, abs(allocation_drift_abs_val_vs_target_val) * total_portfolio_value * buy_portfolio_cap)
-                if action_value_usd < 0:
-                    action_value_usd = 0
+                action_value_usd = min(underweight_amount_usd * buy_multiplier, abs(relative_drift) * total_portfolio_value * buy_portfolio_cap)
                 coin_amount_to_buy = action_value_usd / live_current_price if live_current_price > 0 else 0
-                action_text = (f"Buy ~${action_value_usd:,.2f} worth "
-                               f"({format_coin_amount(coin_amount_to_buy)} {symbol_upper_case})")
+                action_text = (f"Buy ~${action_value_usd:,.2f} worth ({format_coin_amount(coin_amount_to_buy)} {symbol_upper_case})")
 
             suggestions_data.append({
                 "Symbol": symbol_upper_case,
                 "Target %": target_pct * 100,
                 "Current %": current_pct_of_portfolio,
                 "Current Value (USD)": current_value,
-                f"RSI ({rsi_period}W)": rsi,
+                "Relative Drift %": relative_drift * 100, # Store as percentage
+                "RSI (14W)": rsi,
                 "Price vs 200w MA (%)": price_vs_200w_ma,
                 "Signal": signal,
                 "Suggested Action Detail": action_text
             })
-            yf_delay_ms = self.yfinance_config.get("request_delay_ms", 200)
-            await asyncio.sleep(yf_delay_ms / 1000.0)
+            await asyncio.sleep(self.yfinance_config.get("request_delay_ms", 200) / 1000.0)
 
         if not suggestions_data:
             return pd.DataFrame()
 
         df_suggestions = pd.DataFrame(suggestions_data)
-        df_suggestions['Drift %'] = df_suggestions['Current %'] - df_suggestions['Target %']
-        df_suggestions = df_suggestions.sort_values(by='Drift %', key=abs, ascending=False)
         return df_suggestions
+
+    async def sync_data(self):
+        """Asynchronously synchronize data from all sources, and update holdings."""
+        logger.info("Starting data synchronization...")
+
+        # This part remains synchronous as it's just config loading
+        target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
+        self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
+        self.target_assets_for_sync.add("USDT")
+        logger.info(f"SYNC FOCUS: Will be focusing on transactions for target assets: {list(self.target_assets_for_sync)}")
+
+        lookback_config = self.config.get("history_lookback_days", {})
+
+        # Create tasks for each data fetching method using asyncio.to_thread
+        # This allows the synchronous, network-blocking calls inside each method to run concurrently without blocking the main program
+        tasks = [
+            asyncio.to_thread(self.fetch_binance_transactions),
+            asyncio.to_thread(self.fetch_deposit_history, days_back=lookback_config.get("deposits", 90)),
+            asyncio.to_thread(self.fetch_withdrawal_history, days_back=lookback_config.get("withdrawals", 90)),
+            asyncio.to_thread(self.fetch_p2p_usdt_buys, days_back=lookback_config.get("p2p_buys", 90)),
+            asyncio.to_thread(self.fetch_internal_transfers, days_back=lookback_config.get("internal_transfers", 90)),
+            asyncio.to_thread(self.fetch_spot_futures_transfers, asset="USDT", days_back=lookback_config.get("spot_futures_transfers", 90)),
+            asyncio.to_thread(self.fetch_spot_convert_history, days_back=lookback_config.get("spot_convert_history", 90)),
+            asyncio.to_thread(self.fetch_simple_earn_flexible_rewards, days_back=lookback_config.get("simple_earn_rewards", 90)),
+            asyncio.to_thread(self.fetch_simple_earn_flexible_subscriptions, days_back=lookback_config.get("simple_earn_subscriptions", 90)),
+            asyncio.to_thread(self.fetch_simple_earn_flexible_redemptions, days_back=lookback_config.get("simple_earn_redemptions", 90)),
+            asyncio.to_thread(self.fetch_dividend_history, days_back=lookback_config.get("dividend_history", 90)),
+            asyncio.to_thread(self.fetch_staking_history, days_back=lookback_config.get("staking_history", 90)),
+        ]
+
+        logger.info(f"Launching {len(tasks)} data fetching tasks concurrently...")
+
+        # asyncio.gather runs all tasks concurrently and waits for them all to complete
+        results_from_all_tasks = await asyncio.gather(*tasks)
+
+        # Combine results from all tasks into a single list
+        all_new_transactions = []
+        for result_list in results_from_all_tasks:
+            if result_list:
+                all_new_transactions.extend(result_list)
+
+        if all_new_transactions:
+            logger.info(f"Processing a total of {len(all_new_transactions)} fetched/parsed transaction items.")
+            all_new_transactions.sort(key=lambda x: x['timestamp']) # Sort all txs chronologically before DB insertion
+
+            num_inserted_updated = self.db_manager.bulk_insert_transactions(all_new_transactions)
+            logger.info(f"Attempted to process {len(all_new_transactions)} transaction records. Database reported {num_inserted_updated if num_inserted_updated is not None else 'unknown'} changes/insertions.")
+        else:
+            logger.info("No new transactions fetched or processed from any source.")
+
+        self.update_holdings_from_transactions()
+        logger.info("Data synchronization finished.")
+
+    async def run_full_sync(self) -> Dict[str, Any]:
+        """Runs the full async data sync and then calculates metrics."""
+        await self.sync_data()
+        return self.calculate_portfolio_metrics()
+
+    async def view_trends(self):
+        """
+        Provides an interactive menu to view cryptocurrency trend analysis reports.
+        Initializes the trend analyzer with the central config and manages user flow.
+        """
+        try:
+            # Pass the tracker's config object to the analyzer
+            analyzer = CryptoTrendAnalyzer(config=self.config)
+            print("✅ Trend Analyzer initialized with centralized config.")
+        except Exception as e:
+            logger.error(f"Failed to initialize CryptoTrendAnalyzer: {e}", exc_info=True)
+            print("❌ Error: Could not initialize the Trend Analyzer. Please check the logs.")
+            return
+
+        while True:
+            print("\n--- 📈 Crypto Trend Analysis ---")
+            print("Select the timeframe for the analysis:")
+            print("1. Long-term (1 Year)")
+            print("2. Swing (3 Months)")
+            print("3. Day (1 Month)")
+            print("4. Back to Main Menu")
+
+            try:
+                choice_str = input("Select option (1-4): ")
+                if not choice_str.isdigit():
+                    print("❌ Invalid input. Please enter a number.")
+                    time.sleep(2)
+                    continue
+                choice = int(choice_str)
+            except ValueError:
+                print("❌ Invalid input. Please enter a number.")
+                time.sleep(2)
+                continue
+
+            timeframe = None
+            if choice == 1:
+                timeframe = "long_term"
+            elif choice == 2:
+                timeframe = "swing"
+            elif choice == 3:
+                timeframe = "day"
+            elif choice == 4:
+                break
+            else:
+                print("❌ Invalid option. Please try again.")
+                time.sleep(2)
+                continue
+
+            if timeframe:
+                print(f"\n🔄 Generating {timeframe.replace('_', ' ')} trend report...")
+                try:
+                    # Run the synchronous generate_report in a separate thread
+                    report = await asyncio.to_thread(analyzer.generate_report, timeframe)
+
+                    if report:
+                        self.print_trend_report(report)
+                        # Ask the user if they want to export the report
+                        export_choice = input("\nDo you want to export this report? (y/n): ").lower()
+                        if export_choice == 'y':
+                            self.export_trend_report(report, timeframe)
+                    else:
+                        print(f"❌ Could not generate the {timeframe} trend report. See logs for details.")
+
+                except Exception as e:
+                    logger.error(f"An error occurred during report generation for timeframe '{timeframe}': {e}", exc_info=True)
+                    print(f"❌ An unexpected error occurred. Please check the logs.")
+
+                input("\n✅ Press Enter to continue...")
+
+    async def run_rebalancing_backtest(self):
+        """
+        Handles the user flow for running the rebalancing backtest.
+        """
+        print("\n--- ⚖️ Rebalancing Strategy Backtesting Mode ---")
+
+        try:
+            # The RebalancingBacktester needs the tracker instance itself to access its logic
+            backtester = RebalancingBacktester(config=self.config, tracker=self)
+
+            initial_capital_str = input("Enter initial capital for simulation (default: 10000): ")
+            initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
+
+            backtest_period_str = input("Enter backtest period (e.g., 2y, 3y, 5y - default: 3y): ")
+            backtest_period = backtest_period_str if backtest_period_str else "3y"
+
+            # Run the backtest and generate the report
+            # This is an async method now because the suggestion method is async
+            await backtester.run(initial_capital=initial_capital, backtest_period=backtest_period)
+            backtester.generate_report()
+
+        except Exception as e:
+            logger.error(f"An error occurred during rebalancing backtest: {e}", exc_info=True)
+            print(f"❌ An unexpected error occurred: {e}")
+
+    async def run_rebalance_and_execute(self):
+        """
+        Orchestrates the process of getting rebalancing suggestions and executing them.
+        This version now fetches Earn balances to pass to the executor.
+        """
+        self.logger.info("Starting automated rebalancing process...")
+        print("\n--- ⚖️ Automated Rebalancing ---")
+
+        # 1. Get Suggestions
+        print("🔄 Generating rebalancing suggestions...")
+        suggestions_df = await self.get_core_portfolio_rebalance_suggestions_technical()
+
+        if suggestions_df is None or suggestions_df.empty:
+            print("\n✅ No rebalancing suggestions available at this time.")
+            self.logger.info("No rebalancing suggestions generated. Exiting process.")
+            return
+
+        # 2. Print Suggestions for Review
+        self.print_rebalance_suggestions(suggestions_df)
+
+        # 3. Fetch Earn balances to make the executor smarter
+        print("Verifying balances in Spot and Earn wallets...")
+        earn_balances = self.fetch_simple_earn_balances()
+
+        # 4. Pass everything to the Executor for Confirmation and Trading
+        self.execute_rebalancing_trades(suggestions_df, earn_balances)
 
     def fetch_binance_balances(self) -> pd.DataFrame:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
         if not self.binance_client:
             logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
             return pd.DataFrame(columns=['symbol', 'quantity'])
+
+        # --- Close stale connections before making a new request ---
+        self.binance_client.session.close()
 
         retries = 3
         wait_time_seconds = 15
@@ -710,7 +900,7 @@ class CryptoPortfolioTracker:
                 df = pd.DataFrame(processed_balances)
                 df = df.groupby('symbol', as_index=False)['quantity'].sum()
 
-                logger.info(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}")
+                logger.debug(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}")
                 logger.info(f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot.")
                 return df
 
@@ -1359,7 +1549,6 @@ class CryptoPortfolioTracker:
         return all_p2p_transactions
 
     def fetch_internal_transfers(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        # ... (The implementation with selective sync logic as provided in the previous turn)
         if not self.binance_client:
             logger.warning("Binance client not initialized. Cannot fetch internal transfers.")
             return []
@@ -2575,63 +2764,6 @@ class CryptoPortfolioTracker:
         else:
             logger.warning("No holdings with valid cost basis to update in the database.")
 
-    async def sync_data(self):
-        """Asynchronously synchronize data from all sources, and update holdings."""
-        logger.info("Starting data synchronization...")
-
-        # This part remains synchronous as it's just config loading
-        target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
-        self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
-        self.target_assets_for_sync.add("USDT")
-        logger.info(f"SYNC FOCUS: Will be focusing on transactions for target assets: {list(self.target_assets_for_sync)}")
-
-        lookback_config = self.config.get("history_lookback_days", {})
-
-        # Create tasks for each data fetching method using asyncio.to_thread
-        # This allows the synchronous, network-blocking calls inside each method to run concurrently without blocking the main program
-        tasks = [
-            asyncio.to_thread(self.fetch_binance_transactions),
-            asyncio.to_thread(self.fetch_deposit_history, days_back=lookback_config.get("deposits", 90)),
-            asyncio.to_thread(self.fetch_withdrawal_history, days_back=lookback_config.get("withdrawals", 90)),
-            asyncio.to_thread(self.fetch_p2p_usdt_buys, days_back=lookback_config.get("p2p_buys", 90)),
-            asyncio.to_thread(self.fetch_internal_transfers, days_back=lookback_config.get("internal_transfers", 90)),
-            asyncio.to_thread(self.fetch_spot_futures_transfers, asset="USDT", days_back=lookback_config.get("spot_futures_transfers", 90)),
-            asyncio.to_thread(self.fetch_spot_convert_history, days_back=lookback_config.get("spot_convert_history", 90)),
-            asyncio.to_thread(self.fetch_simple_earn_flexible_rewards, days_back=lookback_config.get("simple_earn_rewards", 90)),
-            asyncio.to_thread(self.fetch_simple_earn_flexible_subscriptions, days_back=lookback_config.get("simple_earn_subscriptions", 90)),
-            asyncio.to_thread(self.fetch_simple_earn_flexible_redemptions, days_back=lookback_config.get("simple_earn_redemptions", 90)),
-            asyncio.to_thread(self.fetch_dividend_history, days_back=lookback_config.get("dividend_history", 90)),
-            asyncio.to_thread(self.fetch_staking_history, days_back=lookback_config.get("staking_history", 90)),
-        ]
-
-        logger.info(f"Launching {len(tasks)} data fetching tasks concurrently...")
-
-        # asyncio.gather runs all tasks concurrently and waits for them all to complete
-        results_from_all_tasks = await asyncio.gather(*tasks)
-
-        # Combine results from all tasks into a single list
-        all_new_transactions = []
-        for result_list in results_from_all_tasks:
-            if result_list:
-                all_new_transactions.extend(result_list)
-
-        if all_new_transactions:
-            logger.info(f"Processing a total of {len(all_new_transactions)} fetched/parsed transaction items.")
-            all_new_transactions.sort(key=lambda x: x['timestamp']) # Sort all txs chronologically before DB insertion
-
-            num_inserted_updated = self.db_manager.bulk_insert_transactions(all_new_transactions)
-            logger.info(f"Attempted to process {len(all_new_transactions)} transaction records. Database reported {num_inserted_updated if num_inserted_updated is not None else 'unknown'} changes/insertions.")
-        else:
-            logger.info("No new transactions fetched or processed from any source.")
-
-        self.update_holdings_from_transactions()
-        logger.info("Data synchronization finished.")
-
-    async def run_full_sync(self) -> Dict[str, Any]:
-        """Runs the full async data sync and then calculates metrics."""
-        await self.sync_data()
-        return self.calculate_portfolio_metrics()
-
     def get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """Get current prices for a list of symbols using CoinGecko (Batched with Retry).
         Correctly handles multiple symbols mapping to the same CoinGecko ID."""
@@ -2695,49 +2827,57 @@ class CryptoPortfolioTracker:
         return prices
 
     def calculate_portfolio_metrics(self) -> Dict[str, Any]:
-        """Calculate key portfolio metrics. Assumes Spot balances from get_account() are comprehensive."""
-        logger.info("Calculating portfolio metrics...")
+        """
+        Calculates key portfolio metrics using a consolidated view of holdings,
+        correctly reflecting that the Earn balance is the authoritative total for assets in Earn.
+        """
+        logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
 
+        # 1. Fetch balances from both wallets
         cost_basis_df = self.db_manager.get_holdings()
-        if cost_basis_df.empty:
-            logger.warning("No cost basis info found in DB. Cost basis will be $0 for all assets.")
-            cost_basis_df_to_merge = pd.DataFrame(columns=['symbol', 'average_cost_basis'])
-        else:
-            cost_basis_df_to_merge = cost_basis_df[['symbol', 'average_cost_basis']].copy()
-        holdings_df = self.fetch_binance_balances()
-        earn_balances_dict_info_only = self.fetch_simple_earn_balances()
-        logger.info(f"Informational: Simple Earn Balances fetched: {earn_balances_dict_info_only}")
+        # This is the total balance from the main account endpoint
+        total_api_df = self.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
+        earn_dict = self.fetch_simple_earn_balances()
+        earn_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
+
+        # 2. Merge the dataframes
+        holdings_df = pd.merge(total_api_df, earn_df, on='symbol', how='outer').fillna(0)
+
+        # 3. --- THIS IS THE KEY LOGIC CHANGE ---
+        # For each asset, the true total quantity is the larger of the two values reported by the APIs.
+        # This handles the discrepancy and correctly reflects that the Earn balance is the true total if an asset is staked.
+        holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
+
+        # 4. Now that we have a definitive total, the breakdown is simple and robust.
+        holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
+
+        # --- The rest of the function remains the same ---
+        holdings_df = holdings_df[holdings_df['total_quantity'] > 0.00000001].reset_index(drop=True)
 
         if holdings_df.empty:
-            logger.error("Could not fetch ANY current balances from Binance Spot (get_account). Cannot calculate metrics accurately.")
-            return {"error": "No holdings data could be fetched from Spot.", "total_value_usd": 0, "holdings_df": pd.DataFrame()}
-
-        holdings_df = holdings_df[holdings_df['quantity'] > 0.00000001].reset_index(drop=True)
-
-        if holdings_df.empty:
-            logger.warning("No non-zero holdings found after fetching Spot balances. Portfolio value is $0.")
+            logger.warning("No non-zero holdings found. Portfolio value is $0.")
             return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
 
-        holdings_df = pd.merge(holdings_df, cost_basis_df_to_merge, on='symbol', how='left')
+        # Merge cost basis and price data
+        if not cost_basis_df.empty:
+            holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
         holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
 
         prices = self.get_current_prices(holdings_df['symbol'].tolist())
         holdings_df['current_price'] = holdings_df['symbol'].map(prices).fillna(0.0)
 
-        holdings_df['value_usd'] = holdings_df['quantity'] * holdings_df['current_price']
-        holdings_df['cost_basis_total'] = holdings_df['quantity'] * holdings_df['average_cost_basis']
+        # Perform all financial calculations
+        holdings_df['value_usd'] = holdings_df['total_quantity'] * holdings_df['current_price']
+        holdings_df['cost_basis_total'] = holdings_df['total_quantity'] * holdings_df['average_cost_basis']
         holdings_df['unrealized_pl_usd'] = holdings_df['value_usd'] - holdings_df['cost_basis_total']
-
         holdings_df['unrealized_pl_percent'] = 0.0
-        mask = holdings_df['cost_basis_total'] != 0
+        mask = holdings_df['cost_basis_total'] > 0
         holdings_df.loc[mask, 'unrealized_pl_percent'] = \
             (holdings_df.loc[mask, 'unrealized_pl_usd'] / holdings_df.loc[mask, 'cost_basis_total']) * 100
 
         total_value = holdings_df['value_usd'].sum()
         total_portfolio_cost_basis = holdings_df['cost_basis_total'].sum()
-
-        holdings_df['allocation'] = (holdings_df['value_usd'] / total_value) if total_value > 0 else 0.0
-
+        holdings_df['allocation'] = holdings_df['value_usd'] / total_value if total_value > 0 else 0
         total_pl_usd = total_value - total_portfolio_cost_basis
         total_pl_percent = (total_pl_usd / total_portfolio_cost_basis * 100) if total_portfolio_cost_basis > 0 else 0.0
 
@@ -2749,17 +2889,17 @@ class CryptoPortfolioTracker:
             "holdings_df": holdings_df,
             "timestamp": datetime.datetime.now()
         }
-        logger.info(f"Metrics Calculated: Total Value = ${total_value:,.2f}, Total Cost Basis = ${total_portfolio_cost_basis:,.2f}")
+        logger.info(f"Consolidated Metrics Calculated: Total Value = ${total_value:,.2f}")
         return metrics
 
     def print_portfolio_summary(self, metrics: Dict[str, Any]):
-        """Print a summary of the portfolio to the console."""
-        print("\n" + "="*80)
-        print("📊 CRYPTO PORTFOLIO SUMMARY")
-        print("="*80)
+        """Prints a consolidated summary of the portfolio, including Spot and Earn balances."""
+        print("\n" + "="*100)
+        print("📊 CONSOLIDATED PORTFOLIO SUMMARY (Spot + Earn)")
+        print("="*100)
         if "error" in metrics:
             print(f"❌ Could not generate summary: {metrics['error']}")
-            print("="*80)
+            print("="*100)
             return
 
         timestamp = metrics.get('timestamp')
@@ -2770,67 +2910,83 @@ class CryptoPortfolioTracker:
 
         print(f"Total Portfolio Value: ${metrics.get('total_value_usd', 0):,.2f}")
         print(f"Total Cost Basis:      ${metrics.get('total_cost_basis_usd', 0):,.2f}")
-        print(f"Unrealized P/L:        ${metrics.get('unrealized_pl_usd', 0):,.2f} ({metrics.get('unrealized_pl_percent', 0):.2f}%)")
-        print("-" * 80)
+
+        pl_usd = metrics.get('unrealized_pl_usd', 0)
+        pl_pct = metrics.get('unrealized_pl_percent', 0)
+        color_start = "\033[92m" if pl_usd >= 0 else "\033[91m"
+        color_end = "\033[0m"
+        print(f"Unrealized P/L:        {color_start}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
+        print("-" * 100)
 
         holdings_df = metrics.get('holdings_df')
         if holdings_df is not None and not holdings_df.empty:
-            print(f"{'Asset':<10} {'Quantity':<15} {'Price (USD)':<15} {'Value (USD)':<18} {'P/L (USD)':<15} {'Allocation':<10}")
-            print("-" * 80)
-            for _, row in holdings_df.iterrows():
+            # --- UPDATED HEADER TO MATCH NEW COLUMNS ---
+            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'P/L (USD)':<15} {'Allocation':<10}"
+            print(header)
+            print("-" * 100)
+
+            for _, row in holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
+                row_pl_usd = row.get('unrealized_pl_usd', 0)
+                row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
+                row_color_end = "\033[0m"
+
+                # --- UPDATED ROW TO USE NEW COLUMN NAMES ---
                 print(
-                    f"{row['symbol']:<10} "
-                    f"{row['quantity']:<15,.4f} "
-                    f"${row['current_price']:<14,.2f} "
-                    f"${row['value_usd']:<17,.2f} "
-                    f"${row['unrealized_pl_usd']:<14,.2f} "
-                    f"{row['allocation'] * 100:<9.2f}%"
+                    f"{row.get('symbol', 'N/A'):<8} "
+                    f"{row.get('total_quantity', 0):<18,.8g} "
+                    f"{row.get('spot_quantity', 0):<15,.8g} "
+                    f"{row.get('earn_quantity', 0):<15,.8g} "
+                    f"${row.get('value_usd', 0):<14,.2f} "
+                    f"{row_color_start}${row_pl_usd:<14,.2f}{row_color_end} "
+                    f"{row.get('allocation', 0) * 100:<9.2f}%"
                 )
-            print("="*80)
+            print("="*100)
         else:
             print("No holdings data to display.")
-            print("="*80)
+            print("="*100)
 
     def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame]):
-        """Prints rebalancing suggestions with drift in a clean, readable format."""
+        """Prints rebalancing suggestions with relative drift in a clean, readable format."""
         if suggestions_df is None or suggestions_df.empty:
             print("\nCould not generate rebalancing suggestions.")
             return
 
-        # Calculate drift (Current % - Target %)
-        suggestions_df['Drift %'] = suggestions_df['Current %'] - suggestions_df['Target %']
+        # Sort by the absolute value of relative drift to show the most deviated assets first
+        if 'Relative Drift %' in suggestions_df.columns:
+            suggestions_df = suggestions_df.sort_values(by='Relative Drift %', key=abs, ascending=False)
 
         print("\n" + "="*80)
         print("⚖️ REBALANCING SUGGESTIONS (Core Portfolio - Technical Analysis)")
         print("="*80)
 
         for _, row in suggestions_df.iterrows():
-            symbol = row['Symbol']
-            signal = row['Signal']
-            current_pct = row['Current %']
-            target_pct = row['Target %']
-            drift = row['Drift %']
-            current_val = row['Current Value (USD)']
-            rsi = row['RSI (14W)']  # Updated to 14W
-            ma_dist = row['Price vs 200w MA (%)']
-            action = row['Suggested Action Detail']
+            symbol = row.get('Symbol', 'N/A')
+            signal = row.get('Signal', 'N/A')
+            current_pct = row.get('Current %', 0)
+            target_pct = row.get('Target %', 0)
+            relative_drift = row.get('Relative Drift %', 0) # Get the new value
+            current_val = row.get('Current Value (USD)', 0)
+            action = row.get('Suggested Action Detail', 'N/A')
+            rsi = row.get('RSI (14W)')
+            ma_dist = row.get('Price vs 200w MA (%)')
 
-            # --- Set color and symbol based on signal ---
-            if signal == "BUY":
-                color_start, color_end, icon = "\033[92m", "\033[0m", "🟢"  # Green
-            elif signal == "SELL":
-                color_start, color_end, icon = "\033[91m", "\033[0m", "🔴"  # Red
-            else:
-                color_start, color_end, icon = "\033[93m", "\033[0m", "🟡"  # Yellow
+            if signal == "BUY": color_start, color_end, icon = "\033[92m", "\033[0m", "🟢"
+            elif signal == "SELL": color_start, color_end, icon = "\033[91m", "\033[0m", "🔴"
+            else: color_start, color_end, icon = "\033[93m", "\033[0m", "🟡"
 
             print(f"{color_start}{icon} {symbol.ljust(7)} | Signal: {signal.ljust(5)}{color_end}")
-            print(f"   Allocation: {current_pct:.2f}% (Target: {target_pct:.1f}%) | Drift: {drift:+.2f}% | Current Value: ${current_val:,.2f}")
 
-            # --- Print TA indicators only if they exist ---
+            # --- UPDATED LINE TO SHOW RELATIVE DRIFT ---
+            print(f"   Allocation: {current_pct:.2f}% (Target: {target_pct:.1f}%) | Relative Drift: {relative_drift:+.1f}% | Value: ${current_val:,.2f}")
+
             ta_info = []
-            if pd.notna(rsi): ta_info.append(f"RSI (14W): {rsi:.1f}")  # Updated to 14W
+            if pd.notna(rsi): ta_info.append(f"RSI (14W): {rsi:.1f}")
             if pd.notna(ma_dist): ta_info.append(f"Price vs 200w MA: {ma_dist:+.1f}%")
-            if ta_info: print(f"   TA: {', '.join(ta_info)}")
+            else:
+                if symbol not in self.stablecoin_symbols:
+                    ta_info.append("Price vs 200w MA: (No Data)")
+            if ta_info:
+                print(f"   TA: {', '.join(ta_info)}")
 
             print(f"   Action: {action}")
             print("-" * 60)
@@ -2888,3 +3044,322 @@ class CryptoPortfolioTracker:
             unrealized_pl=unrealized_pl_usd,
             unrealized_pl_percent=unrealized_pl_percent
         )
+
+    def print_trend_report(self, report: Dict[str, Any]):
+        """Prints a formatted trend analysis report to the console."""
+        if not report:
+            print("\n--- No Trend Report Data ---")
+            return
+
+        print("\n" + "="*80)
+        print(f"📈 TREND ANALYSIS REPORT ({report.get('timeframe', 'N/A').upper()})")
+        print(f"Timestamp: {report.get('timestamp')}")
+        print("="*80)
+
+        summary = report.get('market_summary', {})
+        print("\n--- 🌍 Market Summary ---")
+        print(f"Overall Sentiment: {summary.get('overall_sentiment', 'N/A')}")
+        print(f"Coins Analyzed: {summary.get('total_coins', 0)}")
+        print(f"Coins Outperforming Benchmark: {summary.get('outperforming_count', 0)}")
+
+        btc = report.get('benchmark_analysis', {})
+        print(f"\n--- 🎯 Benchmark Analysis: {btc.get('symbol', 'N/A')} ---")
+        print(f"  Trend: {btc.get('trend', 'N/A')} (Confidence: {btc.get('confidence', 0):.0%})")
+        print(f"  Price: ${btc.get('current_price', 0):,.2f} ({btc.get('price_change_pct', 0):+.2f}%)")
+        print(f"  RSI: {btc.get('rsi', 0):.2f}")
+        print(f"  Position vs SMAs: {btc.get('sma_position')}")
+
+        print("\n--- 🪙 Coin-by-Coin Analysis ---")
+        for symbol, analysis in report.get('coin_analyses', {}).items():
+            rel_perf = report.get('relative_performances', {}).get(symbol, {})
+            outperforming_str = "🔥 Outperforming" if rel_perf.get('outperforming') else "🧊 Underperforming"
+            vs_btc_str = f"({rel_perf.get('vs_btc_return', 0):+.2f}% vs BTC)"
+
+            print(f"\n➡️ {symbol} - {outperforming_str} {vs_btc_str}")
+            print(f"  Trend: {analysis.get('trend', 'N/A')} (Confidence: {analysis.get('confidence', 0):.0%})")
+            print(f"  Price: ${analysis.get('current_price', 0):,.2f} ({analysis.get('price_change_pct', 0):+.2f}%)")
+            print(f"  RSI: {analysis.get('rsi', 0):.2f} | SMAs: {analysis.get('sma_position')}")
+            print(f"  Support: ${analysis.get('support_level', 0):,.2f} | Resistance: ${analysis.get('resistance_level', 0):,.2f}")
+
+        print("\n" + "="*80)
+
+    def export_trend_report(self, report: Dict[str, Any], timeframe: str):
+        """Exports the trend report to JSON."""
+        if not report:
+            print("❌ No report data to export.")
+            return
+
+        report_dir = self.config.get('trend_analyzer', {}).get('report_directory', 'data/trend_reports')
+        os.makedirs(report_dir, exist_ok=True)
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(report_dir, f"trend_report_{timeframe}_{timestamp}.json")
+
+        try:
+            with open(filename, 'w') as f:
+                json.dump(report, f, indent=4, default=str)
+            print(f"\n✅ Trend report successfully saved to {filename}")
+            logger.info(f"Trend report saved to {filename}")
+        except Exception as e:
+            print(f"❌ Failed to save trend report: {e}")
+            logger.error(f"Could not save trend report to {filename}: {e}", exc_info=True)
+
+    def run_backtest(self):
+        """
+        Handles the user flow for running a backtest with an improved UI.
+        """
+        print("\n--- 🧪 Backtesting Mode ---")
+
+        # Initialize the analyzer and backtester
+        try:
+            analyzer = CryptoTrendAnalyzer(config=self.config)
+            backtester = Backtester(config=self.config, analyzer=analyzer)
+        except Exception as e:
+            self.logger.error(f"Failed to initialize backtesting components: {e}", exc_info=True)
+            print("❌ Error: Could not initialize the backtester. Please check logs.")
+            return
+
+        available_coins = self.config.get('trend_analyzer', {}).get('cryptocurrencies', [])
+        if not available_coins:
+            print("❌ No cryptocurrencies found in your configuration.")
+            return
+
+        # --- UI IMPROVEMENT ---
+        available_coins.sort() # Sort coins alphabetically for a consistent order
+
+        print("\nCoins available for backtesting:")
+
+        # Print the list in 3 neat columns for better readability
+        num_coins = len(available_coins)
+        cols = 3
+        for i in range(0, num_coins, cols):
+            row = "  "
+            for j in range(cols):
+                if i + j < num_coins:
+                    # Format each item with a number and fixed width
+                    row += f"{i+j+1:2d}. {available_coins[i+j]:<15}"
+            print(row)
+
+        symbol_to_test = None
+        while symbol_to_test is None:
+            choice = input("\nEnter the symbol or number of the coin to backtest: ").strip()
+
+            if choice.isdigit():
+                # Handle numeric input
+                try:
+                    choice_index = int(choice) - 1
+                    if 0 <= choice_index < num_coins:
+                        symbol_to_test = available_coins[choice_index]
+                    else:
+                        print(f"❌ Invalid number. Please enter a number between 1 and {num_coins}.")
+                except ValueError:
+                     print(f"❌ Invalid input. Please enter a valid symbol or number.")
+            else:
+                # Handle string input (the symbol itself)
+                if choice.upper() in available_coins:
+                    symbol_to_test = choice.upper()
+                else:
+                    print(f"❌ Symbol '{choice}' not found. Please choose from the list above.")
+        # --- END OF UI IMPROVEMENT ---
+
+        print(f"\nSelected coin for backtest: {symbol_to_test}")
+
+        try:
+            initial_capital_str = input("Enter initial capital (default: 10000): ")
+            initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
+        except ValueError:
+            print("❌ Invalid capital amount. Using default $10,000.")
+            initial_capital = 10000.0
+
+        # Run the backtest and generate the report
+        backtester.run(symbol=symbol_to_test, initial_capital=initial_capital)
+        backtester.generate_report()
+
+    def _redeem_from_earn_if_needed(self, asset: str, required_amount: float, is_live: bool) -> bool:
+        """
+        Checks for sufficient spot balance. If needed, it finds the correct productId
+        and redeems from Simple Earn only if in live mode.
+        Returns True if funds are sufficient, False otherwise.
+        """
+        try:
+            spot_balance_info = self.binance_client.get_asset_balance(asset=asset)
+            free_spot_balance = float(spot_balance_info.get('free', 0.0))
+
+            if free_spot_balance >= required_amount:
+                logger.info(f"Sufficient {asset} balance in Spot wallet. No action needed.")
+                return True
+
+            shortfall = required_amount - free_spot_balance
+            logger.warning(f"Shortfall of {shortfall:.8f} {asset}. Checking Simple Earn.")
+
+            positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset)
+            if not positions or not positions.get('rows'):
+                print(f"❌ No active Simple Earn Flexible positions found for {asset} to redeem from.")
+                return False
+
+            product_to_redeem_from = positions['rows'][0]
+            product_id = product_to_redeem_from.get('productId')
+            available_to_redeem = float(product_to_redeem_from.get('totalAmount', 0.0))
+
+            if shortfall > available_to_redeem:
+                print(f"❌ Cannot redeem required amount. Need {shortfall:.8f} {asset}, but only {available_to_redeem:.8f} is available in Simple Earn.")
+                return False
+
+            # --- This is the new, critical check ---
+            if is_live:
+                print(f"⚠️ Insufficient Spot balance. Attempting to redeem {shortfall:.8f} {asset} from product {product_id}.")
+                logger.info(f"LIVE MODE: Attempting to redeem {shortfall:.8f} {asset} from productId {product_id}.")
+                redemption_result = self.binance_client.redeem_simple_earn_flexible_product(
+                    productId=product_id,
+                    amount=f"{shortfall:.8f}"
+                )
+                if redemption_result and redemption_result.get('success'):
+                    logger.info(f"Successfully initiated LIVE redemption. Waiting 5 seconds...")
+                    print(f"✅ Redemption initiated for {shortfall:.8f} {asset}. Waiting 5 seconds...")
+                    time.sleep(5)
+                    return True # Assume success and let the trade proceed
+                else:
+                    logger.error(f"Failed to redeem {asset} from {product_id}: {redemption_result}")
+                    print(f"❌ LIVE redemption FAILED for {asset}. See logs.")
+                    return False
+            else:
+                # In Dry Run mode, we only simulate the check.
+                print(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from Simple Earn product {product_id}.")
+                logger.info(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}.")
+                return True # Return True to allow the simulated trade to continue
+
+        except BinanceAPIException as e:
+            logger.error(f"API Error during redemption process for {asset}: {e}", exc_info=True)
+            print(f"❌ An API Error occurred when trying to process redemption for {asset}: {e.message}")
+            return False
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during redemption check for {asset}: {e}", exc_info=True)
+            return False
+
+    def execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float]):
+        """
+        Executes rebalancing trades, enforcing minimum trade size during execution.
+        """
+        if suggestions_df.empty or 'Signal' not in suggestions_df.columns:
+            print("No rebalancing suggestions to execute.")
+            return
+
+        trades_to_execute = suggestions_df[suggestions_df['Signal'].isin(['BUY', 'SELL'])]
+        if trades_to_execute.empty:
+            print("\n✅ No BUY or SELL actions suggested. Nothing to execute.")
+            return
+
+        portfolio_config = self.config.get("portfolio", {})
+        min_trade_usd = portfolio_config.get("minimum_trade_usd", 10.0)
+        is_live = self.config.get("rebalance_technical", {}).get("live_trading_enabled", False)
+
+        simulated_balances = {}
+        all_trade_symbols = set(trades_to_execute['Symbol'].unique()) | {'USDT'}
+        for symbol in all_trade_symbols:
+            try:
+                spot_bal = float(self.binance_client.get_asset_balance(asset=symbol).get('free', 0.0))
+                earn_bal = earn_balances.get(symbol, 0.0)
+                simulated_balances[symbol] = spot_bal + earn_bal
+                logger.info(f"Initialized simulated balance for {symbol}: {simulated_balances[symbol]:.8f}")
+            except Exception as e:
+                logger.error(f"Could not fetch balance for {symbol}: {e}")
+                simulated_balances[symbol] = 0.0
+
+        print("\n" + "="*80)
+        if is_live: print("🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴")
+        else: print("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡🟡🟡")
+        print("="*80)
+        print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
+        print("="*80)
+        print(trades_to_execute[['Symbol', 'Signal', 'Suggested Action Detail']].to_string(index=False))
+        print("="*80)
+
+        try:
+            confirm = input("Type 'EXECUTE' to proceed with the trades listed above: ")
+            if confirm != 'EXECUTE':
+                print("🛑 Trade execution cancelled by user."); return
+        except KeyboardInterrupt:
+            print("\n🛑 Trade execution cancelled by user."); return
+
+        self.logger.info("User confirmed trade execution. Proceeding...")
+
+        for _, row in trades_to_execute.iterrows():
+            symbol = row['Symbol']
+            signal = row['Signal']
+            details = row['Suggested Action Detail']
+            trade_ticker = f"{symbol}USDT"
+
+            try:
+                if signal == 'SELL':
+                    qty_match = re.search(r"which is ([\d\.e\-\+]+) " + symbol, details)
+                    usd_match = re.search(r"~\$([\d,\.]+)\)", details)
+                    if not (qty_match and usd_match):
+                        print(f"\n⚠️ SKIPPING SELL for {symbol}: Could not parse trade details from action string.")
+                        logger.warning(f"Could not parse sell details: {details}")
+                        continue
+
+                    qty_to_sell = float(qty_match.group(1))
+                    sell_value_usd = float(usd_match.group(1).replace(",", ""))
+
+                    if sell_value_usd < min_trade_usd:
+                        print(f"\n⚠️ SKIPPING SELL for {symbol}: Suggested trade value (~${sell_value_usd:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                        continue
+
+                    if qty_to_sell > simulated_balances.get(symbol, 0.0):
+                        print(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({qty_to_sell:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
+                        continue
+
+                    if not self._redeem_from_earn_if_needed(asset=symbol, required_amount=qty_to_sell, is_live=is_live):
+                        print(f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure.")
+                        continue
+
+                    simulated_balances[symbol] -= qty_to_sell
+                    print(f"\nPreparing MARKET SELL for {qty_to_sell:.8g} {symbol}...")
+
+                    if is_live:
+                        try:
+                            print("🚀 PLACING LIVE ORDER...")
+                            order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{qty_to_sell:.8g}")
+                            print(f"✅ LIVE SELL ORDER PLACED: {order}")
+                            logger.info(f"LIVE SELL ORDER PLACED: {order}")
+                        except BinanceAPIException as e:
+                            print(f"❌ LIVE SELL FAILED for {symbol}: {e}")
+                            logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
+                    else:
+                        print("✅ (Dry Run) Trade was not placed.")
+
+                elif signal == 'BUY':
+                    usd_match = re.search(r"\$([\d,\.]+) worth", details)
+                    if not usd_match: continue
+                    buy_value_usd = float(usd_match.group(1).replace(",", ""))
+
+                    if buy_value_usd < min_trade_usd:
+                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Suggested trade value (~${buy_value_usd:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                        continue
+
+                    if buy_value_usd > simulated_balances.get('USDT', 0.0):
+                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${buy_value_usd:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get('USDT', 0.0):,.2f}).")
+                        continue
+
+                    if not self._redeem_from_earn_if_needed(asset='USDT', required_amount=buy_value_usd, is_live=is_live):
+                        print(f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check.")
+                        continue
+
+                    simulated_balances['USDT'] -= buy_value_usd
+                    print(f"\nPreparing MARKET BUY for ${buy_value_usd:,.2f} of {symbol}...")
+
+                    if is_live:
+                        try:
+                            print("🚀 PLACING LIVE ORDER...")
+                            order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{buy_value_usd:.2f}")
+                            print(f"✅ LIVE BUY ORDER PLACED: {order}")
+                            logger.info(f"LIVE BUY ORDER PLACED: {order}")
+                        except BinanceAPIException as e:
+                            print(f"❌ LIVE BUY FAILED for {symbol}: {e}")
+                            logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
+                    else:
+                        print("✅ (Dry Run) Trade was not placed.")
+
+            except Exception as e:
+                self.logger.error(f"An unexpected error occurred executing trade for {symbol}: {e}", exc_info=True)
+                print(f"❌ Unexpected Error for {symbol}: {e}")

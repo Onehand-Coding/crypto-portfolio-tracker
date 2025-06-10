@@ -33,7 +33,8 @@ class ConfigManager:
             ("exports", "path"),
             ("cache", "path"),
             ("portfolio", "binance_csv_path"),
-            ("portfolio", "copy_trading_csv_path")
+            ("portfolio", "copy_trading_csv_path"),
+            ("trend_analyzer", "report_directory")
         }
         for path_keys in paths_to_resolve:
             temp_config = config

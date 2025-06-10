@@ -94,27 +94,31 @@ Examples:
 def show_interactive_menu():
     """Display interactive menu and get user choice"""
     print("\n" + "="*50)
-    print("🚀 Crypto Portfolio Tracker v2.0")
+    print("🚀 Crypto Portfolio Tracker v2.1")
     print("="*50)
     print("1. 🔄 Full Sync & Analysis (Recommended)")
     print("2. 📊 Quick Portfolio Summary")
-    print("3. 📋 Export Reports Only")
-    print("4. 📈 Generate Charts Only")
-    print("5. 💾 Export Data Backup")
-    print("6. ⚙️  View Configuration")
-    print("7. 🧹 Clean Old Data")
-    print("8. ⚖️  View Rebalance Suggestions (Technical Strategy)") # Updated text
-    print("9. 🔧 Test API Connections")
-    print("10. ❌ Exit")
+    print("3. 📈 View Crypto Trends")
+    print("4. ⚖️  View Rebalance Suggestions")
+    print("5. 🤖 Execute Rebalancing Trades")
+    print("6. 📋 Export Reports Only")
+    print("7. 📈 Generate Charts Only")
+    print("8. 💾 Export Data Backup")
+    print("9. ⚙️  View Configuration")
+    print("10. 🧹 Clean Old Data")
+    print("11. 🔧 Test API Connections")
+    print("12. 🧪 Run Trend Strategy Backtest")
+    print("13. ⚖️  Run Rebalancing Backtest")
+    print("14. ❌ Exit")
     print("="*50)
 
     while True:
         try:
-            choice = input("\nSelect option (1-10): ").strip()
-            if choice in [str(i) for i in range(1, 11)]:
+            choice = input("\nSelect option (1-14): ").strip()
+            if choice in [str(i) for i in range(1, 15)]:
                 return int(choice)
             else:
-                print("❌ Invalid choice. Please select 1-10.")
+                print("❌ Invalid choice. Please select 1-14.")
         except KeyboardInterrupt:
             print("\n\n👋 Goodbye!")
             sys.exit(0)
@@ -147,6 +151,20 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 input("\n✅ Press Enter to continue...")
 
             elif choice == 3:
+                print("\n📈 Viewing Crypto Trends...")
+                asyncio.run(tracker.view_trends())
+                input("\n✅ Press Enter to continue...")
+
+            elif choice == 4:
+                suggestions = asyncio.run(tracker.get_core_portfolio_rebalance_suggestions_technical())
+                tracker.print_rebalance_suggestions(suggestions)
+                input("\n✅ Press Enter to continue...")
+
+            elif choice == 5:
+                asyncio.run(tracker.run_rebalance_and_execute())
+                input("\n✅ Press Enter to continue...")
+
+            elif choice == 6:
                 print("\n📋 Exporting reports...")
                 metrics = tracker.calculate_portfolio_metrics()
                 if "error" not in metrics:
@@ -159,7 +177,7 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                     print(f"❌ Could not generate metrics for export: {metrics['error']}")
                 input("Press Enter to continue...")
 
-            elif choice == 4:
+            elif choice == 7:
                 print("\n📈 Generating charts...")
                 metrics = tracker.calculate_portfolio_metrics()
                 if "error" not in metrics:
@@ -169,24 +187,20 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                     print(f"❌ Could not generate metrics for charts: {metrics['error']}")
                 input("Press Enter to continue...")
 
-            elif choice == 5:
+            elif choice == 8:
                 print("\n💾 Exporting data backup (CSV)...")
                 tracker.export_csv_backup()
                 input("\n✅ CSV Backup completed. Press Enter to continue...")
 
-            elif choice == 6:
+            elif choice == 9:
                 print("\n⚙  Current Configuration:")
                 tracker.print_configuration()
                 input("\nPress Enter to continue...")
 
-            elif choice == 7:
+            elif choice == 10:
                 print("\n🧹 Cleaning old data...")
                 tracker.cleanup_old_data()
                 input("\n✅ Cleanup completed. Press Enter to continue...")
-
-            elif choice == 8:
-                print("\n⚖  Rebalance Suggestions (Core Portfolio - Technical Analysis)")
-                suggestions_df = asyncio.run(tracker.get_core_portfolio_rebalance_suggestions_technical())
 
                 if suggestions_df is not None and not suggestions_df.empty:
                     tracker.print_rebalance_suggestions(suggestions_df)
@@ -196,12 +210,20 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                     print("Could not generate rebalance suggestions (function returned None, check logs).")
                 input("\n✅ Press Enter to continue...")
 
-            elif choice == 9:
+            elif choice == 11:
                 print("\n🔧 Testing API connections...")
                 tracker.test_connections()
                 input("\n✅ Test completed. Press Enter to continue...")
 
-            elif choice == 10:
+            elif choice == 12:
+                tracker.run_backtest()
+                input("\n✅ Press Enter to continue...")
+
+            elif choice == 13:
+                asyncio.run(tracker.run_rebalancing_backtest())
+                input("\n✅ Press Enter to continue...")
+
+            elif choice == 14:
                 print("\n👋 Goodbye!")
                 break
 
