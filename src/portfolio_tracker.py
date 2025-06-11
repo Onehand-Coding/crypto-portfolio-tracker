@@ -577,12 +577,9 @@ class CryptoPortfolioTracker:
 
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
         """
-        Generates rebalancing suggestions using a multi-timeframe analysis:
-        - Short-term (daily) Support & Resistance.
-        - Long-term (weekly) trend conditions for confirmation.
+        Generates rebalancing suggestions using a multi-timeframe analysis and adaptive trade sizing.
         """
         logger.info("Calculating Core Portfolio rebalance suggestions with technical indicators...")
-
         analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
 
         swing_report_task = analyzer.generate_report('swing')
@@ -641,18 +638,31 @@ class CryptoPortfolioTracker:
             is_overbought_long_term = TrendCondition.RSI_OVERBOUGHT.value in long_term_conditions
             is_oversold_long_term = TrendCondition.RSI_OVERSOLD.value in long_term_conditions
 
+            signal_strength = 1.0
+            current_price = swing_analysis.get('current_price', 0)
+            support = swing_analysis.get('support_level', 0)
+            resistance = swing_analysis.get('resistance_level', 0)
+
+            if is_significantly_underweight and support > 0 and (current_price - support) / support < 0.10:
+                signal_strength = 1.5
+                logger.info(f"Signal strength for {symbol_simple} BUY boosted to {signal_strength} (price near support).")
+
+            if is_significantly_overweight and resistance > 0 and (resistance - current_price) / current_price < 0.10:
+                signal_strength = 1.5
+                logger.info(f"Signal strength for {symbol_simple} SELL boosted to {signal_strength} (price near resistance).")
+
             if is_significantly_overweight or is_overbought_long_term:
                 signal = "SELL"
                 overweight_usd = (absolute_drift_pct / 100) * total_portfolio_value
-                action_value_usd = overweight_usd * strategy_params.get('sell_percentage_multiplier', 0.5)
-                coin_amount = action_value_usd / swing_analysis['current_price'] if swing_analysis['current_price'] > 0 else 0
+                action_value_usd = overweight_usd * strategy_params.get('sell_percentage_multiplier', 0.5) * signal_strength
+                coin_amount = action_value_usd / current_price if current_price > 0 else 0
                 action_text = f"Sell ~${action_value_usd:,.2f} worth, which is {f'{coin_amount:,.8g}'} {symbol_simple}"
 
             elif is_significantly_underweight or is_oversold_long_term:
                 signal = "BUY"
                 underweight_usd = abs(absolute_drift_pct / 100) * total_portfolio_value
-                action_value_usd = underweight_usd * strategy_params.get('buy_amount_multiplier', 1.0)
-                coin_amount = action_value_usd / swing_analysis['current_price'] if swing_analysis['current_price'] > 0 else 0
+                action_value_usd = underweight_usd * strategy_params.get('buy_amount_multiplier', 1.0) * signal_strength
+                coin_amount = action_value_usd / current_price if current_price > 0 else 0
                 action_text = f"Buy ~${action_value_usd:,.2f} worth ({f'{coin_amount:,.8g}'} {symbol_simple})"
 
             suggestions_data.append({
@@ -661,17 +671,12 @@ class CryptoPortfolioTracker:
                 "Current %": current_pct_of_portfolio,
                 "Drift (pts)": absolute_drift_pct,
                 "Current Value (USD)": current_value,
-                "Support": swing_analysis.get('support_level'),
-                "Support_Context": "30-Day",
-                "Resistance": swing_analysis.get('resistance_level'),
-                "Resistance_Context": "30-Day",
-                "TA_Context": "Weekly",
-                # --- THIS IS THE CORRECTED KEY ---
-                "TA_Conditions": ", ".join(long_term_analysis.get('active_conditions',[])) or "None",
-                "Signal": signal,
-                "Suggested Action Detail": action_text,
-                "action_usd_value": action_value_usd,
-                "action_coin_quantity": coin_amount
+                "TA_Price": current_price, # --- ADD THIS LINE ---
+                "Support": support, "Support_Context": "30-Day",
+                "Resistance": resistance, "Resistance_Context": "30-Day",
+                "TA_Context": "Weekly", "TA_Conditions": ", ".join(long_term_conditions) or "None",
+                "Signal": signal, "Suggested Action Detail": action_text,
+                "action_usd_value": action_value_usd, "action_coin_quantity": coin_amount
             })
 
         if not suggestions_data: return pd.DataFrame()
@@ -2968,8 +2973,7 @@ class CryptoPortfolioTracker:
             r_ctx = row.get('Resistance_Context', 'D')
             ta_ctx = row.get('TA_Context', 'W')
 
-            print(f"   Support ({s_ctx}): ${row.get('Support', 0):,.2f} | Resistance ({r_ctx}): ${row.get('Resistance', 0):,.2f}")
-            # --- THIS IS THE CORRECTED LINE ---
+            print(f"   Price: ${row.get('TA_Price', 0):<8,.2f}  | Support ({s_ctx}): ${row.get('Support', 0):,.2f} | Resistance ({r_ctx}): ${row.get('Resistance', 0):,.2f}")
             print(f"   Long-Term Trend ({ta_ctx}): {row.get('TA_Conditions', 'N/A')}")
             print(f"   Action: {row.get('Suggested Action Detail', 'N/A')}")
             print("-" * 70)
