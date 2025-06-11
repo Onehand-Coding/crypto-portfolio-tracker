@@ -30,9 +30,9 @@ from config import ConfigManager
 from backtester import Backtester
 from database import DatabaseManager
 from visualizations import Visualizer
-from crypto_trend_analyzer import CryptoTrendAnalyzer
 from rebalancing_backtester import RebalancingBacktester
 from exporters import ExcelExporter, HtmlExporter, CsvExporter
+from crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 logger = logging.getLogger(__name__)
 
@@ -576,105 +576,106 @@ class CryptoPortfolioTracker:
             return None
 
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
+        """
+        Generates rebalancing suggestions using a multi-timeframe analysis:
+        - Short-term (daily) Support & Resistance.
+        - Long-term (weekly) trend conditions for confirmation.
+        """
         logger.info("Calculating Core Portfolio rebalance suggestions with technical indicators...")
+
+        analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
+
+        swing_report_task = analyzer.generate_report('swing')
+        long_term_report_task = analyzer.generate_report('long_term')
+        swing_report, long_term_report = await asyncio.gather(swing_report_task, long_term_report_task)
+
+        if not swing_report or not long_term_report or not swing_report.get('coin_analyses'):
+            logger.error("Could not generate trend reports for rebalancing suggestions.")
+            return None
 
         live_balances_df = self.fetch_binance_balances()
         if live_balances_df.empty:
             logger.error("Could not fetch live balances from Binance. Cannot rebalance.")
             return None
 
+        asset_classes = self.config.get("asset_classes", {})
+        major_assets = asset_classes.get("majors", ["BTC", "ETH"])
         rebalance_config = self.config.get("rebalance_technical", {})
-        rsi_period = rebalance_config.get("rsi_period_weekly", 14)
-        drift_threshold = rebalance_config.get("allocation_drift_threshold", 0.1)
-        rsi_overbought = rebalance_config.get("rsi_overbought", 70)
-        rsi_oversold = rebalance_config.get("rsi_oversold", 30)
-        price_vs_ma_above = rebalance_config.get("price_vs_ma_above", 25)
-        price_vs_ma_near_below = rebalance_config.get("price_vs_ma_near_below", 0)
-        sell_multiplier = rebalance_config.get("sell_percentage_multiplier", 0.15)
-        buy_multiplier = rebalance_config.get("buy_amount_multiplier", 0.75)
-        buy_portfolio_cap = rebalance_config.get("buy_portfolio_cap", 0.1)
 
-        core_portfolio_symbols_config = list(self.config.get("target_allocation", {}).keys())
-        core_portfolio_symbols = [self.norm_map.get(k.upper(), k.upper()) for k in core_portfolio_symbols_config]
-        core_balances_df = live_balances_df[live_balances_df['symbol'].isin(core_portfolio_symbols)].copy()
-        all_symbols_to_price = list(set(live_balances_df['symbol'].tolist() + core_portfolio_symbols))
-        current_prices_dict = self.get_current_prices(all_symbols_to_price)
-        core_balances_df['current_price'] = core_balances_df['symbol'].map(current_prices_dict).fillna(0.0)
-        core_balances_df['value_usd'] = core_balances_df['quantity'] * core_balances_df['current_price']
-        total_portfolio_value = core_balances_df['value_usd'].sum()
+        all_symbols = list(live_balances_df['symbol'].unique())
+        prices = self.get_current_prices(all_symbols)
+        live_balances_df['value_usd'] = live_balances_df['symbol'].map(prices).fillna(0.0) * live_balances_df['quantity']
+        total_portfolio_value = live_balances_df['value_usd'].sum()
 
-        if total_portfolio_value == 0:
-            return pd.DataFrame()
+        if total_portfolio_value == 0: return pd.DataFrame()
 
-        target_allocation_normalized = { self.norm_map.get(k.upper(), k.upper()): v for k, v in self.config.get("target_allocation", {}).items() }
         suggestions_data = []
+        target_allocation_normalized = {self.norm_map.get(k.upper(), k.upper()): v for k, v in self.config.get("target_allocation", {}).items()}
 
-        def format_coin_amount(amount):
-            return f"{amount:,.8g}"
+        for symbol_simple, target_pct in target_allocation_normalized.items():
+            yf_symbol = f"{symbol_simple}-USD"
 
-        for symbol_upper_case in target_allocation_normalized.keys():
-            logger.info(f"--- Analyzing: {symbol_upper_case} ---")
-            current_row = live_balances_df[live_balances_df['symbol'] == symbol_upper_case]
-            current_qty = current_row['quantity'].iloc[0] if not current_row.empty else 0.0
-            live_current_price = current_prices_dict.get(symbol_upper_case, 0.0)
-            current_value = current_qty * live_current_price
-            target_pct = target_allocation_normalized.get(symbol_upper_case, 0.0)
-            target_value_for_symbol = total_portfolio_value * target_pct
-            current_pct_of_portfolio = (current_value / total_portfolio_value * 100) if total_portfolio_value > 0 else 0.0
+            swing_analysis = swing_report['coin_analyses'].get(yf_symbol)
+            long_term_analysis = long_term_report['coin_analyses'].get(yf_symbol)
 
-            # --- THIS IS THE KEY CALCULATION ---
-            relative_drift = (current_value - target_value_for_symbol) / target_value_for_symbol if target_value_for_symbol > 0 else float('inf') if current_value > 0 else 0.0
+            if not swing_analysis or not long_term_analysis: continue
 
-            df_weekly_hist = await self._fetch_historical_data_async(symbol_upper_case, period_str="4y", interval_str="1wk")
-            df_daily_hist = await self._fetch_historical_data_async(symbol_upper_case, period_str="60d", interval_str="1d")
-            ta_indicators = self._calculate_technical_indicators(symbol_upper_case, df_weekly_hist, df_daily_hist)
-            rsi = ta_indicators.get("rsi_weekly")
-            price_vs_200w_ma = ta_indicators.get("price_vs_200w_ma_percent")
+            if symbol_simple in major_assets:
+                strategy_params = rebalance_config.get("majors", {})
+            else:
+                strategy_params = rebalance_config.get("alts", {})
 
-            signal = "HOLD"
-            action_text = "Hold: Allocation is within tolerance."
+            drift_threshold_pct = strategy_params.get("allocation_drift_threshold_pct", 5.0)
 
-            # Use the 'relative_drift' for the logic check
-            is_significantly_overweight = relative_drift > drift_threshold
-            is_significantly_underweight = relative_drift < -drift_threshold
+            current_value = live_balances_df[live_balances_df['symbol'] == symbol_simple]['value_usd'].sum()
+            current_pct_of_portfolio = (current_value / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
+            absolute_drift_pct = current_pct_of_portfolio - (target_pct * 100)
 
-            rsi_very_overbought = rsi is not None and rsi > rsi_overbought
-            rsi_very_oversold = rsi is not None and rsi < rsi_oversold
-            price_well_above_ma = price_vs_200w_ma is not None and price_vs_200w_ma > price_vs_ma_above
-            price_near_or_below_ma = price_vs_200w_ma is not None and price_vs_200w_ma <= price_vs_ma_near_below
+            signal, action_text = "HOLD", "Hold: Allocation is within tolerance."
+            action_value_usd, coin_amount = 0.0, 0.0
 
-            if is_significantly_overweight or (rsi_very_overbought and price_well_above_ma):
+            is_significantly_overweight = absolute_drift_pct > drift_threshold_pct
+            is_significantly_underweight = absolute_drift_pct < -drift_threshold_pct
+
+            long_term_conditions = long_term_analysis.get('active_conditions', [])
+            is_overbought_long_term = TrendCondition.RSI_OVERBOUGHT.value in long_term_conditions
+            is_oversold_long_term = TrendCondition.RSI_OVERSOLD.value in long_term_conditions
+
+            if is_significantly_overweight or is_overbought_long_term:
                 signal = "SELL"
-                sell_percentage_of_position = min(0.1, relative_drift * sell_multiplier)
-                action_value_usd = current_value * sell_percentage_of_position
-                coin_amount_to_sell = action_value_usd / live_current_price if live_current_price > 0 else 0
-                action_text = (f"Sell ~{sell_percentage_of_position * 100:.1f}% of position (~${action_value_usd:,.2f}), which is {format_coin_amount(coin_amount_to_sell)} {symbol_upper_case}")
+                overweight_usd = (absolute_drift_pct / 100) * total_portfolio_value
+                action_value_usd = overweight_usd * strategy_params.get('sell_percentage_multiplier', 0.5)
+                coin_amount = action_value_usd / swing_analysis['current_price'] if swing_analysis['current_price'] > 0 else 0
+                action_text = f"Sell ~${action_value_usd:,.2f} worth, which is {f'{coin_amount:,.8g}'} {symbol_simple}"
 
-            elif is_significantly_underweight or (rsi_very_oversold and price_near_or_below_ma):
+            elif is_significantly_underweight or is_oversold_long_term:
                 signal = "BUY"
-                underweight_amount_usd = target_value_for_symbol - current_value
-                action_value_usd = min(underweight_amount_usd * buy_multiplier, abs(relative_drift) * total_portfolio_value * buy_portfolio_cap)
-                coin_amount_to_buy = action_value_usd / live_current_price if live_current_price > 0 else 0
-                action_text = (f"Buy ~${action_value_usd:,.2f} worth ({format_coin_amount(coin_amount_to_buy)} {symbol_upper_case})")
+                underweight_usd = abs(absolute_drift_pct / 100) * total_portfolio_value
+                action_value_usd = underweight_usd * strategy_params.get('buy_amount_multiplier', 1.0)
+                coin_amount = action_value_usd / swing_analysis['current_price'] if swing_analysis['current_price'] > 0 else 0
+                action_text = f"Buy ~${action_value_usd:,.2f} worth ({f'{coin_amount:,.8g}'} {symbol_simple})"
 
             suggestions_data.append({
-                "Symbol": symbol_upper_case,
+                "Symbol": symbol_simple,
                 "Target %": target_pct * 100,
                 "Current %": current_pct_of_portfolio,
+                "Drift (pts)": absolute_drift_pct,
                 "Current Value (USD)": current_value,
-                "Relative Drift %": relative_drift * 100, # Store as percentage
-                "RSI (14W)": rsi,
-                "Price vs 200w MA (%)": price_vs_200w_ma,
+                "Support": swing_analysis.get('support_level'),
+                "Support_Context": "30-Day",
+                "Resistance": swing_analysis.get('resistance_level'),
+                "Resistance_Context": "30-Day",
+                "TA_Context": "Weekly",
+                # --- THIS IS THE CORRECTED KEY ---
+                "TA_Conditions": ", ".join(long_term_analysis.get('active_conditions',[])) or "None",
                 "Signal": signal,
-                "Suggested Action Detail": action_text
+                "Suggested Action Detail": action_text,
+                "action_usd_value": action_value_usd,
+                "action_coin_quantity": coin_amount
             })
-            await asyncio.sleep(self.yfinance_config.get("request_delay_ms", 200) / 1000.0)
 
-        if not suggestions_data:
-            return pd.DataFrame()
-
-        df_suggestions = pd.DataFrame(suggestions_data)
-        return df_suggestions
+        if not suggestions_data: return pd.DataFrame()
+        return pd.DataFrame(suggestions_data)
 
     async def sync_data(self):
         """Asynchronously synchronize data from all sources, and update holdings."""
@@ -736,11 +737,10 @@ class CryptoPortfolioTracker:
     async def view_trends(self):
         """
         Provides an interactive menu to view cryptocurrency trend analysis reports.
-        Initializes the trend analyzer with the central config and manages user flow.
         """
         try:
-            # Pass the tracker's config object to the analyzer
-            analyzer = CryptoTrendAnalyzer(config=self.config)
+            # --- FIX: Pass the binance_client to the analyzer ---
+            analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
             print("✅ Trend Analyzer initialized with centralized config.")
         except Exception as e:
             logger.error(f"Failed to initialize CryptoTrendAnalyzer: {e}", exc_info=True)
@@ -750,46 +750,35 @@ class CryptoPortfolioTracker:
         while True:
             print("\n--- 📈 Crypto Trend Analysis ---")
             print("Select the timeframe for the analysis:")
-            print("1. Long-term (1 Year)")
+            print("1. Long-term (4 Years)")
             print("2. Swing (3 Months)")
             print("3. Day (1 Month)")
             print("4. Back to Main Menu")
 
             try:
-                choice_str = input("Select option (1-4): ")
-                if not choice_str.isdigit():
-                    print("❌ Invalid input. Please enter a number.")
-                    time.sleep(2)
+                choice_str = input("Select option (1-4): ").strip()
+                if not choice_str.isdigit() or int(choice_str) not in range(1, 5):
+                    print("❌ Invalid input. Please enter a number between 1 and 4.")
                     continue
                 choice = int(choice_str)
             except ValueError:
                 print("❌ Invalid input. Please enter a number.")
-                time.sleep(2)
                 continue
 
             timeframe = None
-            if choice == 1:
-                timeframe = "long_term"
-            elif choice == 2:
-                timeframe = "swing"
-            elif choice == 3:
-                timeframe = "day"
-            elif choice == 4:
-                break
-            else:
-                print("❌ Invalid option. Please try again.")
-                time.sleep(2)
-                continue
+            if choice == 1: timeframe = "long_term"
+            elif choice == 2: timeframe = "swing"
+            elif choice == 3: timeframe = "day"
+            elif choice == 4: break
 
             if timeframe:
                 print(f"\n🔄 Generating {timeframe.replace('_', ' ')} trend report...")
                 try:
-                    # Run the synchronous generate_report in a separate thread
-                    report = await asyncio.to_thread(analyzer.generate_report, timeframe)
+                    # --- FIX: Await the new async generate_report directly ---
+                    report = await analyzer.generate_report(timeframe)
 
                     if report:
                         self.print_trend_report(report)
-                        # Ask the user if they want to export the report
                         export_choice = input("\nDo you want to export this report? (y/n): ").lower()
                         if export_choice == 'y':
                             self.export_trend_report(report, timeframe)
@@ -2894,12 +2883,14 @@ class CryptoPortfolioTracker:
 
     def print_portfolio_summary(self, metrics: Dict[str, Any]):
         """Prints a consolidated summary of the portfolio, including Spot and Earn balances."""
-        print("\n" + "="*100)
+        # Increased the width for the new column
+        LINE_WIDTH = 115
+        print("\n" + "="*LINE_WIDTH)
         print("📊 CONSOLIDATED PORTFOLIO SUMMARY (Spot + Earn)")
-        print("="*100)
+        print("="*LINE_WIDTH)
         if "error" in metrics:
             print(f"❌ Could not generate summary: {metrics['error']}")
-            print("="*100)
+            print("="*LINE_WIDTH)
             return
 
         timestamp = metrics.get('timestamp')
@@ -2916,59 +2907,52 @@ class CryptoPortfolioTracker:
         color_start = "\033[92m" if pl_usd >= 0 else "\033[91m"
         color_end = "\033[0m"
         print(f"Unrealized P/L:        {color_start}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
-        print("-" * 100)
+        print("-" * LINE_WIDTH)
 
         holdings_df = metrics.get('holdings_df')
         if holdings_df is not None and not holdings_df.empty:
-            # --- UPDATED HEADER TO MATCH NEW COLUMNS ---
-            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'P/L (USD)':<15} {'Allocation':<10}"
+            # --- NEW HEADER with 'Cost Basis' column ---
+            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Allocation':<10}"
             print(header)
-            print("-" * 100)
+            print("-" * LINE_WIDTH)
 
             for _, row in holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
                 row_pl_usd = row.get('unrealized_pl_usd', 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
                 row_color_end = "\033[0m"
 
-                # --- UPDATED ROW TO USE NEW COLUMN NAMES ---
+                # --- NEW ROW with 'cost_basis_total' ---
                 print(
                     f"{row.get('symbol', 'N/A'):<8} "
                     f"{row.get('total_quantity', 0):<18,.8g} "
                     f"{row.get('spot_quantity', 0):<15,.8g} "
                     f"{row.get('earn_quantity', 0):<15,.8g} "
                     f"${row.get('value_usd', 0):<14,.2f} "
+                    f"${row.get('cost_basis_total', 0):<14,.2f} "
                     f"{row_color_start}${row_pl_usd:<14,.2f}{row_color_end} "
                     f"{row.get('allocation', 0) * 100:<9.2f}%"
                 )
-            print("="*100)
+            print("="*LINE_WIDTH)
         else:
             print("No holdings data to display.")
-            print("="*100)
+            print("="*LINE_WIDTH)
 
     def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame]):
-        """Prints rebalancing suggestions with relative drift in a clean, readable format."""
+        """Prints rebalancing suggestions with S/R levels and timeframe context."""
         if suggestions_df is None or suggestions_df.empty:
             print("\nCould not generate rebalancing suggestions.")
             return
 
-        # Sort by the absolute value of relative drift to show the most deviated assets first
-        if 'Relative Drift %' in suggestions_df.columns:
-            suggestions_df = suggestions_df.sort_values(by='Relative Drift %', key=abs, ascending=False)
+        if 'Drift (pts)' in suggestions_df.columns:
+            suggestions_df = suggestions_df.sort_values(by='Drift (pts)', key=abs, ascending=False)
 
-        print("\n" + "="*80)
-        print("⚖️ REBALANCING SUGGESTIONS (Core Portfolio - Technical Analysis)")
-        print("="*80)
+        print("\n" + "="*120)
+        print("⚖️ REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)")
+        print("="*120)
 
         for _, row in suggestions_df.iterrows():
+            signal = row.get('Signal', 'HOLD')
             symbol = row.get('Symbol', 'N/A')
-            signal = row.get('Signal', 'N/A')
-            current_pct = row.get('Current %', 0)
-            target_pct = row.get('Target %', 0)
-            relative_drift = row.get('Relative Drift %', 0) # Get the new value
-            current_val = row.get('Current Value (USD)', 0)
-            action = row.get('Suggested Action Detail', 'N/A')
-            rsi = row.get('RSI (14W)')
-            ma_dist = row.get('Price vs 200w MA (%)')
 
             if signal == "BUY": color_start, color_end, icon = "\033[92m", "\033[0m", "🟢"
             elif signal == "SELL": color_start, color_end, icon = "\033[91m", "\033[0m", "🔴"
@@ -2976,22 +2960,21 @@ class CryptoPortfolioTracker:
 
             print(f"{color_start}{icon} {symbol.ljust(7)} | Signal: {signal.ljust(5)}{color_end}")
 
-            # --- UPDATED LINE TO SHOW RELATIVE DRIFT ---
-            print(f"   Allocation: {current_pct:.2f}% (Target: {target_pct:.1f}%) | Relative Drift: {relative_drift:+.1f}% | Value: ${current_val:,.2f}")
+            print(f"   Allocation: {row.get('Current %', 0):.2f}% (Target: {row.get('Target %', 0):.1f}%) | "
+                  f"Drift: {row.get('Drift (pts)', 0):+.2f} pts | "
+                  f"Value: ${row.get('Current Value (USD)', 0):,.2f}")
 
-            ta_info = []
-            if pd.notna(rsi): ta_info.append(f"RSI (14W): {rsi:.1f}")
-            if pd.notna(ma_dist): ta_info.append(f"Price vs 200w MA: {ma_dist:+.1f}%")
-            else:
-                if symbol not in self.stablecoin_symbols:
-                    ta_info.append("Price vs 200w MA: (No Data)")
-            if ta_info:
-                print(f"   TA: {', '.join(ta_info)}")
+            s_ctx = row.get('Support_Context', 'D')
+            r_ctx = row.get('Resistance_Context', 'D')
+            ta_ctx = row.get('TA_Context', 'W')
 
-            print(f"   Action: {action}")
-            print("-" * 60)
+            print(f"   Support ({s_ctx}): ${row.get('Support', 0):,.2f} | Resistance ({r_ctx}): ${row.get('Resistance', 0):,.2f}")
+            # --- THIS IS THE CORRECTED LINE ---
+            print(f"   Long-Term Trend ({ta_ctx}): {row.get('TA_Conditions', 'N/A')}")
+            print(f"   Action: {row.get('Suggested Action Detail', 'N/A')}")
+            print("-" * 70)
 
-        print("\n" + "="*80)
+        print("\n" + "="*120)
 
     def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
     def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
@@ -3083,26 +3066,40 @@ class CryptoPortfolioTracker:
 
         print("\n" + "="*80)
 
-    def export_trend_report(self, report: Dict[str, Any], timeframe: str):
-        """Exports the trend report to JSON."""
+    def print_trend_report(self, report: Dict[str, Any]):
+        """Prints a formatted trend analysis report to the console."""
         if not report:
-            print("❌ No report data to export.")
+            print("\n--- No Trend Report Data ---")
             return
 
-        report_dir = self.config.get('trend_analyzer', {}).get('report_directory', 'data/trend_reports')
-        os.makedirs(report_dir, exist_ok=True)
+        print("\n" + "="*80)
+        print(f"📈 TREND ANALYSIS REPORT ({report.get('timeframe', 'N/A').upper()})")
+        print(f"Timestamp: {report.get('timestamp')}")
+        print("="*80)
 
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join(report_dir, f"trend_report_{timeframe}_{timestamp}.json")
+        summary = report.get('market_summary', {})
+        print("\n--- 🌍 Market Summary ---")
+        print(f"Coins Analyzed: {summary.get('total_coins', 'N/A')}")
+        print(f"Most Common Condition: {summary.get('most_common_condition', 'N/A')}")
+        print(f"Bullish Coins: {summary.get('bull_count', 0)} | Bearish Coins: {summary.get('bear_count', 0)}")
 
-        try:
-            with open(filename, 'w') as f:
-                json.dump(report, f, indent=4, default=str)
-            print(f"\n✅ Trend report successfully saved to {filename}")
-            logger.info(f"Trend report saved to {filename}")
-        except Exception as e:
-            print(f"❌ Failed to save trend report: {e}")
-            logger.error(f"Could not save trend report to {filename}: {e}", exc_info=True)
+        btc = report.get('benchmark_analysis', {})
+        if btc:
+            print(f"\n--- 🎯 Benchmark Analysis: {btc.get('symbol', 'N/A')} ---")
+            print(f"  Price: ${btc.get('current_price', 0):,.2f} ({btc.get('price_change_pct', 0):+.2f}%) | RSI: {btc.get('rsi', 0):.2f}")
+            print(f"  Support: ${btc.get('support_level', 0):,.2f} | Resistance: ${btc.get('resistance_level', 0):,.2f}")
+            print(f"  Active Conditions: {', '.join(btc.get('active_conditions', ['None']))}")
+
+        print("\n--- 🪙 Coin-by-Coin Analysis ---")
+        for symbol, analysis in report.get('coin_analyses', {}).items():
+            if symbol == btc.get('symbol'): continue # Skip printing benchmark again
+
+            print(f"\n➡️ {symbol}")
+            print(f"  Price: ${analysis.get('current_price', 0):,.2f} ({analysis.get('price_change_pct', 0):+.2f}%) | RSI: {analysis.get('rsi', 0):.2f}")
+            print(f"  Support: ${analysis.get('support_level', 0):,.2f} | Resistance: ${analysis.get('resistance_level', 0):,.2f}")
+            print(f"  Active Conditions: {', '.join(analysis.get('active_conditions', ['None']))}")
+
+        print("\n" + "="*80)
 
     def run_backtest(self):
         """
@@ -3239,6 +3236,7 @@ class CryptoPortfolioTracker:
     def execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float]):
         """
         Executes rebalancing trades, enforcing minimum trade size during execution.
+        Reads exact trade values directly from the suggestions dataframe.
         """
         if suggestions_df.empty or 'Signal' not in suggestions_df.columns:
             print("No rebalancing suggestions to execute.")
@@ -3286,40 +3284,31 @@ class CryptoPortfolioTracker:
         for _, row in trades_to_execute.iterrows():
             symbol = row['Symbol']
             signal = row['Signal']
-            details = row['Suggested Action Detail']
             trade_ticker = f"{symbol}USDT"
+
+            usd_value = row.get('action_usd_value', 0.0)
+            coin_quantity = row.get('action_coin_quantity', 0.0)
+
+            if usd_value < min_trade_usd:
+                print(f"\n⚠️ SKIPPING {signal} for {symbol}: Suggested trade value (~${usd_value:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                continue
 
             try:
                 if signal == 'SELL':
-                    qty_match = re.search(r"which is ([\d\.e\-\+]+) " + symbol, details)
-                    usd_match = re.search(r"~\$([\d,\.]+)\)", details)
-                    if not (qty_match and usd_match):
-                        print(f"\n⚠️ SKIPPING SELL for {symbol}: Could not parse trade details from action string.")
-                        logger.warning(f"Could not parse sell details: {details}")
+                    if coin_quantity > simulated_balances.get(symbol, 0.0):
+                        print(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({coin_quantity:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
                         continue
-
-                    qty_to_sell = float(qty_match.group(1))
-                    sell_value_usd = float(usd_match.group(1).replace(",", ""))
-
-                    if sell_value_usd < min_trade_usd:
-                        print(f"\n⚠️ SKIPPING SELL for {symbol}: Suggested trade value (~${sell_value_usd:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
-                        continue
-
-                    if qty_to_sell > simulated_balances.get(symbol, 0.0):
-                        print(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({qty_to_sell:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
-                        continue
-
-                    if not self._redeem_from_earn_if_needed(asset=symbol, required_amount=qty_to_sell, is_live=is_live):
+                    if not self._redeem_from_earn_if_needed(asset=symbol, required_amount=coin_quantity, is_live=is_live):
                         print(f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure.")
                         continue
+                    simulated_balances[symbol] -= coin_quantity
+                    print(f"\nPreparing MARKET SELL for {coin_quantity:.8g} {symbol}...")
 
-                    simulated_balances[symbol] -= qty_to_sell
-                    print(f"\nPreparing MARKET SELL for {qty_to_sell:.8g} {symbol}...")
-
+                    # --- ADDED LIVE TRADING LOGIC ---
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
-                            order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{qty_to_sell:.8g}")
+                            order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{coin_quantity:.8g}")
                             print(f"✅ LIVE SELL ORDER PLACED: {order}")
                             logger.info(f"LIVE SELL ORDER PLACED: {order}")
                         except BinanceAPIException as e:
@@ -3329,29 +3318,20 @@ class CryptoPortfolioTracker:
                         print("✅ (Dry Run) Trade was not placed.")
 
                 elif signal == 'BUY':
-                    usd_match = re.search(r"\$([\d,\.]+) worth", details)
-                    if not usd_match: continue
-                    buy_value_usd = float(usd_match.group(1).replace(",", ""))
-
-                    if buy_value_usd < min_trade_usd:
-                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Suggested trade value (~${buy_value_usd:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                    if usd_value > simulated_balances.get('USDT', 0.0):
+                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get('USDT', 0.0):,.2f}).")
                         continue
-
-                    if buy_value_usd > simulated_balances.get('USDT', 0.0):
-                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${buy_value_usd:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get('USDT', 0.0):,.2f}).")
-                        continue
-
-                    if not self._redeem_from_earn_if_needed(asset='USDT', required_amount=buy_value_usd, is_live=is_live):
+                    if not self._redeem_from_earn_if_needed(asset='USDT', required_amount=usd_value, is_live=is_live):
                         print(f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check.")
                         continue
+                    simulated_balances['USDT'] -= usd_value
+                    print(f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}...")
 
-                    simulated_balances['USDT'] -= buy_value_usd
-                    print(f"\nPreparing MARKET BUY for ${buy_value_usd:,.2f} of {symbol}...")
-
+                    # --- ADDED LIVE TRADING LOGIC ---
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
-                            order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{buy_value_usd:.2f}")
+                            order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}")
                             print(f"✅ LIVE BUY ORDER PLACED: {order}")
                             logger.info(f"LIVE BUY ORDER PLACED: {order}")
                         except BinanceAPIException as e:

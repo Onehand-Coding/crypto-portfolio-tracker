@@ -252,7 +252,7 @@ def main():
     if args.verbose:
         log_level = "DEBUG"
     elif args.quiet:
-        log_level = "ERROR"
+        log_level = "WARNING"
 
     # 3. Setup logging, passing ONLY the "logging" dictionary from the config
     setup_logging(config=config_data.get("logging"), level=log_level)

@@ -94,23 +94,35 @@
     "LINK": 0.06,
     "ONDO": 0.05
   },
+  "asset_classes": {
+    "majors": ["BTC", "ETH"]
+  },
   "rebalancing_strategy": {
     "base_on_cost": true,
     "allow_selling": true,
     "never_sell_symbols": []
   },
   "rebalance_technical": {
-  "live_trading_enabled": false,
-  "rsi_period_weekly": 14,
-  "allocation_drift_threshold": 0.1,
-  "rsi_overbought": 70,
-  "rsi_oversold": 30,
-  "price_vs_ma_above": 25,
-  "price_vs_ma_near_below": 0,
-  "sell_percentage_multiplier": 0.15,
-  "buy_amount_multiplier": 0.75,
-  "buy_portfolio_cap": 0.1
-},
+    "live_trading_enabled": false,
+    "majors": {
+      "allocation_drift_threshold_pct": 3.0,
+      "rsi_overbought": 75,
+      "rsi_oversold": 25,
+      "price_vs_ma_above": 20,
+      "price_vs_ma_near_below": 5,
+      "sell_percentage_multiplier": 0.25,
+      "buy_amount_multiplier": 0.75
+    },
+    "alts": {
+      "allocation_drift_threshold_pct": 7.0,
+      "rsi_overbought": 70,
+      "rsi_oversold": 30,
+      "price_vs_ma_above": 25,
+      "price_vs_ma_near_below": 0,
+      "sell_percentage_multiplier": 0.5,
+      "buy_amount_multiplier": 1.0
+    }
+  },
   "symbol_mappings": {
     "coingecko_ids": {
       "USDT": "tether",
@@ -197,9 +209,9 @@
     "cryptocurrencies": [],
     "timeframe_settings": {
       "long_term": {
-        "period": "1y",
-        "sma_short_window": 20,
-        "sma_long_window": 50
+        "period": "4y",
+        "sma_short_window": 50,
+        "sma_long_window": 200
       },
       "swing": {
         "period": "3mo",
