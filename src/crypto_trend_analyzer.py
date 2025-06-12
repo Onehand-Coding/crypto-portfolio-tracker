@@ -64,7 +64,7 @@ class CryptoTrendAnalyzer:
 
     async def _fetch_data_source(self, symbol: str, period: str, interval: str) -> Optional[pd.DataFrame]:
         """Unified data fetching logic with yfinance and Binance fallback."""
-        yf_ticker = f"{symbol.replace('-USD', '')}-USD"
+        yf_ticker = f"{symbol.split('-')[0]}-USD"
 
         # 1. Try yfinance
         try:
@@ -73,6 +73,7 @@ class CryptoTrendAnalyzer:
             if not data.empty:
                 if isinstance(data.columns, pd.MultiIndex):
                     data.columns = data.columns.get_level_values(0)
+                # yfinance data is typically already tz-aware
                 return data
         except Exception as e:
             self.logger.warning(f"yfinance download for {yf_ticker} failed: {e}")
@@ -81,12 +82,23 @@ class CryptoTrendAnalyzer:
         if self.binance_client:
             self.logger.warning(f"Falling back to Binance API for {symbol}.")
             try:
-                interval_map = {"1d": Client.KLINE_INTERVAL_1DAY, "1wk": Client.KLINE_INTERVAL_1WEEK, "1h": Client.KLINE_INTERVAL_1HOUR}
+                interval_map = {
+                    "1m": Client.KLINE_INTERVAL_1MINUTE, "3m": Client.KLINE_INTERVAL_3MINUTE,
+                    "5m": Client.KLINE_INTERVAL_5MINUTE, "15m": Client.KLINE_INTERVAL_15MINUTE,
+                    "30m": Client.KLINE_INTERVAL_30MINUTE, "1h": Client.KLINE_INTERVAL_1HOUR,
+                    "2h": Client.KLINE_INTERVAL_2HOUR, "4h": Client.KLINE_INTERVAL_4HOUR,
+                    "6h": Client.KLINE_INTERVAL_6HOUR, "8h": Client.KLINE_INTERVAL_8HOUR,
+                    "12h": Client.KLINE_INTERVAL_12HOUR, "1d": Client.KLINE_INTERVAL_1DAY,
+                    "3d": Client.KLINE_INTERVAL_3DAY, "1w": Client.KLINE_INTERVAL_1WEEK,
+                    "1mo": Client.KLINE_INTERVAL_1MONTH,
+                }
                 binance_interval = interval_map.get(interval)
-                if not binance_interval: return None
+                if not binance_interval:
+                    self.logger.error(f"Binance fallback does not support interval: {interval}")
+                    return None
 
                 start_str = f"{period.replace('y', ' years').replace('mo', ' months')} ago UTC"
-                binance_pair = f"{symbol.replace('-USD', '').upper()}USDT"
+                binance_pair = f"{symbol.split('-')[0].upper()}USDT"
 
                 loop = asyncio.get_event_loop()
                 klines = await loop.run_in_executor(None, self.binance_client.get_historical_klines, binance_pair, binance_interval, start_str)
@@ -95,7 +107,11 @@ class CryptoTrendAnalyzer:
 
                 cols = ['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time', 'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore']
                 data = pd.DataFrame(klines, columns=cols)
-                data['timestamp'] = pd.to_datetime(data['timestamp'], unit='ms')
+
+                # --- THIS IS THE ONLY REQUIRED CHANGE ---
+                # This ensures the timestamp is made timezone-aware (UTC), preventing the crash.
+                data['timestamp'] = pd.to_datetime(data['timestamp'], unit='ms', utc=True)
+
                 data.set_index('timestamp', inplace=True)
                 data = data[['Open', 'High', 'Low', 'Close', 'Volume']].apply(pd.to_numeric, errors='coerce')
                 self.logger.info(f"Successfully fetched {len(data)} data points for {symbol} from Binance API fallback.")
@@ -109,7 +125,7 @@ class CryptoTrendAnalyzer:
         """Fetches and caches historical crypto data."""
         cache_key = f"historical_data_{symbol}_{period}_{interval}"
         if cache_key in self.data_cache:
-            self.logger.info(f"Loading {symbol} data from cache for {interval} interval.")
+            self.logger.debug(f"Loading {symbol} data from cache for {interval} interval.")
             return self.data_cache[cache_key]
 
         data = await self._fetch_data_source(symbol, period, interval)
@@ -288,6 +304,10 @@ class CryptoTrendAnalyzer:
         }
         self.logger.info(f"Successfully generated trend analysis report for {timeframe}.")
         return report
+
+    def set_symbol(self, symbol: str):
+        """Sets the symbol for the current analysis context."""
+        self.symbol = symbol
 
 
 # Standalone testing block

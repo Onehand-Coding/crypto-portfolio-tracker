@@ -73,6 +73,8 @@
     }
   },
   "portfolio": {
+    "minimum_trade_usd": 5,
+    "live_trading_enabled": false,
     "minimum_value_usd": 1.0,
     "stablecoin_symbols": ["USDT"],
     "crypto_quotes": [],
@@ -81,8 +83,7 @@
     "p2p_fiat_currency": "PHP",
     "binance_csv_path": "data/binance_export.csv",
     "copy_trading_csv_path": "data/copy_trading_transfers.csv",
-    "assets_for_internal_transfer_check": ["USDT"],
-    "minimum_trade_usd": 5
+    "assets_for_internal_transfer_check": ["USDT"]
   },
   "target_allocation": {
     "BTC": 0.35,
@@ -103,7 +104,6 @@
     "never_sell_symbols": []
   },
   "rebalance_technical": {
-    "live_trading_enabled": false,
     "majors": {
       "allocation_drift_threshold_pct": 3.0,
       "rsi_overbought": 75,
@@ -219,7 +219,7 @@
         "sma_long_window": 30
       },
       "day": {
-        "period": "1mo",
+        "period": "60d",
         "sma_short_window": 5,
         "sma_long_window": 15
       }

@@ -216,7 +216,7 @@ class DatabaseManager:
                  for _, row in holdings_data.iterrows():
                      asset_id = self.get_asset_id(row['symbol'], create_if_missing=False) # Don't create if missing for holdings
                      if asset_id:
-                         logger.info(f"DB: Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}")
+                         logger.debug(f"DB: Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}")
                          data_to_update.append((
                              asset_id,
                              row['quantity'],

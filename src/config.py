@@ -73,11 +73,29 @@ class ConfigManager:
 
     def _apply_env_overrides(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Override configuration with environment variables in a safe way."""
-        # API Keys
-        if os.getenv("BINANCE_API_KEY"):
-            config.setdefault("api_keys", {})["binance_key"] = os.getenv("BINANCE_API_KEY")
-        if os.getenv("BINANCE_API_SECRET"):
-            config.setdefault("api_keys", {})["binance_secret"] = os.getenv("BINANCE_API_SECRET")
+        # Main API Keys
+        config.setdefault("api_keys", {})
+        if os.getenv("MAIN_API_KEY"):
+            config["api_keys"]["binance_key"] = os.getenv("MAIN_API_KEY")
+        if os.getenv("MAIN_API_SECRET"):
+            config["api_keys"]["binance_secret"] = os.getenv("MAIN_API_SECRET")
+
+        # --- Load Sub-account API keys ---
+        config["sub_accounts"] = []
+        # Swing Trading Account
+        if os.getenv("SWING_API_KEY") and os.getenv("SWING_API_SECRET"):
+            config["sub_accounts"].append({
+                "name": "Swing Trading Account",
+                "binance_key": os.getenv("SWING_API_KEY"),
+                "binance_secret": os.getenv("SWING_API_SECRET")
+            })
+        # Day Trading Account
+        if os.getenv("DAY_API_KEY") and os.getenv("DAY_API_SECRET"):
+            config["sub_accounts"].append({
+                "name": "Day Trading Account",
+                "binance_key": os.getenv("DAY_API_KEY"),
+                "binance_secret": os.getenv("DAY_API_SECRET")
+            })
 
         # Logging Settings
         logging_config = config.setdefault("logging", {})
@@ -94,6 +112,7 @@ class ConfigManager:
             file_config["enabled"] = os.getenv("LOG_TO_FILE").lower() == "true"
 
         return config
+
 
     def _create_directories(self):
         """Create necessary directories based on config using absolute paths."""

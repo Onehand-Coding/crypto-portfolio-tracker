@@ -6,6 +6,7 @@ import re
 import os
 import json
 import time
+import inspect
 import asyncio
 import logging
 import datetime
@@ -27,9 +28,10 @@ from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
 from config import ConfigManager
-from backtester import Backtester
 from database import DatabaseManager
 from visualizations import Visualizer
+from strategy_backtester import StrategyBacktester
+import src.trading_strategies as trading_strategies
 from rebalancing_backtester import RebalancingBacktester
 from exporters import ExcelExporter, HtmlExporter, CsvExporter
 from crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
@@ -164,23 +166,27 @@ class CryptoPortfolioTracker:
         self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.coingecko_historical_price_disk_cache = Cache(str(self.cache_dir / "coingecko_historical"))
-        logger.info(f"Disk cache for CoinGecko historical prices initialized at: {self.cache_dir / 'coingecko_historical'}")
+        self.logger.info(f"Disk cache for CoinGecko historical prices initialized at: {self.cache_dir / 'coingecko_historical'}")
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_ohlcv"))
-        logger.info(f"Disk cache for yfinance historical data initialized at: {self.cache_dir / 'yfinance_ohlcv'}")
+        self.logger.info(f"Disk cache for yfinance historical data initialized at: {self.cache_dir / 'yfinance_ohlcv'}")
         self.yfinance_config = self.config.get("apis", {}).get("yfinance", {})
         target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
         self.target_assets_for_sync.add("USDT")
-        logger.info(f"Tracker initialized. Will focus sync on target assets: {list(self.target_assets_for_sync)}")
+        self.strategy_state_path = self.cache_dir.parent / "strategy_state.json"
+        self.strategy_states = self._load_strategy_state()
+        self.logger.info(f"Tracker initialized. Will focus sync on target assets: {list(self.target_assets_for_sync)}")
 
-    def _init_binance_client(self) -> Optional[Client]:
+    def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
         """Initialize and return Binance client with robust session and retries."""
-        api_keys = self.config.get("api_keys", {})
-        api_key = api_keys.get("binance_key")
-        api_secret = api_keys.get("binance_secret")
+        # If no keys are passed, use the main keys from the config
+        if not api_key or not api_secret:
+            api_keys = self.config.get("api_keys", {})
+            api_key = api_keys.get("binance_key")
+            api_secret = api_keys.get("binance_secret")
 
         if not api_key or not api_secret:
-            self.logger.warning("Binance API key/secret not found. Binance disabled.")
+            self.logger.warning("Binance API key/secret not found. Binance client disabled.")
             return None
 
         try:
@@ -196,20 +202,15 @@ class CryptoPortfolioTracker:
                 backoff_factor=1,
                 status_forcelist=[429, 500, 502, 503, 504],
             )
-            # Create the adapter with the retry strategy.
             adapter = HTTPAdapter(max_retries=retry_strategy)
-
-            # Mount the adapter to the client's EXISTING session.
-            # This adds our retry logic without overwriting the client's default headers.
             client.session.mount("https://", adapter)
             client.session.mount("http://", adapter)
 
             if self.config.get("apis", {}).get("binance", {}).get("testnet", False):
                 client.API_URL = 'https://testnet.binance.vision/api'
 
-            # Ping to confirm connection works with the modified session.
             client.ping()
-            self.logger.info("Binance client initialized with robust session.")
+            self.logger.info("Binance client initialized successfully.")
             return client
         except Exception as e:
             self.logger.error(f"Failed to init Binance client: {e}", exc_info=True)
@@ -222,7 +223,7 @@ class CryptoPortfolioTracker:
         try:
             response = requests.get(url, timeout=timeout); response.raise_for_status(); data = response.json()
             return data.get(coin_id, {}).get("usd")
-        except requests.exceptions.RequestException as e: logger.error(f"CoinGecko price fetch error for {coin_id}: {e}"); return None
+        except requests.exceptions.RequestException as e: self.logger.error(f"CoinGecko price fetch error for {coin_id}: {e}"); return None
 
     def _get_coingecko_historical_price(self, coin_id: str, date_str: str) -> Optional[float]:
         """Fetch historical price from CoinGecko for a specific date, using disk cache."""
@@ -245,7 +246,6 @@ class CryptoPortfolioTracker:
             parsed_date = pd.to_datetime(date_str, errors='coerce', dayfirst=True).date()
             today = datetime.datetime.now(timezone.utc).date()
 
-            # --- FIX: Prevent requests for today or future dates ---
             if parsed_date >= today:
                 self.logger.warning(f"Requested date {date_str} is today or in the future. Fetching previous day's data instead.")
                 parsed_date = today - timedelta(days=1)
@@ -259,7 +259,6 @@ class CryptoPortfolioTracker:
 
         url = f"{base_url}/coins/{coin_id}/history?date={api_date_str}&localization=false"
 
-        # Retry logic remains the same
         max_retries = 3
         initial_wait_seconds = 60
         server_error_codes_to_retry = [500, 502, 503, 504]
@@ -316,7 +315,7 @@ class CryptoPortfolioTracker:
         Returns how many 'to_currency' 1 unit of 'from_currency' is worth.
         """
         if not date_str_orig or not from_currency or not to_currency:
-            logger.error("Date, from_currency, or to_currency missing for fiat exchange rate lookup.")
+            self.logger.error("Date, from_currency, or to_currency missing for fiat exchange rate lookup.")
             return None
 
         if from_currency.upper() == to_currency.upper():
@@ -326,15 +325,15 @@ class CryptoPortfolioTracker:
             target_dt = pd.to_datetime(date_str_orig)
             api_date_str = target_dt.strftime('%Y-%m-%d')
         except ValueError:
-            logger.error(f"Invalid date format '{date_str_orig}'. Could not parse for yfinance.")
+            self.logger.error(f"Invalid date format '{date_str_orig}'. Could not parse for yfinance.")
             return None
 
         cache_key = f"yfinance_{api_date_str}_{from_currency}_{to_currency}"
         if cache_key in self.fiat_exchange_rate_cache:
-            logger.debug(f"Cache HIT for yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}.")
+            self.logger.debug(f"Cache HIT for yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}.")
             return self.fiat_exchange_rate_cache[cache_key]
 
-        logger.debug(f"Cache MISS. Fetching yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}.")
+        self.logger.debug(f"Cache MISS. Fetching yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}.")
 
         ticker_symbol = f"{from_currency.upper()}{to_currency.upper()}=X"
         rate = None
@@ -343,16 +342,16 @@ class CryptoPortfolioTracker:
         end_date_fetch = (target_dt + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
 
         try:
-            logger.debug(f"yfinance download: Ticker='{ticker_symbol}', Start='{start_date_fetch}', End='{end_date_fetch}'")
+            self.logger.debug(f"yfinance download: Ticker='{ticker_symbol}', Start='{start_date_fetch}', End='{end_date_fetch}'")
             data_window = yf.download(ticker_symbol, start=start_date_fetch, end=end_date_fetch, progress=False, auto_adjust=True)
 
             if data_window.empty:
-                logger.warning(f"No data returned by yfinance for {ticker_symbol} in window {start_date_fetch} to {end_date_fetch}.")
+                self.logger.warning(f"No data returned by yfinance for {ticker_symbol} in window {start_date_fetch} to {end_date_fetch}.")
             else:
                 data_window = data_window.sort_index()
                 closest_price_intermediate = data_window['Close'].asof(target_dt)
 
-                logger.debug(f"yfinance .asof() result type: {type(closest_price_intermediate)}, value: {closest_price_intermediate}")
+                self.logger.debug(f"yfinance .asof() result type: {type(closest_price_intermediate)}, value: {closest_price_intermediate}")
 
                 closest_price_scalar = None
                 if isinstance(closest_price_intermediate, pd.Series):
@@ -368,16 +367,16 @@ class CryptoPortfolioTracker:
                     if actual_price_date_idx[0] != -1 :
                         actual_price_date = data_window.index[actual_price_date_idx[0]]
                         rate = float(closest_price_scalar)
-                        logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using data from {actual_price_date.strftime('%Y-%m-%d')}): {rate}")
+                        self.logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using data from {actual_price_date.strftime('%Y-%m-%d')}): {rate}")
                     else:
-                        logger.warning(f"Could not determine actual date for 'asof' price for {ticker_symbol} on {api_date_str}, but got a value. Using asof value directly.")
+                        self.logger.warning(f"Could not determine actual date for 'asof' price for {ticker_symbol} on {api_date_str}, but got a value. Using asof value directly.")
                         rate = float(closest_price_scalar)
-                        logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using .asof() value directly): {rate}")
+                        self.logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using .asof() value directly): {rate}")
                 else:
-                    logger.warning(f"No valid data found for {ticker_symbol} on or before {api_date_str} in the fetched window using .asof() (result was NaN or pd.NA).")
+                    self.logger.warning(f"No valid data found for {ticker_symbol} on or before {api_date_str} in the fetched window using .asof() (result was NaN or pd.NA).")
 
         except Exception as e:
-            logger.error(f"Error during yfinance download or processing for {ticker_symbol} on {api_date_str}: {e}", exc_info=True)
+            self.logger.error(f"Error during yfinance download or processing for {ticker_symbol} on {api_date_str}: {e}", exc_info=True)
             rate = None
 
         finally:
@@ -395,7 +394,7 @@ class CryptoPortfolioTracker:
         """
         symbol_upper = symbol.upper()
         if symbol_upper in self.stablecoin_symbols:
-            logger.debug(f"Skipping yfinance ticker for stablecoin: {symbol_upper}")
+            self.logger.debug(f"Skipping yfinance ticker for stablecoin: {symbol_upper}")
             return None
 
         # Add more specific mappings if needed, e.g., RENDER might be RNDR-USD
@@ -413,7 +412,7 @@ class CryptoPortfolioTracker:
 
         # Get RSI period from config
         rsi_period = self.config.get("rebalance_technical", {}).get("rsi_period_weekly", 14)
-        logger.debug(f"Using RSI period {rsi_period} for {symbol}")
+        self.logger.debug(f"Using RSI period {rsi_period} for {symbol}")
 
         # Process Daily Data (Current Price)
         if df_daily is not None and not df_daily.empty and 'Close' in df_daily.columns:
@@ -423,7 +422,7 @@ class CryptoPortfolioTracker:
                 if isinstance(last_daily_close_raw, (float, int)) and pd.notna(last_daily_close_raw):
                     indicators["current_price"] = float(last_daily_close_raw)
                 else:
-                    logger.warning(f"Last daily close for {symbol} was not a scalar: {last_daily_close_raw}.")
+                    self.logger.warning(f"Last daily close for {symbol} was not a scalar: {last_daily_close_raw}.")
 
         # Process Weekly Data (RSI and 200-week MA)
         if df_weekly is not None and not df_weekly.empty and 'Close' in df_weekly.columns:
@@ -443,9 +442,9 @@ class CryptoPortfolioTracker:
                     if isinstance(last_rsi_raw, (float, int)) and pd.notna(last_rsi_raw):
                         indicators["rsi_weekly"] = float(last_rsi_raw)
                     else:
-                        logger.info(f"RSI for {symbol} was NaN or not scalar: {last_rsi_raw}.")
+                        self.logger.info(f"RSI for {symbol} was NaN or not scalar: {last_rsi_raw}.")
                 else:
-                    logger.info(f"RSI series calculation for {symbol} returned None or empty.")
+                    self.logger.info(f"RSI series calculation for {symbol} returned None or empty.")
 
             # Calculate 200-week MA
             if len(df_weekly) >= 200:
@@ -455,12 +454,34 @@ class CryptoPortfolioTracker:
                     if isinstance(ma_200w_raw, (float, int)) and pd.notna(ma_200w_raw):
                         indicators["ma_200w"] = float(ma_200w_raw)
                     else:
-                        logger.info(f"200w MA for {symbol} was NaN or not scalar: {ma_200w_raw}.")
+                        self.logger.info(f"200w MA for {symbol} was NaN or not scalar: {ma_200w_raw}.")
                     if indicators["ma_200w"] is not None and indicators["ma_200w"] > 0 and latest_weekly_close is not None:
                         indicators["price_vs_200w_ma_percent"] = ((latest_weekly_close - indicators["ma_200w"]) / indicators["ma_200w"]) * 100
 
-        logger.debug(f"Calculated TA indicators for {symbol}: RSI={indicators['rsi_weekly']}, PriceForTA={indicators['current_price']}, MA200w={indicators['ma_200w']}")
+        self.logger.debug(f"Calculated TA indicators for {symbol}: RSI={indicators['rsi_weekly']}, PriceForTA={indicators['current_price']}, MA200w={indicators['ma_200w']}")
         return indicators
+
+    def _load_strategy_state(self) -> Dict[str, Any]:
+        """Loads the state of all strategies from a JSON file."""
+        if not self.strategy_state_path.exists():
+            return {}
+        try:
+            with open(self.strategy_state_path, 'r') as f:
+                states = json.load(f)
+                self.logger.info(f"Loaded strategy states from {self.strategy_state_path}")
+                return states
+        except (json.JSONDecodeError, IOError) as e:
+            self.logger.error(f"Error loading strategy state file: {e}. Starting fresh.")
+            return {}
+
+    def _save_strategy_state(self):
+        """Saves the current state of all strategies to a JSON file."""
+        try:
+            with open(self.strategy_state_path, 'w') as f:
+                json.dump(self.strategy_states, f, indent=4)
+                self.logger.info(f"Saved strategy states to {self.strategy_state_path}")
+        except IOError as e:
+            self.logger.error(f"Error saving strategy state file: {e}")
 
     async def _fetch_historical_data_async(self, symbol: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
         """
@@ -474,10 +495,10 @@ class CryptoPortfolioTracker:
         # --- Caching logic ---
         cached_data = self.yfinance_disk_cache.get(cache_key)
         if cached_data is not None:
-            logger.debug(f"Disk Cache HIT for historical data: {cache_key}")
+            self.logger.debug(f"Disk Cache HIT for historical data: {cache_key}")
             return cached_data
 
-        logger.debug(f"Disk Cache MISS for historical data: {cache_key}. Fetching from APIs.")
+        self.logger.debug(f"Disk Cache MISS for historical data: {cache_key}. Fetching from APIs.")
 
         # --- Fallback Strategy ---
         # 1. Try yfinance first
@@ -485,7 +506,7 @@ class CryptoPortfolioTracker:
 
         # 2. If yfinance fails, try Binance API as a fallback
         if data is None or data.empty:
-            logger.warning(f"yfinance failed for {yf_ticker}. Falling back to Binance API.")
+            self.logger.warning(f"yfinance failed for {yf_ticker}. Falling back to Binance API.")
             try:
                 # Define mapping from our interval string to the Binance client's constants
                 interval_map = {
@@ -496,7 +517,7 @@ class CryptoPortfolioTracker:
                 binance_interval = interval_map.get(interval_str)
 
                 if not binance_interval:
-                    logger.error(f"Unsupported interval '{interval_str}' for Binance API fallback.")
+                    self.logger.error(f"Unsupported interval '{interval_str}' for Binance API fallback.")
                     return None
 
                 # The python-binance client can interpret human-readable start strings
@@ -504,11 +525,11 @@ class CryptoPortfolioTracker:
 
                 # Fetch klines from Binance
                 binance_pair = f"{symbol.upper()}USDT"
-                logger.info(f"Fetching from Binance API: Pair='{binance_pair}', Interval='{binance_interval}', Start='{start_str}'")
+                self.logger.info(f"Fetching from Binance API: Pair='{binance_pair}', Interval='{binance_interval}', Start='{start_str}'")
                 klines = self.binance_client.get_historical_klines(binance_pair, binance_interval, start_str)
 
                 if not klines:
-                    logger.warning(f"Binance API returned no kline data for {binance_pair}.")
+                    self.logger.warning(f"Binance API returned no kline data for {binance_pair}.")
                     self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure
                     return None
 
@@ -521,10 +542,10 @@ class CryptoPortfolioTracker:
 
                 # Keep only the necessary columns and ensure they are numeric
                 data = data[['Open', 'High', 'Low', 'Close', 'Volume']].apply(pd.to_numeric, errors='coerce')
-                logger.info(f"Successfully fetched {len(data)} data points for {symbol} from Binance API fallback.")
+                self.logger.info(f"Successfully fetched {len(data)} data points for {symbol} from Binance API fallback.")
 
             except Exception as e:
-                logger.error(f"Binance API fallback also failed for {symbol}: {e}", exc_info=True)
+                self.logger.error(f"Binance API fallback also failed for {symbol}: {e}", exc_info=True)
                 self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure
                 return None
 
@@ -538,7 +559,7 @@ class CryptoPortfolioTracker:
         This function is now designed to be called by the main _fetch_historical_data_async wrapper.
         """
         if not yf_ticker:
-            logger.warning("yf_ticker was empty in _fetch_historical_data_yfinance_async.")
+            self.logger.warning("yf_ticker was empty in _fetch_historical_data_yfinance_async.")
             return None
 
         try:
@@ -553,11 +574,11 @@ class CryptoPortfolioTracker:
                 auto_adjust=True
             )
 
-            logger.debug(f"Executing yfinance download: Ticker='{yf_ticker}', Period='{period_str}', Interval='{interval_str}'")
+            self.logger.debug(f"Executing yfinance download: Ticker='{yf_ticker}', Period='{period_str}', Interval='{interval_str}'")
             data = await loop.run_in_executor(None, partial_yf_download)
 
             if data.empty:
-                logger.warning(f"No historical data from yfinance for {yf_ticker} (Period:{period_str}, Interval:{interval_str}).")
+                self.logger.warning(f"No historical data from yfinance for {yf_ticker} (Period:{period_str}, Interval:{interval_str}).")
                 return None
 
             # --- Flatten MultiIndex logic ---
@@ -566,20 +587,20 @@ class CryptoPortfolioTracker:
 
             data.columns = [str(col).capitalize() for col in data.columns]
             data.index = pd.to_datetime(data.index, utc=True)
-            logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker}.")
+            self.logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker}.")
             return data
 
         except Exception as e:
             # This is broad, but yfinance can raise various errors.
             # The YFInvalidPeriodError for TAO is one example.
-            logger.error(f"yfinance download failed for {yf_ticker} with period '{period_str}': {e}", exc_info=True)
+            self.logger.error(f"yfinance download failed for {yf_ticker} with period '{period_str}': {e}", exc_info=True)
             return None
 
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
         """
         Generates rebalancing suggestions using a multi-timeframe analysis and adaptive trade sizing.
         """
-        logger.info("Calculating Core Portfolio rebalance suggestions with technical indicators...")
+        self.logger.info("Calculating Core Portfolio rebalance suggestions with technical indicators...")
         analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
 
         swing_report_task = analyzer.generate_report('swing')
@@ -587,12 +608,12 @@ class CryptoPortfolioTracker:
         swing_report, long_term_report = await asyncio.gather(swing_report_task, long_term_report_task)
 
         if not swing_report or not long_term_report or not swing_report.get('coin_analyses'):
-            logger.error("Could not generate trend reports for rebalancing suggestions.")
+            self.logger.error("Could not generate trend reports for rebalancing suggestions.")
             return None
 
         live_balances_df = self.fetch_binance_balances()
         if live_balances_df.empty:
-            logger.error("Could not fetch live balances from Binance. Cannot rebalance.")
+            self.logger.error("Could not fetch live balances from Binance. Cannot rebalance.")
             return None
 
         asset_classes = self.config.get("asset_classes", {})
@@ -645,11 +666,11 @@ class CryptoPortfolioTracker:
 
             if is_significantly_underweight and support > 0 and (current_price - support) / support < 0.10:
                 signal_strength = 1.5
-                logger.info(f"Signal strength for {symbol_simple} BUY boosted to {signal_strength} (price near support).")
+                self.logger.info(f"Signal strength for {symbol_simple} BUY boosted to {signal_strength} (price near support).")
 
             if is_significantly_overweight and resistance > 0 and (resistance - current_price) / current_price < 0.10:
                 signal_strength = 1.5
-                logger.info(f"Signal strength for {symbol_simple} SELL boosted to {signal_strength} (price near resistance).")
+                self.logger.info(f"Signal strength for {symbol_simple} SELL boosted to {signal_strength} (price near resistance).")
 
             if is_significantly_overweight or is_overbought_long_term:
                 signal = "SELL"
@@ -671,7 +692,7 @@ class CryptoPortfolioTracker:
                 "Current %": current_pct_of_portfolio,
                 "Drift (pts)": absolute_drift_pct,
                 "Current Value (USD)": current_value,
-                "TA_Price": current_price, # --- ADD THIS LINE ---
+                "TA_Price": current_price,
                 "Support": support, "Support_Context": "30-Day",
                 "Resistance": resistance, "Resistance_Context": "30-Day",
                 "TA_Context": "Weekly", "TA_Conditions": ", ".join(long_term_conditions) or "None",
@@ -684,13 +705,13 @@ class CryptoPortfolioTracker:
 
     async def sync_data(self):
         """Asynchronously synchronize data from all sources, and update holdings."""
-        logger.info("Starting data synchronization...")
+        self.logger.info("Starting data synchronization...")
 
         # This part remains synchronous as it's just config loading
         target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
         self.target_assets_for_sync.add("USDT")
-        logger.info(f"SYNC FOCUS: Will be focusing on transactions for target assets: {list(self.target_assets_for_sync)}")
+        self.logger.info(f"SYNC FOCUS: Will be focusing on transactions for target assets: {list(self.target_assets_for_sync)}")
 
         lookback_config = self.config.get("history_lookback_days", {})
 
@@ -711,7 +732,7 @@ class CryptoPortfolioTracker:
             asyncio.to_thread(self.fetch_staking_history, days_back=lookback_config.get("staking_history", 90)),
         ]
 
-        logger.info(f"Launching {len(tasks)} data fetching tasks concurrently...")
+        self.logger.info(f"Launching {len(tasks)} data fetching tasks concurrently...")
 
         # asyncio.gather runs all tasks concurrently and waits for them all to complete
         results_from_all_tasks = await asyncio.gather(*tasks)
@@ -723,16 +744,16 @@ class CryptoPortfolioTracker:
                 all_new_transactions.extend(result_list)
 
         if all_new_transactions:
-            logger.info(f"Processing a total of {len(all_new_transactions)} fetched/parsed transaction items.")
+            self.logger.info(f"Processing a total of {len(all_new_transactions)} fetched/parsed transaction items.")
             all_new_transactions.sort(key=lambda x: x['timestamp']) # Sort all txs chronologically before DB insertion
 
             num_inserted_updated = self.db_manager.bulk_insert_transactions(all_new_transactions)
-            logger.info(f"Attempted to process {len(all_new_transactions)} transaction records. Database reported {num_inserted_updated if num_inserted_updated is not None else 'unknown'} changes/insertions.")
+            self.logger.info(f"Attempted to process {len(all_new_transactions)} transaction records. Database reported {num_inserted_updated if num_inserted_updated is not None else 'unknown'} changes/insertions.")
         else:
-            logger.info("No new transactions fetched or processed from any source.")
+            self.logger.info("No new transactions fetched or processed from any source.")
 
         self.update_holdings_from_transactions()
-        logger.info("Data synchronization finished.")
+        self.logger.info("Data synchronization finished.")
 
     async def run_full_sync(self) -> Dict[str, Any]:
         """Runs the full async data sync and then calculates metrics."""
@@ -744,11 +765,10 @@ class CryptoPortfolioTracker:
         Provides an interactive menu to view cryptocurrency trend analysis reports.
         """
         try:
-            # --- FIX: Pass the binance_client to the analyzer ---
             analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
             print("✅ Trend Analyzer initialized with centralized config.")
         except Exception as e:
-            logger.error(f"Failed to initialize CryptoTrendAnalyzer: {e}", exc_info=True)
+            self.logger.error(f"Failed to initialize CryptoTrendAnalyzer: {e}", exc_info=True)
             print("❌ Error: Could not initialize the Trend Analyzer. Please check the logs.")
             return
 
@@ -779,7 +799,6 @@ class CryptoPortfolioTracker:
             if timeframe:
                 print(f"\n🔄 Generating {timeframe.replace('_', ' ')} trend report...")
                 try:
-                    # --- FIX: Await the new async generate_report directly ---
                     report = await analyzer.generate_report(timeframe)
 
                     if report:
@@ -791,7 +810,7 @@ class CryptoPortfolioTracker:
                         print(f"❌ Could not generate the {timeframe} trend report. See logs for details.")
 
                 except Exception as e:
-                    logger.error(f"An error occurred during report generation for timeframe '{timeframe}': {e}", exc_info=True)
+                    self.logger.error(f"An error occurred during report generation for timeframe '{timeframe}': {e}", exc_info=True)
                     print(f"❌ An unexpected error occurred. Please check the logs.")
 
                 input("\n✅ Press Enter to continue...")
@@ -818,7 +837,7 @@ class CryptoPortfolioTracker:
             backtester.generate_report()
 
         except Exception as e:
-            logger.error(f"An error occurred during rebalancing backtest: {e}", exc_info=True)
+            self.logger.error(f"An error occurred during rebalancing backtest: {e}", exc_info=True)
             print(f"❌ An unexpected error occurred: {e}")
 
     async def run_rebalance_and_execute(self):
@@ -851,7 +870,7 @@ class CryptoPortfolioTracker:
     def fetch_binance_balances(self) -> pd.DataFrame:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
             return pd.DataFrame(columns=['symbol', 'quantity'])
 
         # --- Close stale connections before making a new request ---
@@ -863,12 +882,12 @@ class CryptoPortfolioTracker:
 
         while retries > 0:
             try:
-                logger.debug(f"Attempting to fetch Binance account info (Timeout: {api_timeout}s)...")
+                self.logger.debug(f"Attempting to fetch Binance account info (Timeout: {api_timeout}s)...")
                 account_info = self.binance_client.get_account()
 
                 balances_raw = account_info.get('balances', [])
                 if not balances_raw:
-                    logger.info("Fetched 0 balances from Binance Spot wallet.")
+                    self.logger.info("Fetched 0 balances from Binance Spot wallet.")
                     return pd.DataFrame(columns=['symbol', 'quantity'])
 
                 processed_balances = []
@@ -884,41 +903,41 @@ class CryptoPortfolioTracker:
                             base_equivalent = normalized_symbol_s1[2:]
                             if normalized_symbol_s1 in self.symbol_mappings and base_equivalent in self.symbol_mappings:
                                 final_symbol = base_equivalent
-                                logger.debug(f"Consolidated API symbol '{asset_symbol_api}' (norm1: '{normalized_symbol_s1}') to base '{final_symbol}' based on coingecko_ids structure.")
+                                self.logger.debug(f"Consolidated API symbol '{asset_symbol_api}' (norm1: '{normalized_symbol_s1}') to base '{final_symbol}' based on coingecko_ids structure.")
                         processed_balances.append({'symbol': final_symbol, 'quantity': quantity})
 
                 if not processed_balances:
-                    logger.info("Found raw balances, but all were zero or negligible after processing.")
+                    self.logger.info("Found raw balances, but all were zero or negligible after processing.")
                     return pd.DataFrame(columns=['symbol', 'quantity'])
 
                 df = pd.DataFrame(processed_balances)
                 df = df.groupby('symbol', as_index=False)['quantity'].sum()
 
-                logger.debug(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}")
-                logger.info(f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot.")
+                self.logger.debug(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}")
+                self.logger.info(f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot.")
                 return df
 
             except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
                 retries -= 1
-                logger.error(f"Network error fetching Binance Spot balances: {e}. Retries left: {retries}.")
-                if retries > 0: logger.info(f"Waiting {wait_time_seconds}s before retrying..."); time.sleep(wait_time_seconds)
-                else: logger.error("Failed to fetch Spot balances after multiple retries due to network errors.")
+                self.logger.error(f"Network error fetching Binance Spot balances: {e}. Retries left: {retries}.")
+                if retries > 0: self.logger.info(f"Waiting {wait_time_seconds}s before retrying..."); time.sleep(wait_time_seconds)
+                else: self.logger.error("Failed to fetch Spot balances after multiple retries due to network errors.")
             except BinanceAPIException as e:
-                 logger.error(f"Binance API Error fetching Spot balances: {e}. No retries for API errors.")
+                 self.logger.error(f"Binance API Error fetching Spot balances: {e}. No retries for API errors.")
                  break
             except Exception as e:
-                logger.error(f"Unexpected error fetching Spot balances: {e}", exc_info=True)
+                self.logger.error(f"Unexpected error fetching Spot balances: {e}", exc_info=True)
                 break
         return pd.DataFrame(columns=['symbol', 'quantity'])
 
     def fetch_binance_transactions(self) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch transactions.")
+            self.logger.warning("Binance client not initialized. Cannot fetch transactions.")
             return []
 
         # # --- TEMPORARY MODIFICATION FOR FULL HISTORY SYNC ---
         # days_back = 1095  # Override to 3 years for one-time full sync
-        # logger.warning(f"TEMPORARY OVERRIDE: Fetching full trade history for the last {days_back} days.")
+        # self.logger.warning(f"TEMPORARY OVERRIDE: Fetching full trade history for the last {days_back} days.")
         # # --- END TEMPORARY MODIFICATION ---
 
         transactions = []
@@ -929,7 +948,7 @@ class CryptoPortfolioTracker:
         all_quotes_to_check = sorted(list(set(stablecoin_quotes + crypto_quotes_from_targets)))
         potential_base_assets = [s for s in self.target_assets_for_sync if s not in stablecoin_quotes]
 
-        logger.info(f"Attempting to fetch trades for target base symbols: {potential_base_assets} against quotes: {all_quotes_to_check}")
+        self.logger.info(f"Attempting to fetch trades for target base symbols: {potential_base_assets} against quotes: {all_quotes_to_check}")
 
         source_trade = "Binance Trade"
         source_synthetic = "Binance Synthetic"
@@ -953,13 +972,13 @@ class CryptoPortfolioTracker:
             effective_start_from_db = overall_latest_known_ts_for_trades - datetime.timedelta(minutes=60) # 1 hour buffer
             fallback_start_from_days = now_utc - datetime.timedelta(days=lookback_days_trades)
             overall_sync_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for Binance Trades/Synthetic: Effective overall start date {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Selective sync for Binance Trades/Synthetic: Effective overall start date {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
             overall_sync_start_time_dt = now_utc - datetime.timedelta(days=lookback_days_trades)
-            logger.info(f"Full sync for Binance Trades/Synthetic: Fetching last {lookback_days_trades} days from {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Full sync for Binance Trades/Synthetic: Fetching last {lookback_days_trades} days from {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_sync_start_time_dt >= now_utc:
-            logger.info("Trade history is very recent. No new trades to fetch based on overall selective sync time.")
+            self.logger.info("Trade history is very recent. No new trades to fetch based on overall selective sync time.")
             return []
 
         processed_pairs = set()
@@ -981,7 +1000,7 @@ class CryptoPortfolioTracker:
                     continue
                 processed_pairs.add(pair)
 
-                logger.debug(f"Processing pair: {pair}")
+                self.logger.debug(f"Processing pair: {pair}")
 
                 # Iterate through the lookback period in 23-hour chunks for this pair
                 current_chunk_start_dt = overall_sync_start_time_dt
@@ -999,7 +1018,7 @@ class CryptoPortfolioTracker:
                     retries_left = max_retries
                     while retries_left > 0:
                         try:
-                            logger.debug(f"Fetching trades for {pair} (Chunk: {current_chunk_start_dt.strftime('%Y-%m-%d %H:%M')} to {current_chunk_end_dt.strftime('%Y-%m-%d %H:%M')}, Attempt {max_retries - retries_left + 1})")
+                            self.logger.debug(f"Fetching trades for {pair} (Chunk: {current_chunk_start_dt.strftime('%Y-%m-%d %H:%M')} to {current_chunk_end_dt.strftime('%Y-%m-%d %H:%M')}, Attempt {max_retries - retries_left + 1})")
                             trades_for_pair_chunk = self.binance_client.get_my_trades(
                                 symbol=pair,
                                 startTime=api_start_time_ms_chunk,
@@ -1010,38 +1029,38 @@ class CryptoPortfolioTracker:
                             break
                         except BinanceAPIException as e_api:
                             if e_api.status_code == 400 and (e_api.code == -1121 or "Invalid symbol" in str(e_api.message)):
-                                logger.debug(f"Invalid or non-existent pair: {pair}. Skipping this pair.")
+                                self.logger.debug(f"Invalid or non-existent pair: {pair}. Skipping this pair.")
                                 trades_for_pair_chunk = None # Signal to break outer pair loop
                                 break # Break retry loop
                             elif e_api.code == -1127: # Should be avoided by batching, but good to log if it still happens
-                                logger.error(f"API Error -1127 (More than 24h) for {pair} even with batching: {e_api}. Chunk: {current_chunk_start_dt} to {current_chunk_end_dt}. Skipping this chunk.")
+                                self.logger.error(f"API Error -1127 (More than 24h) for {pair} even with batching: {e_api}. Chunk: {current_chunk_start_dt} to {current_chunk_end_dt}. Skipping this chunk.")
                                 break # Break retry loop, move to next chunk
                             elif e_api.code == -1021 :
-                                logger.warning(f"Timestamp error for {pair}, may need to sync system clock or adjust recvWindow. {e_api}")
+                                self.logger.warning(f"Timestamp error for {pair}, may need to sync system clock or adjust recvWindow. {e_api}")
                                 # Potentially break or retry based on strategy
                             else:
-                                logger.error(f"API Error fetching trades for {pair} (Chunk): {e_api}")
+                                self.logger.error(f"API Error fetching trades for {pair} (Chunk): {e_api}")
                             # Handle retry logic for other API errors
                             retries_left -=1
-                            if retries_left == 0: logger.error(f"Max retries for {pair} (Chunk)."); break
+                            if retries_left == 0: self.logger.error(f"Max retries for {pair} (Chunk)."); break
                             time.sleep(wait_time_seconds)
                         except Exception as e_net:
                             retries_left -=1
-                            logger.error(f"Network/Other error for {pair} (Chunk): {e_net}. Retries left: {retries_left}")
-                            if retries_left == 0: logger.error(f"Max retries for {pair} (Chunk)."); break
+                            self.logger.error(f"Network/Other error for {pair} (Chunk): {e_net}. Retries left: {retries_left}")
+                            if retries_left == 0: self.logger.error(f"Max retries for {pair} (Chunk)."); break
                             time.sleep(wait_time_seconds)
 
                     if trades_for_pair_chunk is None: # Break from outer pair loop if symbol is invalid
                         break
 
                     if not trades_for_pair_chunk:
-                        # logger.debug(f"No trades found for {pair} in chunk: {current_chunk_start_dt} to {current_chunk_end_dt}")
+                        # self.logger.debug(f"No trades found for {pair} in chunk: {current_chunk_start_dt} to {current_chunk_end_dt}")
                         # Move to the next chunk for this pair
                         current_chunk_start_dt = current_chunk_end_dt # Next chunk starts where this one ended
                         if current_chunk_start_dt >= now_utc: break # Reached current time
                         continue
 
-                    logger.info(f"Fetched {len(trades_for_pair_chunk)} trades for {pair} in chunk: {current_chunk_start_dt.date()} to {current_chunk_end_dt.date()}")
+                    self.logger.info(f"Fetched {len(trades_for_pair_chunk)} trades for {pair} in chunk: {current_chunk_start_dt.date()} to {current_chunk_end_dt.date()}")
                     for trade in trades_for_pair_chunk:
                         timestamp_obj = pd.to_datetime(trade['time'], unit='ms', utc=True).to_pydatetime()
 
@@ -1065,7 +1084,6 @@ class CryptoPortfolioTracker:
                         price_quote_in_usd_for_trade = None
                         coingecko_called_for_trade_pricing = False
 
-                        # ... (Rest of your existing pricing logic for base, quote, and fees)
                         if normalized_quote_asset in self.stablecoin_symbols:
                             price_base_in_usd = price_in_quote_terms
                             price_quote_in_usd_for_trade = 1.0
@@ -1079,8 +1097,8 @@ class CryptoPortfolioTracker:
                                 coingecko_called_for_trade_pricing = True
                                 if price_quote_in_usd_for_trade is not None:
                                     price_base_in_usd = price_in_quote_terms * price_quote_in_usd_for_trade
-                                else: logger.warning(f"Trade {pair}: Could not get hist price for quote {normalized_quote_asset}. Base USD price will be $0.")
-                            else: logger.warning(f"Trade {pair}: No CoinGecko ID for quote {normalized_quote_asset}. Base USD price will be $0.")
+                                else: self.logger.warning(f"Trade {pair}: Could not get hist price for quote {normalized_quote_asset}. Base USD price will be $0.")
+                            else: self.logger.warning(f"Trade {pair}: No CoinGecko ID for quote {normalized_quote_asset}. Base USD price will be $0.")
 
                         fee_usd = 0.0
                         if normalized_fee_currency in self.stablecoin_symbols:
@@ -1145,12 +1163,12 @@ class CryptoPortfolioTracker:
                  time.sleep(binance_api_delay_ms / 1000.0)
         # End of for base_asset loop
 
-        logger.info(f"Fetched a total of {len(transactions)} new spot trade transactions (including synthetic, filtered for target assets) using selective sync and daily batching.")
+        self.logger.info(f"Fetched a total of {len(transactions)} new spot trade transactions (including synthetic, filtered for target assets) using selective sync and daily batching.")
         return transactions
 
     def fetch_deposit_history(self, days_back: int = 90) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch deposit history.")
+            self.logger.warning("Binance client not initialized. Cannot fetch deposit history.")
             return []
 
         deposits_data_unfiltered = []
@@ -1161,7 +1179,7 @@ class CryptoPortfolioTracker:
             your_pepe_gift_amount = float(pepe_gift_config.get("amount", "0"))
         except ValueError:
             your_pepe_gift_amount = 0.0
-            logger.warning(f"PEPE gift amount '{pepe_gift_config.get('amount')}' is invalid for deposits.")
+            self.logger.warning(f"PEPE gift amount '{pepe_gift_config.get('amount')}' is invalid for deposits.")
 
         cg_config = self.config.get("apis", {}).get("coingecko", {})
         cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_deposit", 1500))
@@ -1178,42 +1196,42 @@ class CryptoPortfolioTracker:
         if latest_known_ts:
             start_datetime_obj = latest_known_ts - datetime.timedelta(minutes=5)
             startTime = int(start_datetime_obj.timestamp() * 1000)
-            logger.info(f"Selective sync for '{source_name}': Fetching since ~{start_datetime_obj} (last known: {latest_known_ts})")
+            self.logger.info(f"Selective sync for '{source_name}': Fetching since ~{start_datetime_obj} (last known: {latest_known_ts})")
         else:
             start_datetime_obj = now_utc - datetime.timedelta(days=specific_lookback_days)
             startTime = int(start_datetime_obj.timestamp() * 1000)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days since {start_datetime_obj}")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days since {start_datetime_obj}")
 
         if startTime >= endTime:
-            logger.info(f"'{source_name}' history is very recent. Setting startTime to endTime-1min to fetch minimal window.")
+            self.logger.info(f"'{source_name}' history is very recent. Setting startTime to endTime-1min to fetch minimal window.")
             startTime = endTime - (60 * 1000)
 
         try:
-            logger.info(f"Fetching deposit history (startTime: {pd.to_datetime(startTime, unit='ms', utc=True)}, endTime: {pd.to_datetime(endTime, unit='ms', utc=True)})...")
+            self.logger.info(f"Fetching deposit history (startTime: {pd.to_datetime(startTime, unit='ms', utc=True)}, endTime: {pd.to_datetime(endTime, unit='ms', utc=True)})...")
             all_deposits = self.binance_client.get_deposit_history(startTime=startTime, endTime=endTime, status=1)
-            logger.info(f"Fetched {len(all_deposits)} successful deposit records (startTime: {startTime}, endTime: {endTime}, pre-filter).")
+            self.logger.info(f"Fetched {len(all_deposits)} successful deposit records (startTime: {startTime}, endTime: {endTime}, pre-filter).")
 
             for i, deposit in enumerate(all_deposits):
-                logger.debug(f"Processing raw deposit record {i+1}/{len(all_deposits)}: {deposit}")
+                self.logger.debug(f"Processing raw deposit record {i+1}/{len(all_deposits)}: {deposit}")
                 symbol_original = deposit.get('coin')
                 if not symbol_original:
-                    logger.warning(f"Deposit record {i+1} missing 'coin' field (TxID: {deposit.get('txId')}). Skipping.")
+                    self.logger.warning(f"Deposit record {i+1} missing 'coin' field (TxID: {deposit.get('txId')}). Skipping.")
                     continue
 
                 normalized_symbol = norm_map.get(symbol_original.upper(), symbol_original.upper())
 
                 if normalized_symbol not in self.target_assets_for_sync:
-                    # logger.debug(f"Skipping deposit for non-target asset: {normalized_symbol}") # Optional: can be verbose
+                    # self.logger.debug(f"Skipping deposit for non-target asset: {normalized_symbol}") # Optional: can be verbose
                     continue
 
                 insert_time_raw = deposit.get('insertTime')
                 if insert_time_raw is None:
-                    logger.error(f"Deposit for {normalized_symbol} (TxID: {deposit.get('txId')}) has missing 'insertTime'. Skipping.")
+                    self.logger.error(f"Deposit for {normalized_symbol} (TxID: {deposit.get('txId')}) has missing 'insertTime'. Skipping.")
                     continue
 
                 deposit_timestamp_obj_pandas = pd.to_datetime(insert_time_raw, unit='ms', utc=True)
                 if pd.isna(deposit_timestamp_obj_pandas):
-                    logger.error(f"Parsed timestamp is NaT for {normalized_symbol} (TxID: {deposit.get('txId')}) from raw value '{insert_time_raw}'. Skipping.")
+                    self.logger.error(f"Parsed timestamp is NaT for {normalized_symbol} (TxID: {deposit.get('txId')}) from raw value '{insert_time_raw}'. Skipping.")
                     continue
                 deposit_timestamp_py = deposit_timestamp_obj_pandas.to_pydatetime()
 
@@ -1224,7 +1242,7 @@ class CryptoPortfolioTracker:
 
                 coingecko_called = False
                 if is_pepe_gift:
-                    logger.info(f"Identified PEPE gift deposit ({deposit.get('amount')} {normalized_symbol}). Assigning $0 cost.")
+                    self.logger.info(f"Identified PEPE gift deposit ({deposit.get('amount')} {normalized_symbol}). Assigning $0 cost.")
                 elif normalized_symbol in self.stablecoin_symbols:
                     price_usd_at_deposit = 1.0
                 else:
@@ -1235,18 +1253,18 @@ class CryptoPortfolioTracker:
                         coingecko_called = True
                         if historical_price is not None:
                             price_usd_at_deposit = historical_price
-                            logger.info(f"Fetched historical price for {normalized_symbol} (deposit) on {date_str}: ${price_usd_at_deposit:.6f}")
+                            self.logger.info(f"Fetched historical price for {normalized_symbol} (deposit) on {date_str}: ${price_usd_at_deposit:.6f}")
                         else:
-                            logger.warning(f"Could not fetch historical price for {normalized_symbol} (deposit) on {date_str}. Cost for deposit will be $0.")
+                            self.logger.warning(f"Could not fetch historical price for {normalized_symbol} (deposit) on {date_str}. Cost for deposit will be $0.")
                     else:
-                        logger.warning(f"No CoinGecko ID for {normalized_symbol} (deposit). Cost for deposit will be $0.")
+                        self.logger.warning(f"No CoinGecko ID for {normalized_symbol} (deposit). Cost for deposit will be $0.")
 
                 tx_hash = deposit.get('txId', f"binance_deposit_{deposit.get('id', i)}_{insert_time_raw}")
 
                 # Ensure this deposit is newer than the latest known to avoid re-processing if overlap is used
                 if latest_known_ts and deposit_timestamp_py <= latest_known_ts:
                     # This check might be redundant if ON CONFLICT handles it, but can prevent re-pricing
-                    # logger.debug(f"Skipping deposit {tx_hash} as its timestamp ({deposit_timestamp_py}) is not newer than last known ({latest_known_ts}) for source {source_name}")
+                    # self.logger.debug(f"Skipping deposit {tx_hash} as its timestamp ({deposit_timestamp_py}) is not newer than last known ({latest_known_ts}) for source {source_name}")
                     continue
 
                 deposits_data_unfiltered.append({
@@ -1264,16 +1282,16 @@ class CryptoPortfolioTracker:
                     time.sleep(cg_delay_ms / 1000.0)
 
         except BinanceAPIException as e:
-            logger.error(f"API Error fetching deposit history: {e}")
+            self.logger.error(f"API Error fetching deposit history: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error fetching deposit history: {e}", exc_info=True)
+            self.logger.error(f"Unexpected error fetching deposit history: {e}", exc_info=True)
 
-        logger.info(f"Fetched {len(deposits_data_unfiltered)} targeted deposit transactions for source '{source_name}'.")
+        self.logger.info(f"Fetched {len(deposits_data_unfiltered)} targeted deposit transactions for source '{source_name}'.")
         return deposits_data_unfiltered
 
     def fetch_withdrawal_history(self, days_back: int = 90) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch withdrawal history.")
+            self.logger.warning("Binance client not initialized. Cannot fetch withdrawal history.")
             return []
 
         withdrawals_data_unfiltered = []
@@ -1293,37 +1311,37 @@ class CryptoPortfolioTracker:
         if latest_known_ts:
             start_datetime_obj = latest_known_ts - datetime.timedelta(minutes=5)
             startTime = int(start_datetime_obj.timestamp() * 1000)
-            logger.info(f"Selective sync for '{source_name}': Fetching since ~{start_datetime_obj}")
+            self.logger.info(f"Selective sync for '{source_name}': Fetching since ~{start_datetime_obj}")
         else:
             start_datetime_obj = now_utc - datetime.timedelta(days=specific_lookback_days)
             startTime = int(start_datetime_obj.timestamp() * 1000)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days.")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days.")
 
         if startTime >= endTime: # Ensure startTime is not after endTime
-            logger.info(f"'{source_name}' history is very recent. Setting startTime to endTime-1min.")
+            self.logger.info(f"'{source_name}' history is very recent. Setting startTime to endTime-1min.")
             startTime = endTime - (60 * 1000)
 
         try:
-            logger.info(f"Fetching withdrawal history (startTime: {pd.to_datetime(startTime, unit='ms', utc=True)}, endTime: {pd.to_datetime(endTime, unit='ms', utc=True)})...")
+            self.logger.info(f"Fetching withdrawal history (startTime: {pd.to_datetime(startTime, unit='ms', utc=True)}, endTime: {pd.to_datetime(endTime, unit='ms', utc=True)})...")
             all_withdrawals = self.binance_client.get_withdraw_history(startTime=startTime, endTime=endTime, status=6)
-            logger.info(f"Fetched {len(all_withdrawals)} completed withdrawal records (startTime: {startTime}, endTime: {endTime}, pre-filter).")
+            self.logger.info(f"Fetched {len(all_withdrawals)} completed withdrawal records (startTime: {startTime}, endTime: {endTime}, pre-filter).")
 
             for i, withdrawal in enumerate(all_withdrawals):
-                logger.debug(f"Processing raw withdrawal record {i+1}/{len(all_withdrawals)}: {withdrawal}")
+                self.logger.debug(f"Processing raw withdrawal record {i+1}/{len(all_withdrawals)}: {withdrawal}")
                 symbol_original = withdrawal.get('coin')
                 if not symbol_original:
-                    logger.warning(f"Withdrawal record {i+1} missing 'coin' field. Skipping. Data: {withdrawal}")
+                    self.logger.warning(f"Withdrawal record {i+1} missing 'coin' field. Skipping. Data: {withdrawal}")
                     continue
 
                 normalized_symbol = norm_map.get(symbol_original.upper(), symbol_original.upper())
 
                 if normalized_symbol not in self.target_assets_for_sync:
-                    # logger.debug(f"Skipping withdrawal for non-target asset: {normalized_symbol}")
+                    # self.logger.debug(f"Skipping withdrawal for non-target asset: {normalized_symbol}")
                     continue
 
                 apply_time_raw = withdrawal.get('applyTime') # Using applyTime as it reflects initiation
                 if not apply_time_raw:
-                    logger.warning(f"Withdrawal for {normalized_symbol} (TxID: {withdrawal.get('txId')}) has missing 'applyTime'. Skipping.")
+                    self.logger.warning(f"Withdrawal for {normalized_symbol} (TxID: {withdrawal.get('txId')}) has missing 'applyTime'. Skipping.")
                     continue
 
                 try:
@@ -1333,17 +1351,17 @@ class CryptoPortfolioTracker:
                     try:
                         withdrawal_timestamp_obj_pandas = pd.to_datetime(int(apply_time_raw), unit='ms', utc=True)
                     except (ValueError, TypeError):
-                        logger.error(f"Could not parse applyTime '{apply_time_raw}' for {normalized_symbol} (TxID: {withdrawal.get('txId')}). Skipping.")
+                        self.logger.error(f"Could not parse applyTime '{apply_time_raw}' for {normalized_symbol} (TxID: {withdrawal.get('txId')}). Skipping.")
                         continue
 
                 if pd.isna(withdrawal_timestamp_obj_pandas):
-                    logger.error(f"Parsed withdrawal timestamp is NaT for {normalized_symbol} (TxID: {withdrawal.get('txId')}). Skipping.")
+                    self.logger.error(f"Parsed withdrawal timestamp is NaT for {normalized_symbol} (TxID: {withdrawal.get('txId')}). Skipping.")
                     continue
                 withdrawal_timestamp_py = withdrawal_timestamp_obj_pandas.to_pydatetime()
 
                 tx_hash = withdrawal.get('txId', f"binance_withdraw_{withdrawal.get('id', i)}_{apply_time_raw}")
                 if latest_known_ts and withdrawal_timestamp_py <= latest_known_ts:
-                    # logger.debug(f"Skipping withdrawal {tx_hash} as its timestamp ({withdrawal_timestamp_py}) is not newer than last known ({latest_known_ts})")
+                    # self.logger.debug(f"Skipping withdrawal {tx_hash} as its timestamp ({withdrawal_timestamp_py}) is not newer than last known ({latest_known_ts})")
                     continue
 
                 fee_quantity = float(withdrawal.get('transactionFee', 0.0))
@@ -1369,11 +1387,11 @@ class CryptoPortfolioTracker:
                         if historical_price is not None:
                             price_usd_at_withdrawal = historical_price
                             fee_usd_at_withdrawal = fee_quantity * historical_price
-                            logger.info(f"Fetched historical price for {normalized_symbol} (withdrawal) on {date_str}: ${price_usd_at_withdrawal:.6f}")
+                            self.logger.info(f"Fetched historical price for {normalized_symbol} (withdrawal) on {date_str}: ${price_usd_at_withdrawal:.6f}")
                         else:
-                            logger.warning(f"Could not fetch historical price for {normalized_symbol} (withdrawal) on {date_str}. Price/Fee USD for withdrawal will be $0.")
+                            self.logger.warning(f"Could not fetch historical price for {normalized_symbol} (withdrawal) on {date_str}. Price/Fee USD for withdrawal will be $0.")
                     else:
-                        logger.warning(f"No CoinGecko ID for {normalized_symbol} (withdrawal). Price/Fee USD for withdrawal will be $0.")
+                        self.logger.warning(f"No CoinGecko ID for {normalized_symbol} (withdrawal). Price/Fee USD for withdrawal will be $0.")
 
                 withdrawals_data_unfiltered.append({
                     "symbol": normalized_symbol,
@@ -1392,16 +1410,16 @@ class CryptoPortfolioTracker:
                     time.sleep(cg_delay_ms / 1000.0)
 
         except BinanceAPIException as e:
-            logger.error(f"API Error fetching withdrawal history: {e}")
+            self.logger.error(f"API Error fetching withdrawal history: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error fetching withdrawal history: {e}", exc_info=True)
+            self.logger.error(f"Unexpected error fetching withdrawal history: {e}", exc_info=True)
 
-        logger.info(f"Fetched {len(withdrawals_data_unfiltered)} targeted withdrawal transactions for source '{source_name}'.")
+        self.logger.info(f"Fetched {len(withdrawals_data_unfiltered)} targeted withdrawal transactions for source '{source_name}'.")
         return withdrawals_data_unfiltered
 
     def fetch_p2p_usdt_buys(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch P2P history.")
+            self.logger.warning("Binance client not initialized. Cannot fetch P2P history.")
             return []
 
         all_p2p_transactions = []
@@ -1419,13 +1437,13 @@ class CryptoPortfolioTracker:
             effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=60)
             fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
             overall_start_dt_for_lookback = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_dt_for_lookback.strftime('%Y-%m-%d %H:%M:%S %Z')} (last known: {latest_known_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_known_ts else 'None'})")
+            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_dt_for_lookback.strftime('%Y-%m-%d %H:%M:%S %Z')} (last known: {latest_known_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_known_ts else 'None'})")
         else:
             overall_start_dt_for_lookback = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_dt_for_lookback.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_dt_for_lookback.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_start_dt_for_lookback >= now_utc:
-            logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
+            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
             return []
 
         current_batch_end_dt = now_utc # Start batching from now, going backwards
@@ -1435,7 +1453,7 @@ class CryptoPortfolioTracker:
         retry_delay_seconds = self.config.get("apis",{}).get("binance",{}).get("retry_delay_sec", 15)
 
 
-        logger.info(f"Fetching P2P USDT buy history against fiat: {p2p_fiat_currency} from {overall_start_dt_for_lookback.date()} to {current_batch_end_dt.date()} (batched).")
+        self.logger.info(f"Fetching P2P USDT buy history against fiat: {p2p_fiat_currency} from {overall_start_dt_for_lookback.date()} to {current_batch_end_dt.date()} (batched).")
 
         while current_batch_end_dt > overall_start_dt_for_lookback:
             # Determine the start of the current batch (max 30 days prior or overall_start_dt_for_lookback)
@@ -1447,14 +1465,14 @@ class CryptoPortfolioTracker:
             end_ms = int(current_batch_end_dt.timestamp() * 1000)
 
             if start_ms >= end_ms:
-                logger.debug(f"P2P fetch: Batch start_ms {start_ms} is not before end_ms {end_ms}. Ending batch processing for this period.")
+                self.logger.debug(f"P2P fetch: Batch start_ms {start_ms} is not before end_ms {end_ms}. Ending batch processing for this period.")
                 break
 
             current_page = 1
             max_pages_to_try_per_batch = 20
 
             while current_page <= max_pages_to_try_per_batch:
-                logger.debug(f"Fetching P2P BUY for {p2p_fiat_currency}/USDT. Period: {current_batch_start_dt.date()} to {current_batch_end_dt.date()}, Page: {current_page}")
+                self.logger.debug(f"Fetching P2P BUY for {p2p_fiat_currency}/USDT. Period: {current_batch_start_dt.date()} to {current_batch_end_dt.date()}, Page: {current_page}")
                 try:
                     history = self.binance_client.get_c2c_trade_history(
                         tradeType='BUY', page=current_page, rows=rows_per_page,
@@ -1464,7 +1482,7 @@ class CryptoPortfolioTracker:
 
                     trades_in_page = history.get('data', [])
                     if not history or not trades_in_page:
-                        logger.debug(f"No P2P BUY data on page {current_page} for this batch, or end of data for this period.")
+                        self.logger.debug(f"No P2P BUY data on page {current_page} for this batch, or end of data for this period.")
                         break # Exit this page loop, move to next older batch
 
                     new_transactions_in_page = 0
@@ -1485,7 +1503,7 @@ class CryptoPortfolioTracker:
                                 usdt_quantity = float(trade.get('amount', 0))
                                 fiat_amount_paid = float(trade.get('totalPrice', 0))
                             except (ValueError, TypeError) as e_parse:
-                                logger.error(f"Could not parse P2P amount/totalPrice for order {order_number}: {e_parse}. Trade: {trade}")
+                                self.logger.error(f"Could not parse P2P amount/totalPrice for order {order_number}: {e_parse}. Trade: {trade}")
                                 continue
                             if usdt_quantity <= 0 or fiat_amount_paid <= 0: continue
 
@@ -1503,9 +1521,9 @@ class CryptoPortfolioTracker:
                                                 f"Rate: 1 {p2p_fiat_currency} = {fiat_to_usd_rate:.6f} {target_usd_currency}. "
                                                 f"USD Cost: ${usd_equivalent_of_fiat_paid:.2f} for {usdt_quantity:.2f} USDT. "
                                                 f"Effective USDT/USD Price: ${actual_usdt_price_in_usd:.6f}.")
-                                logger.info(f"P2P Trade {order_number}: {notes_detail}")
+                                self.logger.info(f"P2P Trade {order_number}: {notes_detail}")
                             else:
-                                logger.warning(f"P2P Trade {order_number}: Could not get {p2p_fiat_currency}/{target_usd_currency} rate for {trade_date_str_yyyy_mm_dd}. Using placeholder $1.00/USDT cost.")
+                                self.logger.warning(f"P2P Trade {order_number}: Could not get {p2p_fiat_currency}/{target_usd_currency} rate for {trade_date_str_yyyy_mm_dd}. Using placeholder $1.00/USDT cost.")
                                 notes_detail = f"Fiat paid: {fiat_amount_paid:.2f} {p2p_fiat_currency}. USD rate lookup failed. Using placeholder cost."
                             notes = f"P2P Buy. OrderNo: {order_number}. {notes_detail}"
 
@@ -1517,34 +1535,33 @@ class CryptoPortfolioTracker:
                             })
                             new_transactions_in_page +=1
 
-                    logger.debug(f"Added {new_transactions_in_page} new P2P transactions from page {current_page}.")
+                    self.logger.debug(f"Added {new_transactions_in_page} new P2P transactions from page {current_page}.")
                     current_page += 1
                     if history.get('total') is not None and ((current_page -1) * rows_per_page >= int(history.get('total', 0))):
-                        logger.debug(f"Fetched all P2P records ({history.get('total')}) for this batch based on API total count.")
+                        self.logger.debug(f"Fetched all P2P records ({history.get('total')}) for this batch based on API total count.")
                         break
 
                 except BinanceAPIException as e_binance:
-                    logger.error(f"Binance API Error fetching P2P history (Batch {current_batch_start_dt.date()}-{current_batch_end_dt.date()}, Page {current_page}): {e_binance}")
+                    self.logger.error(f"Binance API Error fetching P2P history (Batch {current_batch_start_dt.date()}-{current_batch_end_dt.date()}, Page {current_page}): {e_binance}")
                     break
                 except Exception as e_generic:
-                    logger.error(f"Unexpected error fetching P2P history (Batch {current_batch_start_time_dt.date()}-{current_batch_end_dt.date()}, Page {current_page}): {e_generic}", exc_info=True)
+                    self.logger.error(f"Unexpected error fetching P2P history (Batch {current_batch_start_time_dt.date()}-{current_batch_end_dt.date()}, Page {current_page}): {e_generic}", exc_info=True)
                     break
             # End of 'while current_page <= max_pages_to_try_per_batch:' loop
 
-            # *** CORRECTED LINE FOR NEXT BATCH ITERATION ***
             current_batch_end_dt = current_batch_start_dt
 
             if current_batch_end_dt <= overall_start_dt_for_lookback:
-                 logger.info(f"P2P fetching has processed batches up to or before the overall start date limit. Stopping.")
+                 self.logger.info(f"P2P fetching has processed batches up to or before the overall start date limit. Stopping.")
                  break
         # End of 'while current_batch_end_dt > overall_start_dt_for_lookback:' loop
 
-        logger.info(f"Fetched a total of {len(all_p2p_transactions)} new P2P USDT buy transactions against {p2p_fiat_currency}.")
+        self.logger.info(f"Fetched a total of {len(all_p2p_transactions)} new P2P USDT buy transactions against {p2p_fiat_currency}.")
         return all_p2p_transactions
 
     def fetch_internal_transfers(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch internal transfers.")
+            self.logger.warning("Binance client not initialized. Cannot fetch internal transfers.")
             return []
 
         all_processed_transfers = []
@@ -1561,7 +1578,7 @@ class CryptoPortfolioTracker:
         ]
 
         if not assets_to_check_for_transfers:
-            logger.info("No target assets configured for internal transfer check that overlap with sync targets. Skipping.")
+            self.logger.info("No target assets configured for internal transfer check that overlap with sync targets. Skipping.")
             return []
         # Ensure USDT is first if present, for consistent logging if nothing else
         if "USDT" in assets_to_check_for_transfers and assets_to_check_for_transfers[0] != "USDT":
@@ -1601,19 +1618,19 @@ class CryptoPortfolioTracker:
                 effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10) # Small buffer
                 fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
                 overall_start_time_dt_for_type = max(effective_start_from_db, fallback_start_from_days)
-                logger.info(f"Selective sync for Internal Transfers '{source_name_current_type}': Effective start date {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                self.logger.info(f"Selective sync for Internal Transfers '{source_name_current_type}': Effective start date {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             else:
                 overall_start_time_dt_for_type = now_utc - datetime.timedelta(days=specific_lookback_days)
-                logger.info(f"Full sync for Internal Transfers '{source_name_current_type}': Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                self.logger.info(f"Full sync for Internal Transfers '{source_name_current_type}': Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
             if overall_start_time_dt_for_type >= now_utc:
-                logger.info(f"'{source_name_current_type}' history is very recent. Skipping fetch for this type.")
+                self.logger.info(f"'{source_name_current_type}' history is very recent. Skipping fetch for this type.")
                 continue
 
-            logger.info(f"Fetching {log_label} ({api_transfer_type}) for assets: {assets_to_check_for_transfers} from {overall_start_time_dt_for_type.date()}.")
+            self.logger.info(f"Fetching {log_label} ({api_transfer_type}) for assets: {assets_to_check_for_transfers} from {overall_start_time_dt_for_type.date()}.")
 
             for asset_symbol_for_api in assets_to_check_for_transfers:
-                logger.info(f"Processing asset for {api_transfer_type} transfers: {asset_symbol_for_api}")
+                self.logger.info(f"Processing asset for {api_transfer_type} transfers: {asset_symbol_for_api}")
                 asset_specific_transfers_for_current_asset_type = []
                 current_batch_end_time_dt = now_utc
 
@@ -1627,7 +1644,7 @@ class CryptoPortfolioTracker:
 
                     if start_ms >= end_ms: break
 
-                    logger.debug(f"Fetching {api_transfer_type} for {asset_symbol_for_api}: Batch Period {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+                    self.logger.debug(f"Fetching {api_transfer_type} for {asset_symbol_for_api}: Batch Period {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
                     current_page_api = 1; fetched_all_for_batch = False
                     while not fetched_all_for_batch:
                         fetched_rows_in_page = None; api_response_total_count = 0
@@ -1639,17 +1656,17 @@ class CryptoPortfolioTracker:
                                     "current": current_page_api, "size": limit_per_page,
                                     "recvWindow": recv_window_ms
                                 }
-                                logger.debug(f"API Call ({api_transfer_type} page {current_page_api}) attempt {attempt+1} for {asset_symbol_for_api}. EP: '{endpoint_path}', Params: {params}")
+                                self.logger.debug(f"API Call ({api_transfer_type} page {current_page_api}) attempt {attempt+1} for {asset_symbol_for_api}. EP: '{endpoint_path}', Params: {params}")
                                 transfer_history = self.binance_client._request_margin_api('get', endpoint_path, True, data=params) # SAPI is fine
                                 fetched_rows_in_page = transfer_history.get('rows', [])
                                 api_response_total_count = transfer_history.get('total', 0)
-                                logger.debug(f"Raw API response for {api_transfer_type} page {current_page_api} {asset_symbol_for_api} (attempt {attempt+1}): Fetched {len(fetched_rows_in_page) if fetched_rows_in_page is not None else 'None'} rows. API 'total': {api_response_total_count}. Sample: {str(transfer_history)[:300]}...")
+                                self.logger.debug(f"Raw API response for {api_transfer_type} page {current_page_api} {asset_symbol_for_api} (attempt {attempt+1}): Fetched {len(fetched_rows_in_page) if fetched_rows_in_page is not None else 'None'} rows. API 'total': {api_response_total_count}. Sample: {str(transfer_history)[:300]}...")
                                 if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                                 break
                             except Exception as e_api_internal:
-                                logger.error(f"API/Net Error attempt {attempt+1} for {api_transfer_type} {asset_symbol_for_api} page {current_page_api}: {e_api_internal}. Code: {getattr(e_api_internal, 'code', 'N/A')}")
+                                self.logger.error(f"API/Net Error attempt {attempt+1} for {api_transfer_type} {asset_symbol_for_api} page {current_page_api}: {e_api_internal}. Code: {getattr(e_api_internal, 'code', 'N/A')}")
                                 if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                                else: logger.error(f"Max retries for {api_transfer_type} {asset_symbol_for_api} page {current_page_api}."); fetched_all_for_batch = True
+                                else: self.logger.error(f"Max retries for {api_transfer_type} {asset_symbol_for_api} page {current_page_api}."); fetched_all_for_batch = True
 
                         if fetched_rows_in_page:
                             for item in fetched_rows_in_page:
@@ -1694,7 +1711,7 @@ class CryptoPortfolioTracker:
                         else: fetched_all_for_batch = True # No rows or error after retries
 
                         if fetched_all_for_batch:
-                            logger.debug(f"Completed batch for {asset_symbol_for_api} ({api_transfer_type}).")
+                            self.logger.debug(f"Completed batch for {asset_symbol_for_api} ({api_transfer_type}).")
                             break
 
                     current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
@@ -1703,7 +1720,7 @@ class CryptoPortfolioTracker:
 
                 if asset_specific_transfers_for_current_asset_type:
                     all_processed_transfers.extend(asset_specific_transfers_for_current_asset_type)
-                    logger.info(f"Added {len(asset_specific_transfers_for_current_asset_type)} new transfers for {asset_symbol_for_api} ({api_transfer_type}).")
+                    self.logger.info(f"Added {len(asset_specific_transfers_for_current_asset_type)} new transfers for {asset_symbol_for_api} ({api_transfer_type}).")
 
                 if asset_symbol_for_api != assets_to_check_for_transfers[-1] and binance_api_delay_ms > 0:
                     time.sleep(binance_api_delay_ms / 1000.0) # Delay between assets if checking multiple
@@ -1711,7 +1728,7 @@ class CryptoPortfolioTracker:
             if config_entry != transfer_configs[-1] and binance_api_delay_ms > 0:
                 time.sleep(binance_api_delay_ms * 2 / 1000.0) # Longer delay between FUNDING_MAIN and MAIN_FUNDING runs
 
-        logger.info(f"Fetched a total of {len(all_processed_transfers)} new internal transfers after selective sync.")
+        self.logger.info(f"Fetched a total of {len(all_processed_transfers)} new internal transfers after selective sync.")
         return all_processed_transfers
 
     def fetch_spot_futures_transfers(self, asset: str = "USDT", days_back: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -1722,7 +1739,7 @@ class CryptoPortfolioTracker:
         )
 
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Spot-Futures transfer history.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Spot-Futures transfer history.")
             return []
 
         all_spot_futures_transfers = []
@@ -1742,7 +1759,7 @@ class CryptoPortfolioTracker:
         recv_window_ms = config_apis_binance.get("recv_window", 60000)
         endpoint_path = 'asset/transfer'
 
-        logger.info(f"Fetching Spot <-> USDⓈ-M Futures transfers for {asset_upper} (lookback: {specific_lookback_days} days), Batch size: {batch_days} days.")
+        self.logger.info(f"Fetching Spot <-> USDⓈ-M Futures transfers for {asset_upper} (lookback: {specific_lookback_days} days), Batch size: {batch_days} days.")
         processed_tran_ids_spot_futures = set()
 
         for config_entry in transfer_configs:
@@ -1757,16 +1774,16 @@ class CryptoPortfolioTracker:
                 effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
                 fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
                 overall_start_time_dt_for_type = max(effective_start_from_db, fallback_start_from_days)
-                logger.info(f"Selective sync for '{source_name_current_type}' ({asset_upper}): Start date {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                self.logger.info(f"Selective sync for '{source_name_current_type}' ({asset_upper}): Start date {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             else:
                 overall_start_time_dt_for_type = now_utc - datetime.timedelta(days=specific_lookback_days)
-                logger.info(f"Full sync for '{source_name_current_type}' ({asset_upper}): Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                self.logger.info(f"Full sync for '{source_name_current_type}' ({asset_upper}): Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
             if overall_start_time_dt_for_type >= now_utc:
-                logger.info(f"'{source_name_current_type}' ({asset_upper}) history is very recent. Skipping.")
+                self.logger.info(f"'{source_name_current_type}' ({asset_upper}) history is very recent. Skipping.")
                 continue
 
-            logger.info(f"Fetching {log_label_detail} ({api_call_transfer_type_value}) for {asset_upper} (Spot action: {spot_action}) from {overall_start_time_dt_for_type.date()}.")
+            self.logger.info(f"Fetching {log_label_detail} ({api_call_transfer_type_value}) for {asset_upper} (Spot action: {spot_action}) from {overall_start_time_dt_for_type.date()}.")
             current_batch_end_time_dt = now_utc
 
             while current_batch_end_time_dt > overall_start_time_dt_for_type:
@@ -1777,7 +1794,7 @@ class CryptoPortfolioTracker:
                 end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
                 if start_ms >= end_ms: break
 
-                logger.debug(f"Fetching {api_call_transfer_type_value} for {asset_upper}: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+                self.logger.debug(f"Fetching {api_call_transfer_type_value} for {asset_upper}: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
                 current_page_api = 1; fetched_all_for_this_batch_asset_type = False
                 while not fetched_all_for_this_batch_asset_type:
                     fetched_rows_in_page = None; api_response_total_count = 0
@@ -1789,17 +1806,17 @@ class CryptoPortfolioTracker:
                                 "current": current_page_api, "size": limit_per_page,
                                 "recvWindow": recv_window_ms,
                             }
-                            logger.debug(f"API Call ({api_call_transfer_type_value} page {current_page_api}) attempt {attempt+1} for {asset_upper}. EP: '{endpoint_path}', Params: {params}")
+                            self.logger.debug(f"API Call ({api_call_transfer_type_value} page {current_page_api}) attempt {attempt+1} for {asset_upper}. EP: '{endpoint_path}', Params: {params}")
                             history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
                             fetched_rows_in_page = history_page.get('rows', [])
                             api_response_total_count = history_page.get('total', 0)
-                            logger.debug(f"Raw API response for {api_call_transfer_type_value} page {current_page_api} {asset_upper} (attempt {attempt+1}): Fetched {len(fetched_rows_in_page) if fetched_rows_in_page is not None else 'None'} rows. API 'total': {api_response_total_count}. Sample: {str(history_page)[:300]}...")
+                            self.logger.debug(f"Raw API response for {api_call_transfer_type_value} page {current_page_api} {asset_upper} (attempt {attempt+1}): Fetched {len(fetched_rows_in_page) if fetched_rows_in_page is not None else 'None'} rows. API 'total': {api_response_total_count}. Sample: {str(history_page)[:300]}...")
                             if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                             break
                         except Exception as e_api_sf:
-                            logger.error(f"API/Net Error attempt {attempt+1} for {api_call_transfer_type_value} {asset_upper} page {current_page_api}: {e_api_sf}. Code: {getattr(e_api_sf, 'code', 'N/A')}")
+                            self.logger.error(f"API/Net Error attempt {attempt+1} for {api_call_transfer_type_value} {asset_upper} page {current_page_api}: {e_api_sf}. Code: {getattr(e_api_sf, 'code', 'N/A')}")
                             if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                            else: logger.error(f"Max retries for {api_call_transfer_type_value} {asset_upper} page {current_page_api}."); fetched_all_for_this_batch_asset_type = True
+                            else: self.logger.error(f"Max retries for {api_call_transfer_type_value} {asset_upper} page {current_page_api}."); fetched_all_for_this_batch_asset_type = True
 
                     if fetched_rows_in_page:
                         for t in fetched_rows_in_page:
@@ -1820,7 +1837,7 @@ class CryptoPortfolioTracker:
                             quantity = float(t['amount'])
                             price_usd = 1.0 # Default for USDT
                             if asset_upper != "USDT":
-                                logger.warning(f"Spot-Futures transfer of non-USDT asset {asset_upper} - price lookup might be needed and is not implemented here yet for this transfer type.")
+                                self.logger.warning(f"Spot-Futures transfer of non-USDT asset {asset_upper} - price lookup might be needed and is not implemented here yet for this transfer type.")
                                 # If this asset is a target non-stablecoin, you might want to price it here too.
                                 # For simplicity, assuming only USDT is transferred or other assets are valued at $0 for these transfers.
 
@@ -1837,7 +1854,7 @@ class CryptoPortfolioTracker:
                     else: fetched_all_for_this_batch_asset_type = True
 
                     if fetched_all_for_this_batch_asset_type:
-                        logger.debug(f"Completed fetching pages for batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')} for {asset_upper} ({api_call_transfer_type_value}).")
+                        self.logger.debug(f"Completed fetching pages for batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')} for {asset_upper} ({api_call_transfer_type_value}).")
                         break
                 current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
                 # Delay moved into the API call loop attempt
@@ -1846,12 +1863,12 @@ class CryptoPortfolioTracker:
             if config_entry != transfer_configs[-1] and binance_api_delay_ms > 0:
                  time.sleep(binance_api_delay_ms * 2 / 1000.0) # Delay between MAIN_UMFUTURE and UMFUTURE_MAIN runs
 
-        logger.info(f"Fetched a total of {len(all_spot_futures_transfers)} new Spot <-> USDⓈ-M Futures transfer records processed for {asset_upper}.")
+        self.logger.info(f"Fetched a total of {len(all_spot_futures_transfers)} new Spot <-> USDⓈ-M Futures transfer records processed for {asset_upper}.")
         return all_spot_futures_transfers
 
     def fetch_spot_convert_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Spot Convert History.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Spot Convert History.")
             return []
 
         source_name = "Binance API Spot Convert" # Define source name
@@ -1865,16 +1882,16 @@ class CryptoPortfolioTracker:
             effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=60) # 1 hour buffer
             fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
             overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt}")
+            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt}")
         else:
             overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt}")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt}")
 
         if overall_start_time_dt >= now_utc:
-            logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
+            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
             return []
 
-        logger.info(f"Fetching Spot Convert History from {overall_start_time_dt.date()} to {now_utc.date()}.")
+        self.logger.info(f"Fetching Spot Convert History from {overall_start_time_dt.date()} to {now_utc.date()}.")
         all_convert_transactions_filtered = []
 
         cg_config = self.config.get("apis", {}).get("coingecko", {})
@@ -1899,7 +1916,7 @@ class CryptoPortfolioTracker:
 
             if start_ms >= end_ms: break
 
-            logger.debug(f"Fetching Spot Convert History batch: {current_iteration_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_iteration_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.debug(f"Fetching Spot Convert History batch: {current_iteration_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_iteration_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
             current_batch_data = None
             for attempt in range(max_retries):
                 try:
@@ -1907,19 +1924,19 @@ class CryptoPortfolioTracker:
                         startTime=start_ms, endTime=end_ms, limit=limit_per_batch
                     )
                     current_batch_data = history_page.get('list', [])
-                    logger.debug(f"Successfully fetched Spot Convert History batch (attempt {attempt+1}). Count: {len(current_batch_data) if current_batch_data else 0}")
+                    self.logger.debug(f"Successfully fetched Spot Convert History batch (attempt {attempt+1}). Count: {len(current_batch_data) if current_batch_data else 0}")
                     if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                     break
                 except Exception as e:
-                    logger.error(f"Error fetching Spot Convert History batch (attempt {attempt+1}): {e}")
+                    self.logger.error(f"Error fetching Spot Convert History batch (attempt {attempt+1}): {e}")
                     if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                    else: logger.error("Max retries for Spot Convert History batch."); break
+                    else: self.logger.error("Max retries for Spot Convert History batch."); break
 
             if current_batch_data:
                 for trade in current_batch_data:
                     timestamp = pd.to_datetime(trade['createTime'], unit='ms', utc=True).to_pydatetime()
                     if latest_known_ts and timestamp <= latest_known_ts:
-                        # logger.debug(f"Skipping already processed convert trade {trade.get('quoteId')} based on timestamp")
+                        # self.logger.debug(f"Skipping already processed convert trade {trade.get('quoteId')} based on timestamp")
                         continue
 
                     quote_id = trade.get('quoteId', trade.get('orderId', f"convert_{trade['fromAsset']}_{trade['toAsset']}_{trade['createTime']}"))
@@ -1927,7 +1944,6 @@ class CryptoPortfolioTracker:
                     processed_quote_ids.add(quote_id)
 
                     if trade.get('orderStatus') == "SUCCESS":
-                        # ... (rest of your existing logic for processing successful convert trades)
                         # Ensure "source": source_name is used
                         from_asset_orig = trade['fromAsset'].upper()
                         from_asset = self.norm_map.get(from_asset_orig, from_asset_orig)
@@ -1937,7 +1953,7 @@ class CryptoPortfolioTracker:
                         to_amount = float(trade['toAmount'])
 
                         if not (from_asset in self.target_assets_for_sync or to_asset in self.target_assets_for_sync):
-                            # logger.debug(f"Skipping Spot Convert trade {quote_id} as neither {from_asset} nor {to_asset} are target assets.")
+                            # self.logger.debug(f"Skipping Spot Convert trade {quote_id} as neither {from_asset} nor {to_asset} are target assets.")
                             continue
 
                         price_ratio = float(trade.get('ratio', "0"))
@@ -1952,8 +1968,8 @@ class CryptoPortfolioTracker:
                                 fetched_price = self._get_coingecko_historical_price(coin_id_from, date_str)
                                 cg_call_made_for_this_convert = True
                                 if fetched_price is not None: sell_price_usd = fetched_price
-                                else: logger.warning(f"Spot Convert (Sell {from_asset}): Could not get hist price. Using $0.")
-                            else: logger.warning(f"Spot Convert (Sell {from_asset}): No CoinGecko ID. Using $0.")
+                                else: self.logger.warning(f"Spot Convert (Sell {from_asset}): Could not get hist price. Using $0.")
+                            else: self.logger.warning(f"Spot Convert (Sell {from_asset}): No CoinGecko ID. Using $0.")
 
                         if to_asset in self.stablecoin_symbols: buy_price_usd = 1.0
                         elif to_asset in self.target_assets_for_sync:
@@ -1965,8 +1981,8 @@ class CryptoPortfolioTracker:
                                 elif cg_call_made_for_this_convert == True: cg_call_made_for_this_convert = "Done"
 
                                 if fetched_price is not None: buy_price_usd = fetched_price
-                                else: logger.warning(f"Spot Convert (Buy {to_asset}): Could not get hist price. Using $0.")
-                            else: logger.warning(f"Spot Convert (Buy {to_asset}): No CoinGecko ID. Using $0.")
+                                else: self.logger.warning(f"Spot Convert (Buy {to_asset}): Could not get hist price. Using $0.")
+                            else: self.logger.warning(f"Spot Convert (Buy {to_asset}): No CoinGecko ID. Using $0.")
 
                         if from_asset in self.target_assets_for_sync:
                             all_convert_transactions_filtered.append({
@@ -1987,19 +2003,19 @@ class CryptoPortfolioTracker:
                         if cg_call_made_for_this_convert == True and (sell_price_usd > 0.0 or buy_price_usd > 0.0):
                             if cg_delay_ms > 0: time.sleep(cg_delay_ms / 1000.0)
                     else:
-                        logger.info(f"Skipping non-SUCCESS Spot Convert trade: {quote_id} - Status: {trade.get('orderStatus')}")
+                        self.logger.info(f"Skipping non-SUCCESS Spot Convert trade: {quote_id} - Status: {trade.get('orderStatus')}")
 
             current_iteration_end_time_dt = current_iteration_start_time_dt - datetime.timedelta(milliseconds=1)
             # Removed the general Coingecko delay here; it's now per-priced item.
             if current_iteration_end_time_dt <= overall_start_time_dt: break
 
-        logger.info(f"Processed {len(all_convert_transactions_filtered)} new targeted individual transactions from Spot Convert History API.")
+        self.logger.info(f"Processed {len(all_convert_transactions_filtered)} new targeted individual transactions from Spot Convert History API.")
         return all_convert_transactions_filtered
 
     def fetch_simple_earn_balances(self) -> Dict[str, float]:
         """Fetch current balances from Binance Simple Earn Flexible products, ensuring normalized base symbols."""
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Simple Earn balances.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn balances.")
             return {}
 
         earn_balances_aggregated: Dict[str, float] = {}
@@ -2015,15 +2031,15 @@ class CryptoPortfolioTracker:
             potential_earn_assets.add(base.upper())
 
         assets_to_check_api = sorted(list(potential_earn_assets))
-        logger.info(f"Fetching Simple Earn Flexible balances for up to {len(assets_to_check_api)} potential base assets...")
+        self.logger.info(f"Fetching Simple Earn Flexible balances for up to {len(assets_to_check_api)} potential base assets...")
 
 
         for asset_api_name in assets_to_check_api:
             try:
-                logger.debug(f"Fetching Simple Earn position for {asset_api_name}...")
+                self.logger.debug(f"Fetching Simple Earn position for {asset_api_name}...")
                 # Ensure asset_api_name is not empty
                 if not asset_api_name:
-                    logger.debug(f"Skipping empty asset_api_name for Simple Earn fetch.")
+                    self.logger.debug(f"Skipping empty asset_api_name for Simple Earn fetch.")
                     continue
                 positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset_api_name)
 
@@ -2031,25 +2047,25 @@ class CryptoPortfolioTracker:
                     total_amount_for_asset = 0.0
                     for pos in positions['rows']:
                         try: total_amount_for_asset += float(pos.get('totalAmount', 0.0))
-                        except (ValueError, TypeError): logger.warning(f"Could not parse 'totalAmount' for {asset_api_name}: {pos.get('totalAmount')}")
+                        except (ValueError, TypeError): self.logger.warning(f"Could not parse 'totalAmount' for {asset_api_name}: {pos.get('totalAmount')}")
 
                     if total_amount_for_asset > 0:
                         current_bal = earn_balances_aggregated.get(asset_api_name, 0.0)
                         earn_balances_aggregated[asset_api_name] = current_bal + total_amount_for_asset
-                        logger.info(f"Found {total_amount_for_asset:.8f} {asset_api_name} in Simple Earn.")
+                        self.logger.info(f"Found {total_amount_for_asset:.8f} {asset_api_name} in Simple Earn.")
                 time.sleep(0.3) # Be kind to the API
             except BinanceAPIException as e:
                 if e.code == -6001 or "product does not exist" in str(e).lower() or "not supported" in str(e).lower() or "invalid asset" in str(e).lower(): # Added "invalid asset"
-                     logger.debug(f"No Simple Earn for {asset_api_name} or asset not supported (API Info: {e}).")
-                else: logger.error(f"API Error Simple Earn for {asset_api_name}: {e}")
-            except Exception as e: logger.error(f"Unexpected error Simple Earn for {asset_api_name}: {e}", exc_info=True)
-        logger.info(f"DEBUG: Balances from EARN after all processing in fetch_simple_earn_balances: {earn_balances_aggregated if earn_balances_aggregated else 'EMPTY DICT'}")
-        logger.info(f"Fetched {len(earn_balances_aggregated)} asset balances from Simple Earn (after normalization).")
+                     self.logger.debug(f"No Simple Earn for {asset_api_name} or asset not supported (API Info: {e}).")
+                else: self.logger.error(f"API Error Simple Earn for {asset_api_name}: {e}")
+            except Exception as e: self.logger.error(f"Unexpected error Simple Earn for {asset_api_name}: {e}", exc_info=True)
+        self.logger.debug(f"DEBUG: Balances from EARN after all processing in fetch_simple_earn_balances: {earn_balances_aggregated if earn_balances_aggregated else 'EMPTY DICT'}")
+        self.logger.info(f"Fetched {len(earn_balances_aggregated)} asset balances from Simple Earn (after normalization).")
         return earn_balances_aggregated
 
     def fetch_simple_earn_flexible_rewards(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible rewards.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible rewards.")
             return []
 
         source_name_prefix = "Binance API Simple Earn Reward"
@@ -2064,16 +2080,16 @@ class CryptoPortfolioTracker:
             effective_start_from_db = latest_known_ts - datetime.timedelta(hours=1) # 1 hour buffer for rewards
             fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
             overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name_prefix}': Effective start {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')} (last known relevant reward: {latest_known_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_known_ts else 'None'})")
+            self.logger.info(f"Selective sync for '{source_name_prefix}': Effective start {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')} (last known relevant reward: {latest_known_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_known_ts else 'None'})")
         else:
             overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name_prefix}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Full sync for '{source_name_prefix}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_start_time_dt >= now_utc:
-            logger.info(f"'{source_name_prefix}' history is very recent. No new data to fetch.")
+            self.logger.info(f"'{source_name_prefix}' history is very recent. No new data to fetch.")
             return []
 
-        logger.info(f"Fetching Simple Earn Flexible rewards from {overall_start_time_dt.date()} (all types, filtered for target assets).")
+        self.logger.info(f"Fetching Simple Earn Flexible rewards from {overall_start_time_dt.date()} (all types, filtered for target assets).")
         all_rewards_transactions = []
 
         config_apis_binance = self.config.get("apis", {}).get("binance", {})
@@ -2097,22 +2113,22 @@ class CryptoPortfolioTracker:
             end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
             if start_ms >= end_ms: break
 
-            logger.debug(f"Fetching SE Rewards: Batch Period {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.debug(f"Fetching SE Rewards: Batch Period {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
             current_page_api = 1; fetched_all_for_batch = False
             while not fetched_all_for_batch:
                 response_data = None; fetched_rows = None; api_total = 0
                 for attempt in range(max_retries):
                     try:
                         params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        logger.debug(f"API Call (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
+                        self.logger.debug(f"API Call (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
                         response_data = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
                         fetched_rows = response_data.get('rows', [])
                         api_total = response_data.get('total', 0)
-                        logger.debug(f"Raw API (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows) if fetched_rows else '0'} rows. API Total: {api_total}. Sample: {str(response_data)[:200]}...")
+                        self.logger.debug(f"Raw API (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows) if fetched_rows else '0'} rows. API Total: {api_total}. Sample: {str(response_data)[:200]}...")
                         if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                         break
                     except Exception as e:
-                        logger.error(f"Error (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}: {e}. Code: {getattr(e, 'code', 'N/A')}")
+                        self.logger.error(f"Error (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}: {e}. Code: {getattr(e, 'code', 'N/A')}")
                         if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
                         else: fetched_all_for_batch = True
 
@@ -2152,11 +2168,11 @@ class CryptoPortfolioTracker:
                                 coingecko_called_for_item = True
                                 if fetched_price is not None:
                                     price_usd_at_reward = fetched_price
-                                    logger.debug(f"SE Reward: Fetched hist_price ${price_usd_at_reward:.6f} for {normalized_symbol} on {date_str_for_price}.")
+                                    self.logger.debug(f"SE Reward: Fetched hist_price ${price_usd_at_reward:.6f} for {normalized_symbol} on {date_str_for_price}.")
                                 else:
-                                    logger.warning(f"SE Reward: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
+                                    self.logger.warning(f"SE Reward: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
                             else:
-                                logger.warning(f"SE Reward: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
+                                self.logger.warning(f"SE Reward: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
 
                         all_rewards_transactions.append({
                             "symbol": normalized_symbol, "timestamp": timestamp, "type": "DEPOSIT",
@@ -2176,18 +2192,18 @@ class CryptoPortfolioTracker:
                 else: fetched_all_for_batch = True
 
                 if fetched_all_for_batch:
-                    logger.debug(f"Completed SE Rewards batch for {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}.")
+                    self.logger.debug(f"Completed SE Rewards batch for {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}.")
                     break
 
             current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
             if current_batch_end_time_dt <= overall_start_time_dt: break
 
-        logger.info(f"Fetched and processed {len(all_rewards_transactions)} new Simple Earn Flexible reward transactions for target assets.")
+        self.logger.info(f"Fetched and processed {len(all_rewards_transactions)} new Simple Earn Flexible reward transactions for target assets.")
         return all_rewards_transactions
 
     def fetch_simple_earn_flexible_subscriptions(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible subscriptions.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible subscriptions.")
             return []
 
         source_name = "Binance API Simple Earn Subscription"
@@ -2201,16 +2217,16 @@ class CryptoPortfolioTracker:
             effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
             fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
             overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
             overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_start_time_dt >= now_utc:
-            logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
+            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
             return []
 
-        logger.info(f"Fetching Simple Earn Flexible subscriptions from {overall_start_time_dt.date()}.")
+        self.logger.info(f"Fetching Simple Earn Flexible subscriptions from {overall_start_time_dt.date()}.")
         all_subscription_transactions = []
 
         config_apis_binance = self.config.get("apis", {}).get("binance", {})
@@ -2234,24 +2250,24 @@ class CryptoPortfolioTracker:
             end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
             if start_ms >= end_ms: break
 
-            logger.debug(f"Fetching SE Subscriptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.debug(f"Fetching SE Subscriptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
             current_page_api = 1; fetched_all_for_batch = False
             while not fetched_all_for_batch:
                 history_page = None; fetched_rows_in_page = None; api_total_for_this_query = 0
                 for attempt in range(max_retries):
                     try:
                         params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        logger.debug(f"API Call (SE Subs Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
+                        self.logger.debug(f"API Call (SE Subs Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
                         history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
                         fetched_rows_in_page = history_page.get('rows', [])
                         api_total_for_this_query = history_page.get('total', 0)
-                        logger.debug(f"Raw API (SE Subs Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
+                        self.logger.debug(f"Raw API (SE Subs Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
                         if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                         break
                     except Exception as e:
-                        logger.error(f"API/Net Error attempt {attempt + 1} for SE Subs page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
+                        self.logger.error(f"API/Net Error attempt {attempt + 1} for SE Subs page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
                         if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                        else: logger.error(f"Max retries for SE Subs page {current_page_api}."); fetched_all_for_batch = True
+                        else: self.logger.error(f"Max retries for SE Subs page {current_page_api}."); fetched_all_for_batch = True
 
                 if fetched_rows_in_page:
                     for item in fetched_rows_in_page:
@@ -2284,9 +2300,9 @@ class CryptoPortfolioTracker:
                                 coingecko_called_for_item = True
                                 if fetched_price is not None:
                                     price_usd = fetched_price
-                                    logger.debug(f"SE Sub: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                else: logger.warning(f"SE Sub: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                            else: logger.warning(f"SE Sub: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
+                                    self.logger.debug(f"SE Sub: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
+                                else: self.logger.warning(f"SE Sub: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
+                            else: self.logger.warning(f"SE Sub: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
 
                         all_subscription_transactions.append({
                             "symbol": normalized_symbol, "timestamp": timestamp, "type": "SELL",
@@ -2304,18 +2320,18 @@ class CryptoPortfolioTracker:
                 else: fetched_all_for_batch = True
 
                 if fetched_all_for_batch:
-                    logger.debug(f"Completed SE Subscriptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
+                    self.logger.debug(f"Completed SE Subscriptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
                     break
 
             current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
             if current_batch_end_time_dt <= overall_start_time_dt: break
 
-        logger.info(f"Fetched and processed {len(all_subscription_transactions)} new Simple Earn Flexible subscription transactions for target assets.")
+        self.logger.info(f"Fetched and processed {len(all_subscription_transactions)} new Simple Earn Flexible subscription transactions for target assets.")
         return all_subscription_transactions
 
     def fetch_simple_earn_flexible_redemptions(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible redemptions.")
+            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible redemptions.")
             return []
 
         source_name = "Binance API Simple Earn Redemption"
@@ -2329,16 +2345,16 @@ class CryptoPortfolioTracker:
             effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
             fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
             overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
             overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_start_time_dt >= now_utc:
-            logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
+            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
             return []
 
-        logger.info(f"Fetching Simple Earn Flexible redemptions from {overall_start_time_dt.date()}.")
+        self.logger.info(f"Fetching Simple Earn Flexible redemptions from {overall_start_time_dt.date()}.")
         all_redemption_transactions = []
 
         config_apis_binance = self.config.get("apis", {}).get("binance", {})
@@ -2362,24 +2378,24 @@ class CryptoPortfolioTracker:
             end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
             if start_ms >= end_ms: break
 
-            logger.debug(f"Fetching SE Redemptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.debug(f"Fetching SE Redemptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
             current_page_api = 1; fetched_all_for_batch = False
             while not fetched_all_for_batch:
                 history_page = None; fetched_rows_in_page = None; api_total_for_this_query = 0
                 for attempt in range(max_retries):
                     try:
                         params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        logger.debug(f"API Call (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
+                        self.logger.debug(f"API Call (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
                         history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
                         fetched_rows_in_page = history_page.get('rows', [])
                         api_total_for_this_query = history_page.get('total', 0)
-                        logger.debug(f"Raw API (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
+                        self.logger.debug(f"Raw API (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
                         if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                         break
                     except Exception as e:
-                        logger.error(f"API/Net Error attempt {attempt + 1} for SE Redemptions page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
+                        self.logger.error(f"API/Net Error attempt {attempt + 1} for SE Redemptions page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
                         if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                        else: logger.error(f"Max retries for SE Redemptions page {current_page_api}."); fetched_all_for_batch = True
+                        else: self.logger.error(f"Max retries for SE Redemptions page {current_page_api}."); fetched_all_for_batch = True
 
                 if fetched_rows_in_page:
                     for item in fetched_rows_in_page:
@@ -2412,9 +2428,9 @@ class CryptoPortfolioTracker:
                                 coingecko_called_for_item = True
                                 if fetched_price is not None:
                                     price_usd = fetched_price
-                                    logger.debug(f"SE Redemp: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                else: logger.warning(f"SE Redemp: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                            else: logger.warning(f"SE Redemp: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
+                                    self.logger.debug(f"SE Redemp: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
+                                else: self.logger.warning(f"SE Redemp: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
+                            else: self.logger.warning(f"SE Redemp: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
 
                         all_redemption_transactions.append({
                             "symbol": normalized_symbol, "timestamp": timestamp, "type": "BUY",
@@ -2432,18 +2448,18 @@ class CryptoPortfolioTracker:
                 else: fetched_all_for_batch = True
 
                 if fetched_all_for_batch:
-                    logger.debug(f"Completed SE Redemptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
+                    self.logger.debug(f"Completed SE Redemptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
                     break
 
             current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
             if current_batch_end_time_dt <= overall_start_time_dt: break
 
-        logger.info(f"Fetched and processed {len(all_redemption_transactions)} new Simple Earn Flexible redemption transactions for target assets.")
+        self.logger.info(f"Fetched and processed {len(all_redemption_transactions)} new Simple Earn Flexible redemption transactions for target assets.")
         return all_redemption_transactions
 
     def fetch_dividend_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch dividend history.")
+            self.logger.warning("Binance client not initialized. Cannot fetch dividend history.")
             return []
 
         source_name = "Binance API Dividend"
@@ -2457,16 +2473,16 @@ class CryptoPortfolioTracker:
             effective_start_from_db = latest_known_ts - datetime.timedelta(hours=1) # 1 hour buffer
             fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
             overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
             overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_start_time_dt >= now_utc:
-            logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
+            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
             return []
 
-        logger.info(f"Fetching asset dividend history from {overall_start_time_dt.date()}.")
+        self.logger.info(f"Fetching asset dividend history from {overall_start_time_dt.date()}.")
         all_dividend_transactions = []
 
         config_apis_binance = self.config.get("apis", {}).get("binance", {})
@@ -2488,7 +2504,7 @@ class CryptoPortfolioTracker:
             end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
             if start_ms >= end_ms: break
 
-            logger.debug(f"Fetching dividend history: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
+            self.logger.debug(f"Fetching dividend history: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
             fetched_dividends_for_batch = None
             for attempt in range(max_retries):
                 try:
@@ -2496,13 +2512,13 @@ class CryptoPortfolioTracker:
                         startTime=start_ms, endTime=end_ms, limit=limit_per_api_call
                     )
                     rows_fetched_count = len(fetched_dividends_for_batch.get('rows', [])) if fetched_dividends_for_batch and 'rows' in fetched_dividends_for_batch else 0
-                    logger.debug(f"Raw API (Dividends) Att {attempt + 1}: Fetched {rows_fetched_count} records. Sample: {str(fetched_dividends_for_batch)[:200]}...")
+                    self.logger.debug(f"Raw API (Dividends) Att {attempt + 1}: Fetched {rows_fetched_count} records. Sample: {str(fetched_dividends_for_batch)[:200]}...")
                     if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                     break
                 except Exception as e_api_div:
-                    logger.error(f"API/Net Error attempt {attempt + 1} for dividend history: {e_api_div}. Code: {getattr(e_api_div, 'code', 'N/A')}")
+                    self.logger.error(f"API/Net Error attempt {attempt + 1} for dividend history: {e_api_div}. Code: {getattr(e_api_div, 'code', 'N/A')}")
                     if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                    else: logger.error(f"Max retries for dividend history batch."); # No fetched_all_for_batch here, will just process what we have if any
+                    else: self.logger.error(f"Max retries for dividend history batch."); # No fetched_all_for_batch here, will just process what we have if any
 
             if fetched_dividends_for_batch and fetched_dividends_for_batch.get('rows'):
                 for item in fetched_dividends_for_batch['rows']:
@@ -2515,12 +2531,12 @@ class CryptoPortfolioTracker:
 
                     tran_id = str(item.get('tranId'))
                     if not tran_id or tran_id == 'None' or tran_id in processed_tran_ids :
-                        logger.debug(f"Skipping dividend item with missing or duplicate tranId: {item}")
+                        self.logger.debug(f"Skipping dividend item with missing or duplicate tranId: {item}")
                         continue
                     processed_tran_ids.add(tran_id)
 
                     asset_received = item.get('asset','').upper()
-                    if not asset_received: logger.warning(f"Skipping dividend item with missing asset: {item}"); continue
+                    if not asset_received: self.logger.warning(f"Skipping dividend item with missing asset: {item}"); continue
                     normalized_symbol = self.norm_map.get(asset_received, asset_received)
                     if normalized_symbol not in self.target_assets_for_sync:
                         continue
@@ -2538,9 +2554,9 @@ class CryptoPortfolioTracker:
                             coingecko_called_for_item = True
                             if fetched_price is not None:
                                 price_usd = fetched_price
-                                logger.debug(f"Dividend: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                            else: logger.warning(f"Dividend: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                        else: logger.warning(f"Dividend: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
+                                self.logger.debug(f"Dividend: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
+                            else: self.logger.warning(f"Dividend: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
+                        else: self.logger.warning(f"Dividend: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
 
                     all_dividend_transactions.append({
                         "symbol": normalized_symbol, "timestamp": timestamp, "type": "DEPOSIT",
@@ -2555,18 +2571,18 @@ class CryptoPortfolioTracker:
             current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
             if current_batch_end_time_dt <= overall_start_time_dt: break
 
-        logger.info(f"Fetched and processed {len(all_dividend_transactions)} new dividend transactions for target assets.")
+        self.logger.info(f"Fetched and processed {len(all_dividend_transactions)} new dividend transactions for target assets.")
         return all_dividend_transactions
 
     def fetch_staking_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
         if not self.binance_client:
-            logger.warning("Binance client not initialized. Cannot fetch staking history.")
+            self.logger.warning("Binance client not initialized. Cannot fetch staking history.")
             return []
 
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         specific_lookback_days = self.config.get("history_lookback_days", {}).get("staking_history", days_back if days_back is not None else 90)
 
-        logger.info(f"Fetching staking history (Product: STAKING) with lookback: {specific_lookback_days} days.")
+        self.logger.info(f"Fetching staking history (Product: STAKING) with lookback: {specific_lookback_days} days.")
         all_transactions = []
 
         config_apis_binance = self.config.get("apis", {}).get("binance", {})
@@ -2592,16 +2608,16 @@ class CryptoPortfolioTracker:
                 effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
                 fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
                 overall_start_time_dt_for_filter = max(effective_start_from_db, fallback_start_from_days)
-                logger.info(f"Selective sync for '{source_name_current_filter}': Effective start date {overall_start_time_dt_for_filter.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                self.logger.info(f"Selective sync for '{source_name_current_filter}': Effective start date {overall_start_time_dt_for_filter.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             else:
                 overall_start_time_dt_for_filter = now_utc - datetime.timedelta(days=specific_lookback_days)
-                logger.info(f"Full sync for '{source_name_current_filter}': Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_filter.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+                self.logger.info(f"Full sync for '{source_name_current_filter}': Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_filter.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
             if overall_start_time_dt_for_filter >= now_utc:
-                logger.info(f"'{source_name_current_filter}' history is very recent. Skipping.")
+                self.logger.info(f"'{source_name_current_filter}' history is very recent. Skipping.")
                 continue
 
-            logger.info(f"Fetching staking history for Product: {staking_product_type}, TxnType: {txn_type_filter} from {overall_start_time_dt_for_filter.date()}.")
+            self.logger.info(f"Fetching staking history for Product: {staking_product_type}, TxnType: {txn_type_filter} from {overall_start_time_dt_for_filter.date()}.")
             current_batch_end_time_dt = now_utc
 
             while current_batch_end_time_dt > overall_start_time_dt_for_filter:
@@ -2612,7 +2628,7 @@ class CryptoPortfolioTracker:
                 end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
                 if start_ms >= end_ms: break
 
-                logger.debug(f"Fetching staking ({staking_product_type}/{txn_type_filter}): Batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}")
+                self.logger.debug(f"Fetching staking ({staking_product_type}/{txn_type_filter}): Batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}")
                 current_page_api = 1; fetched_all_for_batch_prod_type = False
                 while not fetched_all_for_batch_prod_type:
                     response_data = None; fetched_rows_in_page = None
@@ -2624,16 +2640,16 @@ class CryptoPortfolioTracker:
                                 "current": current_page_api, "size": limit_per_page,
                                 "recvWindow": recv_window_ms
                             }
-                            logger.debug(f"API Call (Staking {staking_product_type}/{txn_type_filter}, Pg: {current_page_api}) Att {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
+                            self.logger.debug(f"API Call (Staking {staking_product_type}/{txn_type_filter}, Pg: {current_page_api}) Att {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
                             response_data = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
                             fetched_rows_in_page = response_data if isinstance(response_data, list) else []
-                            logger.debug(f"Raw API (Staking {staking_product_type}/{txn_type_filter}, pg {current_page_api}, att {attempt+1}): Fetched {len(fetched_rows_in_page)} records. Sample: {str(response_data)[:200]}...")
+                            self.logger.debug(f"Raw API (Staking {staking_product_type}/{txn_type_filter}, pg {current_page_api}, att {attempt+1}): Fetched {len(fetched_rows_in_page)} records. Sample: {str(response_data)[:200]}...")
                             if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
                             break
                         except Exception as e_api_stake:
-                            logger.error(f"API/Net Error staking ({staking_product_type}/{txn_type_filter}, pg {current_page_api}, att {attempt+1}): {e_api_stake}. Code: {getattr(e_api_stake, 'code', 'N/A')}")
+                            self.logger.error(f"API/Net Error staking ({staking_product_type}/{txn_type_filter}, pg {current_page_api}, att {attempt+1}): {e_api_stake}. Code: {getattr(e_api_stake, 'code', 'N/A')}")
                             if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                            else: logger.error(f"Max retries for staking history."); fetched_all_for_batch_prod_type = True
+                            else: self.logger.error(f"Max retries for staking history."); fetched_all_for_batch_prod_type = True
 
                     if fetched_rows_in_page:
                         for item in fetched_rows_in_page:
@@ -2662,7 +2678,7 @@ class CryptoPortfolioTracker:
                             if txn_type_filter == "SUBSCRIPTION": tx_type_mapped = "SELL"; notes_prefix = "Staking Subscription"
                             elif txn_type_filter == "REDEMPTION": tx_type_mapped = "BUY"; notes_prefix = "Staking Redemption"
                             elif txn_type_filter == "INTEREST": tx_type_mapped = "DEPOSIT"; notes_prefix = "Staking Interest"
-                            else: logger.warning(f"Unknown staking txnType: {txn_type_filter} for item {item}"); continue
+                            else: self.logger.warning(f"Unknown staking txnType: {txn_type_filter} for item {item}"); continue
 
                             price_usd = 0.0
                             coingecko_called_for_item = False
@@ -2675,9 +2691,9 @@ class CryptoPortfolioTracker:
                                     coingecko_called_for_item = True
                                     if fetched_price is not None:
                                         price_usd = fetched_price
-                                        logger.debug(f"Staking ({notes_prefix}): Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                    else: logger.warning(f"Staking ({notes_prefix}): Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                                else: logger.warning(f"Staking ({notes_prefix}): No CoinGecko ID for {normalized_symbol}. Using $0.00.")
+                                        self.logger.debug(f"Staking ({notes_prefix}): Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
+                                    else: self.logger.warning(f"Staking ({notes_prefix}): Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
+                                else: self.logger.warning(f"Staking ({notes_prefix}): No CoinGecko ID for {normalized_symbol}. Using $0.00.")
 
                             all_transactions.append({
                                 "symbol": normalized_symbol, "timestamp": timestamp, "type": tx_type_mapped,
@@ -2702,23 +2718,23 @@ class CryptoPortfolioTracker:
             if binance_api_delay_ms > 0 and txn_type_filter != transaction_types_to_fetch[-1] :
                 time.sleep(binance_api_delay_ms * 2 / 1000.0)
 
-        logger.info(f"Fetched and processed {len(all_transactions)} new staking transactions (Product: {staking_product_type}) for target assets.")
+        self.logger.info(f"Fetched and processed {len(all_transactions)} new staking transactions (Product: {staking_product_type}) for target assets.")
         return all_transactions
 
     def update_holdings_from_transactions(self):
         """
         Processes all transactions and updates holdings table with FIFO cost basis.
         """
-        logger.info("Updating holdings from transaction history using FIFO...")
+        self.logger.info("Updating holdings from transaction history using FIFO...")
         all_txs = self.db_manager.get_all_transactions()
 
         if all_txs.empty:
-            logger.warning("No transactions found in DB. Cannot update holdings.")
+            self.logger.warning("No transactions found in DB. Cannot update holdings.")
             return
 
         updated_holdings = []
         for symbol, group_df in all_txs.groupby('symbol'):
-            logger.debug(f"Calculating FIFO for {symbol}...")
+            self.logger.debug(f"Calculating FIFO for {symbol}...")
 
             group_df_copy = group_df.copy()
             group_df_copy['price_usd'] = pd.to_numeric(group_df_copy['price_usd'], errors='coerce').fillna(0.0)
@@ -2730,10 +2746,10 @@ class CryptoPortfolioTracker:
             cost_basis_tx_df = group_df_copy[
                 ~group_df_copy['source'].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
             ]
-            logger.info(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
+            self.logger.info(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
 
             if cost_basis_tx_df.empty:
-                logger.info(f"No non-transfer transactions for {symbol}. Cannot calculate cost basis.")
+                self.logger.info(f"No non-transfer transactions for {symbol}. Cannot calculate cost basis.")
                 continue  # Skip to the next symbol
 
             # 2. Calculate cost basis and the remaining quantity FROM THAT BASIS
@@ -2742,21 +2758,21 @@ class CryptoPortfolioTracker:
             # 3. If there's a valid average cost, save it.
             # The quantity saved here is just a placeholder; the final report uses the live wallet balance.
             if avg_cost > 0:
-                logger.info(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
+                self.logger.info(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
                 updated_holdings.append({
                     "symbol": symbol,
                     "quantity": cost_basis_qty,
                     "average_cost_basis": avg_cost
                 })
             else:
-                logger.info(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
+                self.logger.info(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
 
         if updated_holdings:
             holdings_df = pd.DataFrame(updated_holdings)
             self.db_manager.update_holdings(holdings_df)
-            logger.info(f"Successfully updated/inserted {len(holdings_df)} asset holdings in the database with new cost basis.")
+            self.logger.info(f"Successfully updated/inserted {len(holdings_df)} asset holdings in the database with new cost basis.")
         else:
-            logger.warning("No holdings with valid cost basis to update in the database.")
+            self.logger.warning("No holdings with valid cost basis to update in the database.")
 
     def get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """Get current prices for a list of symbols using CoinGecko (Batched with Retry).
@@ -2765,26 +2781,26 @@ class CryptoPortfolioTracker:
         symbols_to_fetch_cg_ids = {}
         unique_coingecko_ids_to_fetch = set()
 
-        logger.info(f"Mapping {len(symbols)} symbols to CoinGecko IDs for price fetching...")
+        self.logger.info(f"Mapping {len(symbols)} symbols to CoinGecko IDs for price fetching...")
         for symbol_upper in set(s.upper() for s in symbols):
             original_case_symbol = next(s for s in symbols if s.upper() == symbol_upper)
             coin_id = self.symbol_mappings.get(symbol_upper)
             if not coin_id:
-                logger.warning(f"No CoinGecko ID mapping found for {original_case_symbol}. Price will be $0.")
+                self.logger.warning(f"No CoinGecko ID mapping found for {original_case_symbol}. Price will be $0.")
                 prices[original_case_symbol] = 0.0
             else:
                 symbols_to_fetch_cg_ids[original_case_symbol] = coin_id
                 unique_coingecko_ids_to_fetch.add(coin_id)
 
         if not unique_coingecko_ids_to_fetch:
-            logger.warning("No valid CoinGecko IDs to fetch prices for.")
+            self.logger.warning("No valid CoinGecko IDs to fetch prices for.")
             return prices
 
         ids_string = ",".join(list(unique_coingecko_ids_to_fetch))
         base_url = self.coingecko_api.get("base_url")
         timeout = self.coingecko_api.get("timeout", 30)
         url = f"{base_url}/simple/price?ids={ids_string}&vs_currencies=usd"
-        logger.info(f"Fetching {len(unique_coingecko_ids_to_fetch)} unique prices from CoinGecko...")
+        self.logger.info(f"Fetching {len(unique_coingecko_ids_to_fetch)} unique prices from CoinGecko...")
 
         retries = 1
         fetched_price_data = None
@@ -2796,15 +2812,15 @@ class CryptoPortfolioTracker:
                 break
             except requests.exceptions.HTTPError as e:
                  if e.response.status_code == 429 and retries > 0:
-                     logger.error(f"Rate limited (429) fetching batch prices. Waiting 60s before retry...")
+                     self.logger.error(f"Rate limited (429) fetching batch prices. Waiting 60s before retry...")
                      time.sleep(60)
                      retries -= 1
                  else:
-                     logger.error(f"HTTP error fetching batch prices: {e}")
+                     self.logger.error(f"HTTP error fetching batch prices: {e}")
                      fetched_price_data = {}
                      break
             except requests.exceptions.RequestException as e:
-                logger.error(f"Error fetching batch prices from CoinGecko: {e}")
+                self.logger.error(f"Error fetching batch prices from CoinGecko: {e}")
                 fetched_price_data = {}
                 break
 
@@ -2813,11 +2829,11 @@ class CryptoPortfolioTracker:
                 if coin_id in fetched_price_data and "usd" in fetched_price_data[coin_id]:
                     prices[original_symbol] = fetched_price_data[coin_id]["usd"]
                 else:
-                    logger.warning(f"USD price not found for {original_symbol} (ID: {coin_id}) in CoinGecko response. Setting to $0.")
+                    self.logger.warning(f"USD price not found for {original_symbol} (ID: {coin_id}) in CoinGecko response. Setting to $0.")
                     prices[original_symbol] = 0.0
         else:
-            logger.error("Failed to fetch any price data from CoinGecko. All prices will be $0.")
-        logger.info("Price fetching complete.")
+            self.logger.error("Failed to fetch any price data from CoinGecko. All prices will be $0.")
+        self.logger.info("Price fetching complete.")
         return prices
 
     def calculate_portfolio_metrics(self) -> Dict[str, Any]:
@@ -2825,7 +2841,7 @@ class CryptoPortfolioTracker:
         Calculates key portfolio metrics using a consolidated view of holdings,
         correctly reflecting that the Earn balance is the authoritative total for assets in Earn.
         """
-        logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
+        self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
 
         # 1. Fetch balances from both wallets
         cost_basis_df = self.db_manager.get_holdings()
@@ -2837,7 +2853,6 @@ class CryptoPortfolioTracker:
         # 2. Merge the dataframes
         holdings_df = pd.merge(total_api_df, earn_df, on='symbol', how='outer').fillna(0)
 
-        # 3. --- THIS IS THE KEY LOGIC CHANGE ---
         # For each asset, the true total quantity is the larger of the two values reported by the APIs.
         # This handles the discrepancy and correctly reflects that the Earn balance is the true total if an asset is staked.
         holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
@@ -2845,11 +2860,10 @@ class CryptoPortfolioTracker:
         # 4. Now that we have a definitive total, the breakdown is simple and robust.
         holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
 
-        # --- The rest of the function remains the same ---
         holdings_df = holdings_df[holdings_df['total_quantity'] > 0.00000001].reset_index(drop=True)
 
         if holdings_df.empty:
-            logger.warning("No non-zero holdings found. Portfolio value is $0.")
+            self.logger.warning("No non-zero holdings found. Portfolio value is $0.")
             return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
 
         # Merge cost basis and price data
@@ -2883,7 +2897,7 @@ class CryptoPortfolioTracker:
             "holdings_df": holdings_df,
             "timestamp": datetime.datetime.now()
         }
-        logger.info(f"Consolidated Metrics Calculated: Total Value = ${total_value:,.2f}")
+        self.logger.info(f"Consolidated Metrics Calculated: Total Value = ${total_value:,.2f}")
         return metrics
 
     def print_portfolio_summary(self, metrics: Dict[str, Any]):
@@ -2916,7 +2930,6 @@ class CryptoPortfolioTracker:
 
         holdings_df = metrics.get('holdings_df')
         if holdings_df is not None and not holdings_df.empty:
-            # --- NEW HEADER with 'Cost Basis' column ---
             header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Allocation':<10}"
             print(header)
             print("-" * LINE_WIDTH)
@@ -2926,7 +2939,6 @@ class CryptoPortfolioTracker:
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
                 row_color_end = "\033[0m"
 
-                # --- NEW ROW with 'cost_basis_total' ---
                 print(
                     f"{row.get('symbol', 'N/A'):<8} "
                     f"{row.get('total_quantity', 0):<18,.8g} "
@@ -2989,7 +3001,7 @@ class CryptoPortfolioTracker:
         """Generate portfolio charts."""
         holdings_df = metrics.get('holdings_df'); target_alloc = self.config.get("target_allocation", {})
         if holdings_df is not None: self.visualizer.generate_all_charts(holdings_df, metrics, target_alloc, pd.DataFrame())
-        else: logger.warning("No holdings data for chart generation.")
+        else: self.logger.warning("No holdings data for chart generation.")
 
     def print_configuration(self):
         """Print the current configuration (excluding sensitive data)."""
@@ -3013,10 +3025,9 @@ class CryptoPortfolioTracker:
     def save_snapshot(self, metrics: Dict[str, Any]):
         """Wrapper to save a portfolio snapshot using data from calculated metrics."""
         if "error" in metrics or "total_value_usd" not in metrics:
-            logger.warning("Skipping snapshot save due to missing data in metrics.")
+            self.logger.warning("Skipping snapshot save due to missing data in metrics.")
             return
 
-        # --- This is the corrected section ---
         timestamp = metrics.get("timestamp", datetime.datetime.now(datetime.timezone.utc))
         total_value = metrics.get("total_value_usd", 0)
         total_cost_basis = metrics.get("total_cost_basis_usd", 0)
@@ -3105,76 +3116,352 @@ class CryptoPortfolioTracker:
 
         print("\n" + "="*80)
 
-    def run_backtest(self):
+    async def run_backtest(self):
         """
-        Handles the user flow for running a backtest with an improved UI.
+        Handles the user flow for running a directional strategy backtest,
+        dynamically discovering and allowing strategies to configure themselves.
         """
-        print("\n--- 🧪 Backtesting Mode ---")
+        print("\n--- 🧪 Directional Strategy Backtesting Mode ---")
 
-        # Initialize the analyzer and backtester
         try:
-            analyzer = CryptoTrendAnalyzer(config=self.config)
-            backtester = Backtester(config=self.config, analyzer=analyzer)
+            analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
+            backtester = StrategyBacktester(config=self.config, analyzer=analyzer)
         except Exception as e:
             self.logger.error(f"Failed to initialize backtesting components: {e}", exc_info=True)
-            print("❌ Error: Could not initialize the backtester. Please check logs.")
             return
 
+        # Discover and select a strategy
+        available_strategies = {
+            name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
+            if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy
+        }
+        if not available_strategies:
+            print("❌ No strategy classes found in 'src/trading_strategies.py'."); return
+
+        print("\nAvailable Strategies:")
+        strategy_list = list(available_strategies.keys())
+        for i, name in enumerate(strategy_list):
+            print(f"  {i+1}. {name}")
+
+        strategy_to_run = None
+        while strategy_to_run is None:
+            try:
+                choice_str = input(f"Select the strategy to backtest (1-{len(strategy_list)}): ").strip()
+                if not choice_str: continue
+                choice = int(choice_str) - 1
+                if 0 <= choice < len(strategy_list):
+                    strategy_name = strategy_list[choice]
+                    strategy_class = available_strategies[strategy_name]
+                    print(f"\nConfiguring strategy: {strategy_name}")
+
+                    user_params = {}
+                    if hasattr(strategy_class, 'get_user_params'):
+                         user_params = strategy_class.get_user_params()
+
+                    strategy_to_run = strategy_class(analyzer=analyzer, **user_params)
+                else:
+                    print("❌ Invalid selection.")
+            except (ValueError, IndexError):
+                print("❌ Invalid input. Please enter a number from the list.")
+
+        if not strategy_to_run: return
+        print(f"\nSelected Strategy: {strategy_to_run.name}")
+
+        # Determine the data interval for the strategy
+        valid_intervals = strategy_to_run.valid_intervals
+        interval = None
+        if len(valid_intervals) == 1:
+            interval = valid_intervals[0]
+            print(f"INFO: This strategy uses the '{interval}' data interval by default.")
+        elif len(valid_intervals) > 1:
+            print("\nSelect a valid data interval for this strategy:")
+            for i, iv in enumerate(valid_intervals): print(f"  {i+1}. {iv}")
+            while interval is None:
+                try:
+                    interval_choice_str = input(f"Select interval (1-{len(valid_intervals)}): ").strip()
+                    selected_idx = int(interval_choice_str) - 1
+                    if 0 <= selected_idx < len(valid_intervals): interval = valid_intervals[selected_idx]
+                    else: print("❌ Invalid selection.")
+                except (ValueError, IndexError): print("❌ Invalid input.")
+
+        if interval is None: interval = '1d'
+        print(f"Using data interval: {interval}")
+
+        # --- THIS ENTIRE BLOCK WAS MISSING - IT IS NOW RESTORED ---
+        # Select the coin to test
         available_coins = self.config.get('trend_analyzer', {}).get('cryptocurrencies', [])
         if not available_coins:
-            print("❌ No cryptocurrencies found in your configuration.")
-            return
+            self.logger.info("Trend analyzer coin list is empty, automatically using coins from target_allocation.")
+            target_coins = self.config.get("target_allocation", {}).keys()
+            available_coins = [f"{coin.upper()}-USD" for coin in target_coins]
+        if not available_coins:
+            print("❌ No cryptocurrencies found in 'target_allocation' or 'trend_analyzer' config section."); return
 
-        # --- UI IMPROVEMENT ---
-        available_coins.sort() # Sort coins alphabetically for a consistent order
-
+        available_coins.sort()
         print("\nCoins available for backtesting:")
-
-        # Print the list in 3 neat columns for better readability
         num_coins = len(available_coins)
         cols = 3
         for i in range(0, num_coins, cols):
-            row = "  "
+            row = "  ";
             for j in range(cols):
-                if i + j < num_coins:
-                    # Format each item with a number and fixed width
-                    row += f"{i+j+1:2d}. {available_coins[i+j]:<15}"
+                if i + j < num_coins: row += f"{i+j+1:2d}. {available_coins[i+j]:<15}"
             print(row)
 
         symbol_to_test = None
         while symbol_to_test is None:
             choice = input("\nEnter the symbol or number of the coin to backtest: ").strip()
-
             if choice.isdigit():
-                # Handle numeric input
                 try:
                     choice_index = int(choice) - 1
-                    if 0 <= choice_index < num_coins:
-                        symbol_to_test = available_coins[choice_index]
-                    else:
-                        print(f"❌ Invalid number. Please enter a number between 1 and {num_coins}.")
-                except ValueError:
-                     print(f"❌ Invalid input. Please enter a valid symbol or number.")
+                    if 0 <= choice_index < num_coins: symbol_to_test = available_coins[choice_index]
+                    else: print(f"❌ Invalid number. Please enter a number between 1 and {num_coins}.")
+                except ValueError: print("❌ Invalid input.")
             else:
-                # Handle string input (the symbol itself)
-                if choice.upper() in available_coins:
-                    symbol_to_test = choice.upper()
-                else:
-                    print(f"❌ Symbol '{choice}' not found. Please choose from the list above.")
-        # --- END OF UI IMPROVEMENT ---
+                yf_ticker_choice = f"{choice.upper()}-USD"
+                if yf_ticker_choice in available_coins: symbol_to_test = yf_ticker_choice
+                else: print(f"❌ Symbol '{choice}' not found. Please choose from the list.")
 
         print(f"\nSelected coin for backtest: {symbol_to_test}")
+        # --- END OF RESTORED BLOCK ---
 
         try:
             initial_capital_str = input("Enter initial capital (default: 10000): ")
             initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
-        except ValueError:
-            print("❌ Invalid capital amount. Using default $10,000.")
-            initial_capital = 10000.0
+            period_str = input("Enter backtest period (e.g., '3y', '60d', default: '3y'): ")
+            period = period_str if period_str else '3y'
 
-        # Run the backtest and generate the report
-        backtester.run(symbol=symbol_to_test, initial_capital=initial_capital)
+            if 'm' in interval and 'y' in period:
+                print("⚠️ WARNING: yfinance limits minute data to the last 60 days.")
+                print(f"Adjusting backtest period from '{period}' to '60d'.")
+                period = '60d'
+            elif 'h' in interval and 'y' in period and int(period.replace('y','')) > 2:
+                 print("⚠️ WARNING: yfinance limits hourly data to the last 730 days (2 years).")
+                 print(f"Adjusting backtest period from '{period}' to '729d'.")
+                 period = '729d'
+
+        except ValueError:
+            print("❌ Invalid capital amount. Using default values."); initial_capital = 10000.0; period = '3y'
+
+        await backtester.run(strategy=strategy_to_run, symbol=symbol_to_test, initial_capital=initial_capital, period=period, interval=interval)
         backtester.generate_report()
+
+    async def run_live_strategy(self):
+        """
+        Master workflow for running a directional strategy for live signal generation and execution.
+        """
+        print("\n--- 🤖 Live Trading Strategy Runner ---")
+
+        # 1. Select Account
+        accounts = [{"name": "Main Account", "type": "main", **self.config.get("api_keys", {})}]
+        sub_accounts = self.config.get("sub_accounts", [])
+        for sub in sub_accounts:
+            # Infer account type from name
+            if "swing" in sub['name'].lower():
+                sub['type'] = 'swing'
+            elif "day" in sub['name'].lower():
+                sub['type'] = 'day'
+            else:
+                sub['type'] = 'main' # Default if not specified
+            accounts.append(sub)
+
+
+        if not any(acc.get("binance_key") for acc in accounts):
+            print("❌ No API keys found for any account. Cannot run live strategies.")
+            return
+
+        print("\nSelect account to trade on:")
+        for i, acc in enumerate(accounts):
+            print(f"  {i+1}. {acc['name']} (Type: {acc.get('type', 'N/A')})")
+
+        selected_account = None
+        while selected_account is None:
+            try:
+                choice = int(input(f"Select account (1-{len(accounts)}): ").strip()) - 1
+                if 0 <= choice < len(accounts):
+                    selected_account = accounts[choice]
+                else:
+                    print("❌ Invalid selection.")
+            except (ValueError, IndexError):
+                print("❌ Invalid input.")
+
+        print(f"\nTrading on account: {selected_account['name']}")
+        live_client = self._init_binance_client(
+            api_key=selected_account.get('binance_key'),
+            api_secret=selected_account.get('binance_secret')
+        )
+        if not live_client:
+            print(f"❌ Failed to initialize Binance client for account: {selected_account['name']}. Check API keys.")
+            return
+
+        # 2. Select and Configure Strategy based on account type
+        all_strategies = {name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass) if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy}
+
+        account_type = selected_account.get('type')
+        available_strategies = {}
+        if account_type == 'main':
+            available_strategies = all_strategies
+        elif account_type == 'swing':
+            available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ['swing', 'general']}
+        elif account_type == 'day':
+             available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ['day', 'general']}
+
+        if not available_strategies:
+            print(f"❌ No suitable strategies found for an account of type '{account_type}'.")
+            return
+
+        print("\nAvailable Strategies:")
+        strategy_list = list(available_strategies.keys())
+        for i, name in enumerate(strategy_list):
+            print(f"  {i+1}. {name}")
+
+        strategy_class = None
+        user_params = {}
+        strategy_name = ""
+        while strategy_class is None:
+            try:
+                choice = int(input(f"Select strategy to run (1-{len(strategy_list)}): ").strip()) - 1
+                if 0 <= choice < len(strategy_list):
+                    strategy_name = strategy_list[choice]
+                    strategy_class = available_strategies[strategy_name]
+                    print(f"\nConfiguring strategy: {strategy_name}")
+                    if hasattr(strategy_class, 'get_user_params'):
+                        user_params = strategy_class.get_user_params()
+                else:
+                    print("❌ Invalid selection.")
+            except (ValueError, IndexError):
+                print("❌ Invalid input.")
+
+        # Create a temporary instance just to get the name for the print message
+        temp_strategy_for_name = strategy_class(analyzer=None, **user_params)
+        print(f"\n🔄 Running '{temp_strategy_for_name.name}' to generate live signals...")
+
+        # 3. Generate Signals for all portfolio assets
+        target_coins = list(self.config.get("target_allocation", {}).keys())
+        signals_to_execute = []
+        analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=live_client)
+
+        for coin in target_coins:
+            yf_ticker = f"{coin}-USD"
+            analyzer.set_symbol(yf_ticker)
+            state_key = f"{selected_account['name']}_{strategy_name}_{coin}"
+            previous_state = self.strategy_states.get(state_key)
+
+            strategy_instance = strategy_class(
+                analyzer=analyzer,
+                state=previous_state,
+                **user_params
+            )
+
+            interval = strategy_instance.valid_intervals[0]
+            # Use a shorter period for live trading to be faster
+            period = '7d' if 'm' in interval or 'h' in interval else '1y'
+            data = await analyzer.fetch_crypto_data_async(yf_ticker, period=period, interval=interval)
+
+            if data is None or data.empty:
+                self.logger.warning(f"Could not fetch data for {yf_ticker}, cannot generate signal.")
+                continue
+
+            signal, size, reason = await strategy_instance.generate_signal(data)
+            self.strategy_states[state_key] = strategy_instance.get_state()
+
+            if signal in ["BUY", "SELL"]:
+                signals_to_execute.append({"Symbol": coin, "Signal": signal, "Size": size, "Reason": reason})
+
+        self._save_strategy_state()
+
+        # 4. Present Trades and Ask for Execution
+        if not signals_to_execute:
+            print("\n✅ Analysis complete. No new BUY or SELL signals generated by the strategy.")
+            return
+
+        is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
+        is_testnet = self.config.get("apis", {}).get("binance", {}).get("testnet", False)
+
+        print("\n" + "="*80)
+        print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
+        print("="*80)
+
+        if is_testnet:
+            print("🟡🟡🟡 NOTE: Connected to TESTNET. No real funds will be used. 🟡🟡🟡")
+
+        if is_live:
+            print("🔴🔴🔴 WARNING: Live Trading is ENABLED. Real orders will be placed. 🔴🔴🔴")
+        else:
+            print("🟢🟢🟢 NOTE: Live Trading is DISABLED. This is a DRY RUN. 🟢🟢🟢")
+
+        print("="*80)
+        for trade in signals_to_execute:
+            print(f"-> {trade['Signal']} {trade['Symbol']} (Reason: {trade['Reason']})")
+        print("="*80)
+
+        try:
+            confirm = input("Type 'EXECUTE' to proceed with the trades listed above: ")
+            if confirm != 'EXECUTE':
+                print("🛑 Trade execution cancelled by user.")
+                return
+        except KeyboardInterrupt:
+            print("\n🛑 Trade execution cancelled by user.")
+            return
+
+        # 5. Execute Trades
+        for trade in signals_to_execute:
+            self._execute_directional_trade(trade, live_client)
+
+    def _execute_directional_trade(self, trade: Dict[str, Any], client: Client):
+        """Helper function to execute a single directional BUY or SELL trade."""
+        symbol = trade['Symbol']
+        signal = trade['Signal']
+        size = trade.get('Size', 1.0) # Default to 100% if not provided
+        trade_ticker = f"{symbol}USDT"
+        min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
+        is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
+
+        self.logger.info(f"Executing {signal} for {symbol} (Size: {size:.2%}) on account via directional strategy. LIVE: {is_live}")
+
+        try:
+            if signal == "BUY":
+                usdt_balance = float(client.get_asset_balance(asset='USDT').get('free', 0.0))
+                trade_amount_usd = usdt_balance * size
+
+                if trade_amount_usd < min_trade_usd:
+                    print(f"⚠️ SKIPPING BUY for {symbol}: Calculated trade size (${trade_amount_usd:,.2f}) is below minimum of ${min_trade_usd:,.2f}.")
+                    return
+
+                print(f"\nPreparing MARKET BUY for ${trade_amount_usd:,.2f} of {symbol}...")
+
+                if is_live:
+                    order = client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{trade_amount_usd:.2f}")
+                    print(f"✅ LIVE BUY ORDER PLACED: {order}")
+                    self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
+                else:
+                    print(f"✅ [DRY RUN] Market BUY order for ${trade_amount_usd:,.2f} of {trade_ticker} was not placed.")
+                    self.logger.info(f"[DRY RUN] Market BUY order for {trade_ticker} was not placed.")
+
+            elif signal == "SELL":
+                asset_balance = float(client.get_asset_balance(asset=symbol).get('free', 0.0))
+                trade_quantity = asset_balance * size
+                current_price = self.get_current_prices([symbol]).get(symbol, 0)
+
+                if (trade_quantity * current_price) < min_trade_usd:
+                    print(f"⚠️ SKIPPING SELL for {symbol}: Position value is below minimum trade size.")
+                    return
+
+                print(f"\nPreparing MARKET SELL for {trade_quantity:.8g} {symbol} ({size:.0%} of holding)...")
+
+                if is_live:
+                    order = client.order_market_sell(symbol=trade_ticker, quantity=f"{trade_quantity:.8g}")
+                    print(f"✅ LIVE SELL ORDER PLACED: {order}")
+                    self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
+                else:
+                    print(f"✅ [DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed.")
+                    self.logger.info(f"[DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed.")
+
+        except BinanceAPIException as e:
+            print(f"❌ {('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}")
+            self.logger.error(f"{('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}")
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred executing directional trade for {symbol}: {e}", exc_info=True)
+            print(f"❌ Unexpected Error for {symbol}: {e}")
 
     def _redeem_from_earn_if_needed(self, asset: str, required_amount: float, is_live: bool) -> bool:
         """
@@ -3187,11 +3474,11 @@ class CryptoPortfolioTracker:
             free_spot_balance = float(spot_balance_info.get('free', 0.0))
 
             if free_spot_balance >= required_amount:
-                logger.info(f"Sufficient {asset} balance in Spot wallet. No action needed.")
+                self.logger.info(f"Sufficient {asset} balance in Spot wallet. No action needed.")
                 return True
 
             shortfall = required_amount - free_spot_balance
-            logger.warning(f"Shortfall of {shortfall:.8f} {asset}. Checking Simple Earn.")
+            self.logger.warning(f"Shortfall of {shortfall:.8f} {asset}. Checking Simple Earn.")
 
             positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset)
             if not positions or not positions.get('rows'):
@@ -3206,35 +3493,34 @@ class CryptoPortfolioTracker:
                 print(f"❌ Cannot redeem required amount. Need {shortfall:.8f} {asset}, but only {available_to_redeem:.8f} is available in Simple Earn.")
                 return False
 
-            # --- This is the new, critical check ---
             if is_live:
                 print(f"⚠️ Insufficient Spot balance. Attempting to redeem {shortfall:.8f} {asset} from product {product_id}.")
-                logger.info(f"LIVE MODE: Attempting to redeem {shortfall:.8f} {asset} from productId {product_id}.")
+                self.logger.info(f"LIVE MODE: Attempting to redeem {shortfall:.8f} {asset} from productId {product_id}.")
                 redemption_result = self.binance_client.redeem_simple_earn_flexible_product(
                     productId=product_id,
                     amount=f"{shortfall:.8f}"
                 )
                 if redemption_result and redemption_result.get('success'):
-                    logger.info(f"Successfully initiated LIVE redemption. Waiting 5 seconds...")
+                    self.logger.info(f"Successfully initiated LIVE redemption. Waiting 5 seconds...")
                     print(f"✅ Redemption initiated for {shortfall:.8f} {asset}. Waiting 5 seconds...")
                     time.sleep(5)
                     return True # Assume success and let the trade proceed
                 else:
-                    logger.error(f"Failed to redeem {asset} from {product_id}: {redemption_result}")
+                    self.logger.error(f"Failed to redeem {asset} from {product_id}: {redemption_result}")
                     print(f"❌ LIVE redemption FAILED for {asset}. See logs.")
                     return False
             else:
                 # In Dry Run mode, we only simulate the check.
                 print(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from Simple Earn product {product_id}.")
-                logger.info(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}.")
+                self.logger.info(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}.")
                 return True # Return True to allow the simulated trade to continue
 
         except BinanceAPIException as e:
-            logger.error(f"API Error during redemption process for {asset}: {e}", exc_info=True)
+            self.logger.error(f"API Error during redemption process for {asset}: {e}", exc_info=True)
             print(f"❌ An API Error occurred when trying to process redemption for {asset}: {e.message}")
             return False
         except Exception as e:
-            logger.error(f"An unexpected error occurred during redemption check for {asset}: {e}", exc_info=True)
+            self.logger.error(f"An unexpected error occurred during redemption check for {asset}: {e}", exc_info=True)
             return False
 
     def execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float]):
@@ -3253,7 +3539,7 @@ class CryptoPortfolioTracker:
 
         portfolio_config = self.config.get("portfolio", {})
         min_trade_usd = portfolio_config.get("minimum_trade_usd", 10.0)
-        is_live = self.config.get("rebalance_technical", {}).get("live_trading_enabled", False)
+        is_live = portfolio_config.get("live_trading_enabled", False)
 
         simulated_balances = {}
         all_trade_symbols = set(trades_to_execute['Symbol'].unique()) | {'USDT'}
@@ -3262,9 +3548,9 @@ class CryptoPortfolioTracker:
                 spot_bal = float(self.binance_client.get_asset_balance(asset=symbol).get('free', 0.0))
                 earn_bal = earn_balances.get(symbol, 0.0)
                 simulated_balances[symbol] = spot_bal + earn_bal
-                logger.info(f"Initialized simulated balance for {symbol}: {simulated_balances[symbol]:.8f}")
+                self.logger.info(f"Initialized simulated balance for {symbol}: {simulated_balances[symbol]:.8f}")
             except Exception as e:
-                logger.error(f"Could not fetch balance for {symbol}: {e}")
+                self.logger.error(f"Could not fetch balance for {symbol}: {e}")
                 simulated_balances[symbol] = 0.0
 
         print("\n" + "="*80)
@@ -3308,16 +3594,15 @@ class CryptoPortfolioTracker:
                     simulated_balances[symbol] -= coin_quantity
                     print(f"\nPreparing MARKET SELL for {coin_quantity:.8g} {symbol}...")
 
-                    # --- ADDED LIVE TRADING LOGIC ---
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{coin_quantity:.8g}")
                             print(f"✅ LIVE SELL ORDER PLACED: {order}")
-                            logger.info(f"LIVE SELL ORDER PLACED: {order}")
+                            self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                         except BinanceAPIException as e:
                             print(f"❌ LIVE SELL FAILED for {symbol}: {e}")
-                            logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
+                            self.logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
                     else:
                         print("✅ (Dry Run) Trade was not placed.")
 
@@ -3331,16 +3616,15 @@ class CryptoPortfolioTracker:
                     simulated_balances['USDT'] -= usd_value
                     print(f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}...")
 
-                    # --- ADDED LIVE TRADING LOGIC ---
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}")
                             print(f"✅ LIVE BUY ORDER PLACED: {order}")
-                            logger.info(f"LIVE BUY ORDER PLACED: {order}")
+                            self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
                         except BinanceAPIException as e:
                             print(f"❌ LIVE BUY FAILED for {symbol}: {e}")
-                            logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
+                            self.logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
                     else:
                         print("✅ (Dry Run) Trade was not placed.")
 
