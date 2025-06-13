@@ -1,89 +1,47 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "apis": {
     "coingecko": {
       "base_url": "https://api.coingecko.com/api/v3",
-      "rate_limit": 100,
       "timeout": 30,
-      "request_delay_ms": 15000
+      "request_delay_ms": 1500
     },
     "binance": {
-      "base_url": "https://api.binance.com",
-      "sapi_url": "https://api.binance.com/sapi/v1",
-      "futures_url": "https://fapi.binance.com/fapi/v1",
-      "rate_limit": 1200,
-      "testnet": false,
       "timeout": 60,
-      "max_retries_per_batch": 2,
-      "retry_delay_sec": 30,
-      "recv_window": 60000,
-      "request_delay_ms": 500,
-      "batch_days": 7
+      "recv_window": 10000,
+      "request_delay_ms": 500
     },
     "yfinance": {
       "request_delay_ms": 1000
     }
   },
   "cache": {
-        "path": "data/cache"
-      },
+    "path": "data/cache"
+  },
   "database": {
     "path": "data/portfolio.db",
     "backup_enabled": true,
-    "backup_interval_hours": 24,
-    "cleanup_days": 90,
-    "connection_timeout": 30
+    "cleanup_days": 90
   },
   "logging": {
-    "level": "DEBUG",
-    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "level": "INFO",
     "file_config": {
       "enabled": true,
-      "path": "logs/portfolio_tracker.log",
-      "max_size_mb": 10,
-      "backup_count": 5,
-      "rotation": "size"
+      "path": "logs/portfolio_tracker.log"
     },
     "console_config": {
-      "enabled": true,
-      "colored": true
+      "enabled": true
     }
   },
   "exports": {
-    "path": "data/exports/",
-    "formats": {
-      "excel": {
-        "enabled": true,
-        "include_charts": true,
-        "password_protected": false
-      },
-      "html": {
-        "enabled": true,
-        "mobile_optimized": true,
-        "include_charts": true
-      },
-      "csv": {
-        "enabled": true,
-        "separate_files": true
-      }
-    },
-    "cleanup": {
-      "enabled": true,
-      "keep_days": 30
-    }
+    "path": "data/exports/"
   },
   "portfolio": {
-    "minimum_trade_usd": 5,
-    "live_trading_enabled": false,
-    "minimum_value_usd": 1.0,
-    "stablecoin_symbols": ["USDT"],
-    "crypto_quotes": [],
-    "rebalance_threshold_percent": 2.0,
-    "cost_basis_method": "fifo",
+    "minimum_trade_usd": 5.0,
+    "live_trading_enabled": true,
     "p2p_fiat_currency": "PHP",
-    "binance_csv_path": "data/binance_export.csv",
-    "copy_trading_csv_path": "data/copy_trading_transfers.csv",
-    "assets_for_internal_transfer_check": ["USDT"]
+    "crypto_quotes": [],
+    "stablecoin_symbols": ["USDT"]
   },
   "target_allocation": {
     "BTC": 0.35,
@@ -98,27 +56,14 @@
   "asset_classes": {
     "majors": ["BTC", "ETH"]
   },
-  "rebalancing_strategy": {
-    "base_on_cost": true,
-    "allow_selling": true,
-    "never_sell_symbols": []
-  },
   "rebalance_technical": {
     "majors": {
       "allocation_drift_threshold_pct": 3.0,
-      "rsi_overbought": 75,
-      "rsi_oversold": 25,
-      "price_vs_ma_above": 20,
-      "price_vs_ma_near_below": 5,
       "sell_percentage_multiplier": 0.25,
       "buy_amount_multiplier": 0.75
     },
     "alts": {
       "allocation_drift_threshold_pct": 7.0,
-      "rsi_overbought": 70,
-      "rsi_oversold": 30,
-      "price_vs_ma_above": 25,
-      "price_vs_ma_near_below": 0,
       "sell_percentage_multiplier": 0.5,
       "buy_amount_multiplier": 1.0
     }
@@ -133,8 +78,6 @@
       "LDETH": "ethereum",
       "SOL": "solana",
       "LDSOL": "solana",
-      "RNDR": "render-token",
-      "LDRNDR": "render-token",
       "RENDER": "render-token",
       "LDRENDER": "render-token",
       "TAO": "bittensor",
@@ -145,51 +88,12 @@
       "LDAVAX": "avalanche-2",
       "LINK": "chainlink",
       "LDLINK": "chainlink",
-      "AXS": "axie-infinity",
-      "LDAXS": "axie-infinity",
-      "XRP": "ripple",
-      "LDXRP": "ripple",
       "PEPE": "pepe",
-      "LDPEPE": "pepe",
-      "HMSTR": "hamster-kombat",
-      "LDHMSTR": "hamster-kombat",
-      "DOGS": "dog",
-      "LDDOGS": "dog"
+      "LDPEPE": "pepe"
     }
   },
   "symbol_normalization_map": {
     "RNDR": "RENDER"
-  },
-  "pepe_gift_details": {
-    "symbol": "PEPE",
-    "amount": "322.6452382"
-  },
-  "visualization": {
-    "chart_style": "seaborn-v0_8",
-    "color_palette": "husl",
-    "figure_size": [
-      15,
-      12
-    ],
-    "dpi": 300,
-    "formats": [
-      "png",
-      "svg"
-    ]
-  },
-  "notifications": {
-    "enabled": false,
-    "email": {
-      "smtp_server": "smtp.gmail.com",
-      "port": 587,
-      "username": "",
-      "password": "",
-      "recipients": []
-    },
-    "webhook": {
-      "url": "",
-      "enabled": false
-    }
   },
   "history_lookback_days": {
     "trades": 90,
@@ -201,9 +105,9 @@
     "spot_convert_history": 90,
     "simple_earn_rewards": 90,
     "simple_earn_subscriptions": 90,
-  "simple_earn_redemptions": 90,
-  "dividend_history": 90,
-  "staking_history": 90
+    "simple_earn_redemptions": 90,
+    "dividend_history": 90,
+    "staking_history": 90
   },
   "trend_analyzer": {
     "cryptocurrencies": [],
@@ -226,11 +130,6 @@
     },
     "rsi_period": 14,
     "rsi_oversold": 30,
-    "rsi_overbought": 70,
-    "confidence_thresholds": {
-      "strong": 0.75,
-      "moderate": 0.5
-    },
-    "report_directory": "data/trend_reports"
+    "rsi_overbought": 70
   }
 }

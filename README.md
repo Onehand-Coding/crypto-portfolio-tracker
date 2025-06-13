@@ -174,17 +174,11 @@ Configure different thresholds for major coins vs altcoins:
   "rebalance_technical": {
     "majors": {
       "allocation_drift_threshold_pct": 3.0,
-      "rsi_overbought": 75,
-      "rsi_oversold": 25,
-      "price_vs_ma_above": 20,
       "sell_percentage_multiplier": 0.25,
       "buy_amount_multiplier": 0.75
     },
     "alts": {
       "allocation_drift_threshold_pct": 7.0,
-      "rsi_overbought": 70,
-      "rsi_oversold": 30,
-      "price_vs_ma_above": 25,
       "sell_percentage_multiplier": 0.5,
       "buy_amount_multiplier": 1.0
     }
@@ -199,6 +193,7 @@ Configure multi-timeframe analysis parameters:
 ```json
 {
   "trend_analyzer": {
+    "cryptocurrencies": [],
     "timeframe_settings": {
       "long_term": {
         "period": "4y",
@@ -217,10 +212,8 @@ Configure multi-timeframe analysis parameters:
       }
     },
     "rsi_period": 14,
-    "confidence_thresholds": {
-      "strong": 0.75,
-      "moderate": 0.5
-    }
+    "rsi_oversold": 30,
+    "rsi_overbought": 70
   }
 }
 ```
@@ -230,12 +223,10 @@ Configure multi-timeframe analysis parameters:
 ```json
 {
   "portfolio": {
-    "minimum_trade_usd": 5,
+    "minimum_trade_usd": 5.0,
     "live_trading_enabled": false,
-    "minimum_value_usd": 1.0,
-    "rebalance_threshold_percent": 2.0,
-    "cost_basis_method": "fifo",
-    "p2p_fiat_currency": "PHP"
+    "p2p_fiat_currency": "PHP",
+    "stablecoin_symbols": ["USDT"]
   }
 }
 ```

@@ -6,7 +6,7 @@ from crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 
 class Strategy:
-    """A base class for all strategies, now with a consistent configuration method."""
+    """A base class for all strategies, with a consistent configuration method."""
     valid_intervals: List[str] = ['1d']
     strategy_type: str = "general"
 
@@ -227,3 +227,161 @@ class OpeningRangeBreakoutStrategy(Strategy):
             return "BUY", self.risk_per_trade_pct, f"Breakout above {self.range_duration} range high ${opening_range_high:.2f}"
 
         return "HOLD", 0.0, "Awaiting breakout."#
+
+
+
+class VolatilityAdaptiveEMASwing(Strategy):
+    """
+    A swing strategy that enters on pullbacks in an established trend,
+    with a stop-loss based on market volatility (ATR).
+    - Trend Filter: Only enters long if the price is above the 200-day EMA.
+    - Entry: Buys on a dip when the fast EMA (20) crosses above the slow EMA (50).
+    - Confirmation: RSI must not be overbought (>70) to avoid buying into euphoria.
+    - Risk Management: Stop-loss is set at 2x ATR below the entry price. Take-profit is set at a 2:1 risk/reward ratio.
+    """
+    valid_intervals = ['1d']
+    strategy_type = 'swing'
+
+    def __init__(self, analyzer: CryptoTrendAnalyzer, state: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(analyzer=analyzer, state=state, **kwargs)
+        # Default state
+        self._state.setdefault('in_position', False)
+        self._state.setdefault('stop_loss', 0)
+        self._state.setdefault('take_profit', 0)
+
+    @property
+    def name(self):
+        return "Volatility-Adaptive EMA Swing Strategy"
+
+    async def generate_signal(self, data: pd.DataFrame) -> Tuple[Optional[str], float, Optional[str]]:
+        if len(data) < 200:
+            return "HOLD", 0.0, "Insufficient data for 200-day EMA trend filter"
+
+        df = data.copy()
+        df.ta.ema(length=20, append=True)
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=200, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.atr(length=14, append=True)
+
+        latest = df.iloc[-1]
+        previous = df.iloc[-2]
+
+        # --- EXIT LOGIC ---
+        if self._state['in_position']:
+            if latest['Close'] < self._state['stop_loss']:
+                self._state['in_position'] = False
+                return "SELL", 1.0, f"Stop-loss triggered at ${self._state['stop_loss']:.2f}"
+            if latest['Close'] > self._state['take_profit']:
+                self._state['in_position'] = False
+                return "SELL", 1.0, f"Take-profit triggered at ${self._state['take_profit']:.2f}"
+            return "HOLD", 0.0, f"Position held. SL=${self._state['stop_loss']:.2f}, TP=${self._state['take_profit']:.2f}"
+
+        # --- ENTRY LOGIC ---
+        # 1. Trend Filter: Must be in a long-term uptrend
+        if latest['Close'] < latest['EMA_200']:
+            return "HOLD", 0.0, "Price is below 200-day EMA (long-term downtrend)"
+
+        # 2. Entry Signal: A bullish crossover of short-term EMAs
+        ema_20_crossed_above_50 = previous['EMA_20'] <= previous['EMA_50'] and latest['EMA_20'] > latest['EMA_50']
+
+        # 3. Confirmation Filters
+        rsi_ok = latest['RSI_14'] < 70  # Not overbought
+        atr_valid = 'ATRr_14' in latest and pd.notna(latest['ATRr_14']) and latest['ATRr_14'] > 0
+
+        if ema_20_crossed_above_50 and rsi_ok and atr_valid:
+            # Set dynamic stop-loss and take-profit based on volatility
+            stop_loss_price = latest['Close'] - (latest['ATRr_14'] * 2)
+            profit_target_price = latest['Close'] + (latest['ATRr_14'] * 4) # 2:1 Risk/Reward
+
+            self._state['in_position'] = True
+            self._state['stop_loss'] = stop_loss_price
+            self._state['take_profit'] = profit_target_price
+
+            return "BUY", 1.0, f"EMA 20/50 cross with trend confirmation. SL=${stop_loss_price:.2f}"
+
+        return "HOLD", 0.0, "Awaiting valid entry signal"
+
+
+class ORBWithVolumeFilter(Strategy):
+    """
+    A day trading strategy that trades breakouts from the session's opening range,
+    but only if the breakout occurs on significant volume.
+    - Opening Range: Defines high/low of the first hour of the trading day.
+    - Breakout: Enters when price closes above the opening range high.
+    - Volume Filter: Breakout bar's volume must be > 1.5x the average volume of the opening range.
+    - Risk Management: Stop-loss is placed at the low of the opening range. Position is closed at the end of the day.
+    """
+    valid_intervals = ['15m', '1h']
+    strategy_type = 'day'
+
+    def __init__(self, analyzer: CryptoTrendAnalyzer, state: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(analyzer=analyzer, state=state, **kwargs)
+        self._state.setdefault('last_day_processed', None)
+        self._state.setdefault('in_position', False)
+        self._state.setdefault('opening_range_high', 0)
+        self._state.setdefault('opening_range_low', 0)
+
+    @property
+    def name(self):
+        return "Opening Range Breakout with Volume Filter"
+
+    async def generate_signal(self, data: pd.DataFrame) -> Tuple[Optional[str], float, Optional[str]]:
+        if data.empty or len(data) < 5: # Need at least a few bars
+            return "HOLD", 0.0, "No data"
+
+        latest_bar = data.iloc[-1]
+        current_time = pd.to_datetime(latest_bar.name, utc=True)
+        current_day_str = str(current_time.date())
+
+        # Reset daily variables at the start of a new day
+        if self._state.get('last_day_processed') != current_day_str:
+            self._state.update({
+                'last_day_processed': current_day_str,
+                'in_position': False,
+                'opening_range_high': 0,
+                'opening_range_low': 0
+            })
+
+        # End-of-day exit logic
+        if self._state['in_position'] and current_time.hour >= 23:
+            self._state['in_position'] = False
+            return "SELL", 1.0, "End-of-day exit"
+
+        # Stop-loss exit logic
+        if self._state['in_position'] and latest_bar['Close'] < self._state['opening_range_low']:
+            self._state['in_position'] = False
+            return "SELL", 1.0, f"Stop-loss triggered at ${self._state['opening_range_low']:.2f}"
+
+        # If already in a position, just hold until exit signal
+        if self._state['in_position']:
+            return "HOLD", 0.0, "Position held"
+
+        # Define Opening Range (first hour, i.e., first four 15m bars)
+        # Assumes UTC day starts at 00:00
+        opening_range_end = current_time.replace(hour=1, minute=0, second=0, microsecond=0)
+
+        # Do not trade before the opening range is set
+        if current_time < opening_range_end:
+            return "HOLD", 0.0, "Awaiting opening range formation"
+
+        # Calculate opening range metrics only once per day
+        if self._state['opening_range_high'] == 0:
+            today_data = data[data.index.date == current_time.date()]
+            range_bars = today_data[today_data.index < opening_range_end]
+            if range_bars.empty:
+                return "HOLD", 0.0, "Waiting for opening range bars"
+
+            self._state['opening_range_high'] = range_bars['High'].max()
+            self._state['opening_range_low'] = range_bars['Low'].min()
+            self._state['opening_range_avg_volume'] = range_bars['Volume'].mean()
+
+        # --- ENTRY LOGIC ---
+        is_breakout = latest_bar['Close'] > self._state['opening_range_high']
+        is_volume_confirmed = latest_bar['Volume'] > (self._state['opening_range_avg_volume'] * 1.5)
+
+        if is_breakout and is_volume_confirmed:
+            self._state['in_position'] = True
+            return "BUY", 1.0, f"Volume-confirmed breakout above ${self._state['opening_range_high']:.2f}"
+
+        return "HOLD", 0.0, "Awaiting valid breakout"

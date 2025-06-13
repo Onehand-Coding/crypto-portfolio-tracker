@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from portfolio_tracker import CryptoPortfolioTracker
-from config import setup_logging, load_config
+from config import setup_logging, ConfigManager
 
 
 def clear_screen() -> None:
@@ -89,7 +89,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="Crypto Portfolio Tracker v2.0.0" # Ensure this matches actual version if it changes
+        version="Crypto Portfolio Tracker v2.1.0" # Ensure this matches actual version if it changes
     )
 
     return parser
@@ -98,7 +98,7 @@ Examples:
 def show_interactive_menu():
     """Display interactive menu and get user choice"""
     print("\n" + "="*50)
-    print("🚀 Crypto Portfolio Tracker v2.1")
+    print("🚀 Crypto Portfolio Tracker v2.1.0")
     print("="*50)
     print("1. 🔄 Full Sync & Analysis (Recommended)")
     print("2. 📊 Quick Portfolio Summary")
@@ -119,12 +119,11 @@ def show_interactive_menu():
 
     while True:
         try:
-            # Updated range to include new option
             choice = input("\nSelect option (1-15): ").strip()
-            if choice in [str(i) for i in range(1, 16)]:
+            if choice.isdigit() and 1 <= int(choice) <= 15:
                 return int(choice)
             else:
-                print("❌ Invalid choice. Please select 1-15.")
+                print("❌ Invalid choice. Please select a number from 1 to 15.")
         except KeyboardInterrupt:
             print("\n\n👋 Goodbye!")
             sys.exit(0)
@@ -159,7 +158,6 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
             elif choice == 3:
                 print("\n📈 Viewing Crypto Trends...")
                 asyncio.run(tracker.view_trends())
-                input("\n✅ Press Enter to continue...")
 
             elif choice == 4:
                 suggestions = asyncio.run(tracker.get_core_portfolio_rebalance_suggestions_technical())
@@ -221,14 +219,6 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 tracker.cleanup_old_data()
                 input("\n✅ Cleanup completed. Press Enter to continue...")
 
-                if suggestions_df is not None and not suggestions_df.empty:
-                    tracker.print_rebalance_suggestions(suggestions_df)
-                elif suggestions_df is not None and suggestions_df.empty:
-                    print("No rebalancing suggestions based on the current technical criteria, or no core assets found.")
-                else:
-                    print("Could not generate rebalance suggestions (function returned None, check logs).")
-                input("\n✅ Press Enter to continue...")
-
             elif choice == 14:
                 print("\n🔧 Testing API connections...")
                 tracker.test_connections()
@@ -253,28 +243,26 @@ def main():
     parser = create_argument_parser()
     args = parser.parse_args()
 
-    # Load configuration from files first
-    config_data = load_config(args.config)
+    # Step 1: Instantiate the new ConfigManager. It handles all config loading internally.
+    manager = ConfigManager(args.config)
+    config_data = manager.config # Get the non-sensitive config dict for logging setup
 
-    # Determine the final log level based on the correct hierarchy:
-    # 1. Start with the level from the config file (which already includes .env overrides)
+    # Determine the final log level
     log_level = config_data.get("logging", {}).get("level", "INFO")
-
-    # 2. Let command-line flags override the file setting
     if args.verbose:
         log_level = "DEBUG"
     elif args.quiet:
         log_level = "WARNING"
 
-    # 3. Setup logging, passing ONLY the "logging" dictionary from the config
+    # Setup logging
     setup_logging(config=config_data.get("logging"), level=log_level)
 
     logger = logging.getLogger(__name__)
     logger.info("Starting Crypto Portfolio Tracker")
 
     try:
-        # Pass the pre-loaded config dictionary directly
-        tracker = CryptoPortfolioTracker(config_data=config_data)
+        # Step 2: Pass the entire ConfigManager instance to the tracker.
+        tracker = CryptoPortfolioTracker(config_manager=manager)
 
         if args.sync_only:
             logger.info("Running sync-only mode")

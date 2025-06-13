@@ -1,235 +1,204 @@
-# src/rebalancing_backtester.py
-
 import logging
-import pandas as pd
+from typing import Dict, Any
+
 import numpy as np
-import re
+import pandas as pd
 import yfinance as yf
-from typing import Dict, Any, Optional, List, TYPE_CHECKING
-from dataclasses import dataclass
+import pandas_ta as ta
 
-# Solves the circular import for type hinting
-if TYPE_CHECKING:
-    from .portfolio_tracker import CryptoPortfolioTracker
-
-@dataclass
-class BacktestSuggestion:
-    """A dataclass to hold a single rebalancing suggestion during a backtest."""
-    symbol: str
-    signal: str
-    action_text: str
+from rebalancing_logic import get_backtest_rebalance_suggestions
+from crypto_trend_analyzer import CryptoTrendAnalyzer
 
 class RebalancingBacktester:
     """
-    Simulates the performance of the dynamic rebalancing strategy over historical data.
-    This version is optimized to fetch all data once and process it in memory.
+    Performs a 1:1 backtest of the live rebalancing strategy.
+    It pre-calculates all indicators for performance and then calls the central logic engine.
     """
-    def __init__(self, config: Dict[str, Any], tracker: "CryptoPortfolioTracker"):
+    def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.tracker = tracker
         self.logger = logging.getLogger(__name__)
-        self.trade_log: List[str] = []
-        self.portfolio_history: Dict[pd.Timestamp, float] = {}
-        self.initial_capital: float = 0.0
-        self.hist_prices_df: Optional[pd.DataFrame] = None
-        self.normalized_alloc: Dict[str, float] = {}
+        self.analyzer = CryptoTrendAnalyzer(config=self.config)
+        self.reset_state()
 
-    def _reset_state(self, initial_capital: float):
-        """Resets the state for a new backtest run."""
-        self.initial_capital = initial_capital
+    def reset_state(self):
+        self.initial_capital = 10000.0
+        self.portfolio_value_history = []
         self.trade_log = []
-        self.portfolio_history = {}
-        self.logger.info(f"Backtester state reset. Initial capital: ${initial_capital:,.2f}")
+        self.data = pd.DataFrame()
+        self.max_drawdown = 0.0
+        self.logger.info("Backtester state reset.")
 
-    async def run(self, initial_capital: float = 10000.0, backtest_period: str = "3y"):
-        """Runs the rebalancing backtest with an efficient, single-fetch strategy."""
-        self._reset_state(initial_capital)
+    def _pre_calculate_indicators(self):
+        """Pre-calculates all technical indicators for all assets at once."""
+        self.logger.info("Pre-calculating all technical indicators for the backtest period...")
+        long_term_settings = self.analyzer.timeframe_settings.get('long_term', {})
+        swing_settings = self.analyzer.timeframe_settings.get('swing', {})
+        rsi_period = self.analyzer.rsi_period
 
+        for asset in self.config.get("target_allocation", {}).keys():
+            close_col = f"{asset}_Close"
+            low_col = f"{asset}_Low"
+            high_col = f"{asset}_High"
+
+            if close_col in self.data.columns:
+                # Long-Term Indicators
+                sma_long_len = long_term_settings.get('sma_long_window', 200)
+                self.data[f'{asset}_SMA_L_long'] = ta.sma(self.data[close_col], length=sma_long_len)
+
+                # Swing-Term Indicators
+                sma_swing_len = swing_settings.get('sma_long_window', 30)
+                self.data[f'{asset}_SMA_L_swing'] = ta.sma(self.data[close_col], length=sma_swing_len)
+
+                # RSI
+                self.data[f'{asset}_RSI'] = ta.rsi(self.data[close_col], length=rsi_period)
+
+                # Pre-calculate rolling min/max for Support/Resistance
+                sr_window = 30 # Matching the default window in the analyzer
+                if high_col in self.data.columns and low_col in self.data.columns:
+                    self.data[f'{asset}_Support'] = self.data[low_col].rolling(window=sr_window).min()
+                    self.data[f'{asset}_Resistance'] = self.data[high_col].rolling(window=sr_window).max()
+
+        self.data.ffill(inplace=True)
+        self.logger.info("Indicator pre-calculation complete.")
+
+    def _fetch_and_prepare_data(self, symbols: list, period: str) -> bool:
+        self.logger.info(f"Fetching {period} of historical data for {len(symbols)} assets...")
+        tickers = [f"{s.upper()}-USD" for s in symbols]
+        try:
+            self.data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, timeout=60)
+            if self.data.empty: return False
+            self.data.columns = [f"{col[1].replace('-USD', '')}_{col[0]}" for col in self.data.columns]
+            self.data.ffill(inplace=True)
+            self.data.bfill(inplace=True)
+        except Exception as e:
+            self.logger.error(f"Critical error during yfinance download: {e}", exc_info=True)
+            return False
+
+        if "BTC_Close" not in self.data.columns or self.data["BTC_Close"].isna().all():
+            self.logger.error("Failed to fetch benchmark (BTC) data.")
+            return False
+
+        self._pre_calculate_indicators()
+        self.logger.info("Successfully fetched and prepared historical data with indicators.")
+        return True
+
+    def run(self, initial_capital: float = 10000.0, period: str = '3y'):
+        """Synchronously runs the complete backtesting simulation."""
+        self.reset_state()
+        self.initial_capital = initial_capital
         target_allocation = self.config.get("target_allocation", {})
         if not target_allocation:
-            self.logger.error("No 'target_allocation' found in config. Aborting backtest.")
-            return
+            self.logger.error("Target allocation not found in config."); return
 
-        all_symbols = list(target_allocation.keys())
-        yf_tickers = [self.tracker._get_yfinance_ticker(s) for s in all_symbols]
+        symbols_to_fetch = list(target_allocation.keys())
+        if "BTC" not in symbols_to_fetch: symbols_to_fetch.append("BTC")
 
-        self.logger.info(f"Fetching {backtest_period} of historical price data for all {len(all_symbols)} assets...")
-        hist_prices_df = yf.download(yf_tickers, period=backtest_period, auto_adjust=True, group_by='ticker')
+        if not self._fetch_and_prepare_data(symbols_to_fetch, period): return
 
-        # --- ROBUST DATA CLEANING ---
-        # First forward-fill gaps, then backward-fill gaps at the start.
-        hist_prices_df.ffill(inplace=True)
-        hist_prices_df.bfill(inplace=True)
-        # --- END OF FIX ---
+        portfolio = {asset: 0.0 for asset in target_allocation}
+        portfolio['USDT'] = self.initial_capital
+        peak_value = self.initial_capital
 
-        valid_symbols = []
-        for symbol, ticker in zip(all_symbols, yf_tickers):
-            if ticker in hist_prices_df.columns and not hist_prices_df[(ticker, 'Close')].isna().all():
-                valid_symbols.append(symbol)
-            else:
-                self.logger.warning(f"Failed to fetch any valid data for {symbol} ({ticker}). It will be excluded from this backtest.")
+        start_date = self.data.index.min()
+        end_date = self.data.index.max()
+        self.logger.info(f"Starting monthly rebalancing simulation from {start_date.date()} to {end_date.date()}...")
 
-        if not valid_symbols:
-            self.logger.error("Could not fetch valid data for any target assets. Aborting backtest.")
-            return
+        for date in pd.date_range(start_date, end_date, freq='MS'):
+            sim_date = self.data.index.asof(date)
+            if pd.isna(sim_date): continue
 
-        self.hist_prices_df = hist_prices_df[[(self.tracker._get_yfinance_ticker(s), 'Close') for s in valid_symbols]]
+            suggestions_df = get_backtest_rebalance_suggestions(
+                full_historical_data_with_indicators=self.data,
+                portfolio_state=portfolio,
+                sim_date=sim_date,
+                config=self.config,
+                analyzer_config=self.analyzer.analyzer_config
+            )
 
-        self.logger.info("Pre-calculating technical indicators for the backtest period...")
-        indicator_data = {}
-        rebal_config = self.config.get("rebalance_technical", {})
-        for symbol in valid_symbols:
-            ticker = self.tracker._get_yfinance_ticker(symbol)
-            df = pd.DataFrame(self.hist_prices_df[(ticker, 'Close')].copy())
-            df.columns = ['Close'] # Ensure single-level column for pandas_ta
+            if not suggestions_df.empty:
+                trades_to_execute = suggestions_df[suggestions_df['Signal'].isin(['BUY', 'SELL'])]
+                trades_to_execute = trades_to_execute.sort_values(by=['Signal'], ascending=False)
+                for _, trade in trades_to_execute.iterrows():
+                    asset = trade['Symbol']
+                    signal = trade['Signal']
+                    price = trade['TA_Price']
+                    action_value_usd = trade['action_usd_value']
+                    min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
 
-            df.ta.rsi(length=rebal_config.get("rsi_period_weekly", 14), append=True)
-            df.ta.sma(length=200, append=True)
-            indicator_data[symbol] = df
+                    if action_value_usd < min_trade_usd: continue
 
-        active_target_alloc = {s: target_allocation[s] for s in valid_symbols}
-        total_valid_pct = sum(active_target_alloc.values())
-        self.normalized_alloc = {s: pct / total_valid_pct for s, pct in active_target_alloc.items()}
+                    if signal == 'SELL' and portfolio.get(asset, 0) > 0 and price > 0:
+                        sell_quantity = min(action_value_usd / price, portfolio[asset])
+                        portfolio[asset] -= sell_quantity
+                        portfolio['USDT'] += sell_quantity * price
+                        self.trade_log.append(f"SIM: {sim_date.date()}: SELL {sell_quantity:.6f} {asset} @ ${price:.2f}")
 
-        # --- SAFER INITIALIZATION ---
-        # Find the first date where we have price data for all assets
-        first_valid_index = self.hist_prices_df.dropna().first_valid_index()
-        if first_valid_index is None:
-            self.logger.error("No date found with valid prices for all assets after cleaning. Aborting.")
-            return
+                    elif signal == 'BUY' and portfolio['USDT'] >= action_value_usd and price > 0:
+                        buy_quantity = action_value_usd / price
+                        portfolio[asset] += buy_quantity
+                        portfolio['USDT'] -= action_value_usd
+                        self.trade_log.append(f"SIM: {sim_date.date()}: BUY {buy_quantity:.6f} {asset} @ ${price:.2f}")
 
-        start_prices = self.hist_prices_df.loc[first_valid_index]
-        portfolio_qty = {s: (initial_capital * pct) / start_prices[(self.tracker._get_yfinance_ticker(s), 'Close')] for s, pct in self.normalized_alloc.items()}
+            current_portfolio_value = portfolio['USDT']
+            for asset, quantity in portfolio.items():
+                if asset != 'USDT':
+                    price_col = f"{asset}_Close"
+                    if price_col in self.data.columns:
+                        current_portfolio_value += quantity * self.data.loc[sim_date, price_col]
 
-        self.logger.info(f"Starting monthly rebalancing simulation from {first_valid_index.date()}...")
-        for i in range(self.hist_prices_df.index.get_loc(first_valid_index), len(self.hist_prices_df)):
-            current_date = self.hist_prices_df.index[i]
-            prev_date = self.hist_prices_df.index[i-1]
+            peak_value = max(peak_value, current_portfolio_value)
+            drawdown = (current_portfolio_value - peak_value) / peak_value if peak_value > 0 else 0
+            self.max_drawdown = min(self.max_drawdown, drawdown)
+            self.portfolio_value_history.append({'date': sim_date, 'value': current_portfolio_value})
 
-            if current_date.month != prev_date.month:
-                suggestions = self._get_rebalance_suggestions_from_history(current_date, portfolio_qty, indicator_data)
-
-                for suggestion in suggestions:
-                    self._execute_simulated_trade(suggestion, portfolio_qty, current_date, indicator_data)
-
-            current_value = sum(qty * self.hist_prices_df.loc[current_date, (self.tracker._get_yfinance_ticker(symbol), 'Close')] for symbol, qty in portfolio_qty.items())
-            self.portfolio_history[current_date] = current_value
-
-        self.logger.info("Backtest run finished.")
-
-    def _get_rebalance_suggestions_from_history(self, current_date, portfolio_qty, indicator_data):
-        """A lightweight version of the rebalancing logic that uses pre-fetched data."""
-        suggestions = []
-        rebal_config = self.config.get("rebalance_technical", {})
-        drift_threshold = rebal_config.get("allocation_drift_threshold", 0.1)
-        rsi_overbought = rebal_config.get("rsi_overbought", 70)
-        rsi_oversold = rebal_config.get("rsi_oversold", 30)
-        price_vs_ma_above = rebal_config.get("price_vs_ma_above", 25)
-        price_vs_ma_near_below = rebal_config.get("price_vs_ma_near_below", 0)
-        sell_multiplier = rebal_config.get("sell_percentage_multiplier", 0.15)
-        buy_multiplier = rebal_config.get("buy_amount_multiplier", 0.75)
-
-        current_prices = {s: self.hist_prices_df.loc[current_date, (self.tracker._get_yfinance_ticker(s), 'Close')] for s in portfolio_qty}
-        current_values = {s: qty * current_prices[s] for s, qty in portfolio_qty.items()}
-        total_portfolio_value = sum(current_values.values())
-
-        if total_portfolio_value == 0: return []
-
-        for symbol in portfolio_qty.keys():
-            rsi_col_name = f"RSI_{rebal_config.get('rsi_period_weekly', 14)}"
-            ma_col_name = 'SMA_200'
-
-            rsi = indicator_data[symbol].loc[current_date, rsi_col_name]
-            ma_200 = indicator_data[symbol].loc[current_date, ma_col_name]
-            price = current_prices[symbol]
-            if pd.isna(rsi) or pd.isna(ma_200): continue
-
-            price_vs_200w_ma = ((price - ma_200) / ma_200) * 100 if ma_200 > 0 else 0
-            current_pct = current_values[symbol] / total_portfolio_value
-            target_pct = self.normalized_alloc[symbol]
-            drift = current_pct - target_pct
-
-            signal = "HOLD"
-            action_text = ""
-            if drift > drift_threshold or (rsi > rsi_overbought and price_vs_200w_ma > price_vs_ma_above):
-                signal = "SELL"
-                sell_qty_pct = min(0.1, drift * sell_multiplier)
-                action_text = f"Suggest SELL {sell_qty_pct * 100:.1f}% of position"
-            elif drift < -drift_threshold or (rsi < rsi_oversold and price_vs_200w_ma <= price_vs_ma_near_below):
-                signal = "BUY"
-                underweight_usd = (target_pct - current_pct) * total_portfolio_value
-                buy_value = underweight_usd * buy_multiplier
-                action_text = f"Suggest BUY ${buy_value:,.2f} worth"
-
-            if signal != "HOLD":
-                suggestions.append(BacktestSuggestion(symbol, signal, action_text))
-        return suggestions
-
-    def _execute_simulated_trade(self, suggestion, portfolio_qty, date, indicator_data):
-        """Executes a simulated trade based on the text suggestion."""
-        symbol = suggestion.symbol
-        price = self.hist_prices_df.loc[date, (self.tracker._get_yfinance_ticker(symbol), 'Close')]
-
-        if suggestion.signal == "SELL":
-            pct_match = re.search(r"([0-9]+\.?[0-9]*)%", suggestion.action_text)
-            if pct_match:
-                sell_pct = float(pct_match.group(1)) / 100
-                trade_qty = portfolio_qty[symbol] * sell_pct
-                portfolio_qty[symbol] -= trade_qty
-                log_entry = f"{date.date()}: SELL {trade_qty:,.4f} {symbol} @ ${price:,.2f}"
-                self.trade_log.append(log_entry)
-                self.logger.info(f"SIMULATED TRADE: {log_entry}")
-        elif suggestion.signal == "BUY":
-            usd_match = re.search(r"\$([0-9,]+\.?[0-9]*)", suggestion.action_text)
-            if usd_match:
-                buy_value_usd = float(usd_match.group(1).replace(",", ""))
-                if price > 0:
-                    trade_qty = buy_value_usd / price
-                    portfolio_qty[symbol] += trade_qty
-                    log_entry = f"{date.date()}: BUY {trade_qty:,.4f} {symbol} @ ${price:,.2f}"
-                    self.trade_log.append(log_entry)
-                    self.logger.info(f"SIMULATED TRADE: {log_entry}")
+        self.logger.info(f"Backtest completed.")
 
     def generate_report(self):
-        """Generates the final performance report, including Buy & Hold comparison."""
-        if not self.portfolio_history:
-            print("\n❌ Backtest did not run or produced no history.")
+        """Generates and prints the final performance report."""
+        if not self.portfolio_value_history:
+            print("\n--- No backtest data to generate a report ---")
             return
 
-        final_value = list(self.portfolio_history.values())[-1]
-        strategy_return_pct = ((final_value / self.initial_capital) - 1) * 100
+        results_df = pd.DataFrame(self.portfolio_value_history).set_index('date')
+        final_value = results_df['value'].iloc[-1]
+        strategy_return = (final_value - self.initial_capital) / self.initial_capital
 
-        first_valid_index = self.hist_prices_df.dropna().first_valid_index()
-        start_prices = self.hist_prices_df.loc[first_valid_index]
-        end_prices = self.hist_prices_df.iloc[-1]
+        target_allocation = self.config.get("target_allocation", {})
+        buy_hold_returns = pd.Series(0.0, index=self.data.index)
+        for asset, target_pct in target_allocation.items():
+            col = f'{asset}_Close'
+            if col in self.data.columns:
+                asset_returns = self.data[col].pct_change().fillna(0)
+                buy_hold_returns += asset_returns * target_pct
 
-        buy_and_hold_value = 0
-        for symbol, pct in self.normalized_alloc.items():
-            ticker = self.tracker._get_yfinance_ticker(symbol)
-            start_price = start_prices.get((ticker, 'Close'), 0)
-            end_price = end_prices.get((ticker, 'Close'), 0)
-            if start_price > 0:
-                initial_investment = self.initial_capital * pct
-                shares_bought = initial_investment / start_price
-                final_value_of_shares = shares_bought * end_price
-                buy_and_hold_value += final_value_of_shares
+        buy_hold_equity = (1 + buy_hold_returns).cumprod() * self.initial_capital
+        buy_hold_return = (buy_hold_equity.iloc[-1] - self.initial_capital) / self.initial_capital
 
-        buy_and_hold_return_pct = ((buy_and_hold_value / self.initial_capital) - 1) * 100 if self.initial_capital > 0 else 0
-        vs_hold_pct = strategy_return_pct - buy_and_hold_return_pct
+        if len(results_df) > 1:
+            strategy_returns_pct = results_df['value'].pct_change().fillna(0)
+            strategy_volatility = strategy_returns_pct.std() * np.sqrt(252)
+            sharpe_ratio = (strategy_returns_pct.mean() * 252) / strategy_volatility if strategy_volatility > 0 else 0
+        else:
+            strategy_volatility = 0; sharpe_ratio = 0
 
         print("\n" + "="*80)
         print("DYNAMIC REBALANCING STRATEGY - BACKTEST REPORT")
         print("="*80)
-        print(f"Initial Capital:          ${self.initial_capital:,.2f}")
-        print(f"Final Portfolio Value:    ${final_value:,.2f}")
-        print("-" * 40)
-        print(f"Strategy Total Return:    {strategy_return_pct:,.2f}%")
-        print(f"Buy & Hold Return:        {buy_and_hold_return_pct:,.2f}%")
-        print(f"Strategy Outperformance:  {vs_hold_pct:+.2f}%")
-        print("-" * 40)
-        print(f"Total Trades Executed:    {len(self.trade_log)}")
+        print(f"Initial Capital:         ${self.initial_capital:,.2f}")
+        print(f"Final Portfolio Value:   ${final_value:,.2f}")
+        print("----------------------------------------")
+        print(f"Strategy Total Return:   {strategy_return:,.2%}")
+        print(f"Buy & Hold Return:       {buy_hold_return:,.2%}")
+        print(f"Strategy Outperformance: {strategy_return - buy_hold_return:+.2%}")
+        print(f"Maximum Drawdown:        {self.max_drawdown:,.2%}")
+        print(f"Annualized Volatility:   {strategy_volatility:,.2%}")
+        print(f"Sharpe Ratio:            {sharpe_ratio:.2f}")
+        print("----------------------------------------")
+        print(f"Total Trades Executed:   {len(self.trade_log)}")
         print("="*80)
-        print("\n--- Trade Log (First 15) ---")
-        for log in self.trade_log[:15]: print(log)
-        if len(self.trade_log) > 15: print(f"... and {len(self.trade_log) - 15} more trades.")
+        print("\n--- Recent Trade Log (Last 15) ---")
+        for log_entry in self.trade_log[-15:]:
+            print(log_entry)
+        if len(self.trade_log) > 15:
+            print(f"... (showing last 15 of {len(self.trade_log)} total trades)")
         print("="*80)
