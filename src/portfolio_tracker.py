@@ -6,6 +6,7 @@ import os
 import re
 import json
 import time
+import copy
 import inspect
 import asyncio
 import logging
@@ -30,8 +31,9 @@ from binance.exceptions import BinanceAPIException, BinanceRequestException
 from config import ConfigManager
 from database import DatabaseManager
 from visualizations import Visualizer
+from symbol_mapper import SymbolMapper
 from strategy_backtester import StrategyBacktester
-import src.trading_strategies as trading_strategies
+import trading_strategies as trading_strategies
 from rebalancing_backtester import RebalancingBacktester
 from exporters import ExcelExporter, HtmlExporter, CsvExporter
 from rebalancing_logic import get_live_rebalance_suggestions
@@ -162,8 +164,7 @@ class CryptoPortfolioTracker:
         self.binance_client = self._init_binance_client()
         self.coingecko_api = self.config.get("apis", {}).get("coingecko", {})
         self.binance_api_config = self.config.get("apis", {}).get("binance", {})
-        self.symbol_mappings = self.config.get("symbol_mappings", {}).get("coingecko_ids", {})
-        self.norm_map = self.config.get("symbol_normalization_map", {})
+        self.symbol_mappings = self.config_manager.symbol_mapper
         self.stablecoin_symbols = [s.upper() for s in self.config.get("portfolio", {}).get("stablecoin_symbols", ["USDT", "USDC", "BUSD", "DAI"])]
         self.fiat_exchange_rate_cache: Dict[str, Optional[float]] = {}
         self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
@@ -220,74 +221,72 @@ class CryptoPortfolioTracker:
             self.logger.error(f"Failed to init Binance client: {e}", exc_info=True)
             return None
 
-    def _get_coingecko_price(self, coin_id: str) -> Optional[float]:
-        """Fetch current price from CoinGecko."""
-        base_url = self.coingecko_api.get("base_url"); timeout = self.coingecko_api.get("timeout", 30)
-        url = f"{base_url}/simple/price?ids={coin_id}&vs_currencies=usd"
-        try:
-            response = requests.get(url, timeout=timeout); response.raise_for_status(); data = response.json()
-            return data.get(coin_id, {}).get("usd")
-        except requests.exceptions.RequestException as e: self.logger.error(f"CoinGecko price fetch error for {coin_id}: {e}"); return None
-
     def _get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
-        """Get current prices for a list of symbols using CoinGecko (Batched with Retry).
-        Correctly handles multiple symbols mapping to the same CoinGecko ID."""
+        """
+        Get current prices for a list of symbols, using an efficient bulk discovery
+        process for any unknown symbols to avoid API rate limiting.
+        """
         prices: Dict[str, Optional[float]] = {symbol: 0.0 for symbol in symbols}
+        # Create a set of unique, uppercase symbols to work with
+        unique_symbols_to_process = set(s.upper() for s in symbols if s)
+
+        # This dictionary will hold the final mapping from a normalized symbol to its CoinGecko ID
         symbols_to_fetch_cg_ids = {}
-        unique_coingecko_ids_to_fetch = set()
+        unmapped_symbols = []
 
-        self.logger.info(f"Mapping {len(symbols)} symbols to CoinGecko IDs for price fetching...")
-        for symbol_upper in set(s.upper() for s in symbols):
-            original_case_symbol = next(s for s in symbols if s.upper() == symbol_upper)
-            coin_id = self.symbol_mappings.get(symbol_upper)
-            if not coin_id:
-                self.logger.warning(f"No CoinGecko ID mapping found for {original_case_symbol}. Price will be $0.")
-                prices[original_case_symbol] = 0.0
+        # Step 1: First pass to see which symbols are already mapped
+        for symbol in unique_symbols_to_process:
+            # We use .get() here because it does NOT trigger discovery; it only checks existing mappings.
+            coin_id = self.symbol_mappings.get(symbol)
+            if coin_id:
+                symbols_to_fetch_cg_ids[symbol] = coin_id
             else:
-                symbols_to_fetch_cg_ids[original_case_symbol] = coin_id
-                unique_coingecko_ids_to_fetch.add(coin_id)
+                unmapped_symbols.append(symbol)
 
-        if not unique_coingecko_ids_to_fetch:
+        # Step 2: If we found any unmapped symbols, trigger the efficient bulk discovery
+        if unmapped_symbols:
+            self.logger.info(f"Found {len(unmapped_symbols)} unmapped symbols. Starting discovery process...")
+            self.symbol_mappings.discover_mappings(unmapped_symbols)
+
+            # After discovery, try again to get the IDs for the symbols that were just discovered
+            for symbol in unmapped_symbols:
+                coin_id = self.symbol_mappings.get(symbol)
+                if coin_id:
+                    symbols_to_fetch_cg_ids[symbol] = coin_id
+                else:
+                    self.logger.error(f"Discovery failed for '{symbol}'. It will not be priced.")
+
+            time.sleep(2)
+
+        # Step 3: Fetch all prices in a single batch call using the IDs we've gathered
+        unique_coingecko_ids = set(symbols_to_fetch_cg_ids.values())
+        if not unique_coingecko_ids:
             self.logger.warning("No valid CoinGecko IDs to fetch prices for.")
             return prices
 
-        ids_string = ",".join(list(unique_coingecko_ids_to_fetch))
+        ids_string = ",".join(list(unique_coingecko_ids))
         base_url = self.coingecko_api.get("base_url")
+        url = f"{base_url}/simple/price"
         timeout = self.coingecko_api.get("timeout", 30)
-        url = f"{base_url}/simple/price?ids={ids_string}&vs_currencies=usd"
-        self.logger.info(f"Fetching {len(unique_coingecko_ids_to_fetch)} unique prices from CoinGecko...")
+        params = {'ids': ids_string, 'vs_currencies': 'usd'}
 
-        retries = 1
-        fetched_price_data = None
-        while retries >= 0:
-            try:
-                response = requests.get(url, timeout=timeout)
-                response.raise_for_status()
-                fetched_price_data = response.json()
-                break
-            except requests.exceptions.HTTPError as e:
-                 if e.response.status_code == 429 and retries > 0:
-                     self.logger.error(f"Rate limited (429) fetching batch prices. Waiting 60s before retry...")
-                     time.sleep(60)
-                     retries -= 1
-                 else:
-                     self.logger.error(f"HTTP error fetching batch prices: {e}")
-                     fetched_price_data = {}
-                     break
-            except requests.exceptions.RequestException as e:
-                self.logger.error(f"Error fetching batch prices from CoinGecko: {e}")
-                fetched_price_data = {}
-                break
+        self.logger.info(f"Fetching prices for {len(unique_coingecko_ids)} unique assets from CoinGecko...")
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            fetched_price_data = response.json()
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
+            return prices # Return empty prices on failure
 
-        if fetched_price_data:
-            for original_symbol, coin_id in symbols_to_fetch_cg_ids.items():
-                if coin_id in fetched_price_data and "usd" in fetched_price_data[coin_id]:
-                    prices[original_symbol] = fetched_price_data[coin_id]["usd"]
-                else:
-                    self.logger.warning(f"USD price not found for {original_symbol} (ID: {coin_id}) in CoinGecko response. Setting to $0.")
-                    prices[original_symbol] = 0.0
-        else:
-            self.logger.error("Failed to fetch any price data from CoinGecko. All prices will be $0.")
+        # Step 4: Map the fetched prices back to the original symbols from your holdings
+        for symbol_in_holdings in symbols:
+            normalized_symbol = self.symbol_mappings.normalize_symbol(symbol_in_holdings.upper())
+            coin_id = symbols_to_fetch_cg_ids.get(normalized_symbol)
+
+            if coin_id and coin_id in fetched_price_data:
+                prices[symbol_in_holdings] = fetched_price_data[coin_id].get("usd")
+
         self.logger.info("Price fetching complete.")
         return prices
 
@@ -467,65 +466,6 @@ class CryptoPortfolioTracker:
         # This is a common source of issues, ensure tickers are correct for yfinance.
         # Example: self.config.get("yfinance_ticker_map", {}).get(symbol_upper, f"{symbol_upper}-USD")
         return f"{symbol_upper}-USD"
-
-    def _calculate_technical_indicators(self, symbol: str, df_weekly: Optional[pd.DataFrame], df_daily: Optional[pd.DataFrame]) -> Dict[str, Any]:
-        indicators = {
-            "current_price": None,
-            "rsi_weekly": None,
-            "ma_200w": None,
-            "price_vs_200w_ma_percent": None
-        }
-
-        # Get RSI period from config
-        rsi_period = self.config.get("rebalance_technical", {}).get("rsi_period_weekly", 14)
-        self.logger.debug(f"Using RSI period {rsi_period} for {symbol}")
-
-        # Process Daily Data (Current Price)
-        if df_daily is not None and not df_daily.empty and 'Close' in df_daily.columns:
-            daily_close_series = df_daily['Close']
-            if not daily_close_series.empty:
-                last_daily_close_raw = daily_close_series.iloc[-1]
-                if isinstance(last_daily_close_raw, (float, int)) and pd.notna(last_daily_close_raw):
-                    indicators["current_price"] = float(last_daily_close_raw)
-                else:
-                    self.logger.warning(f"Last daily close for {symbol} was not a scalar: {last_daily_close_raw}.")
-
-        # Process Weekly Data (RSI and 200-week MA)
-        if df_weekly is not None and not df_weekly.empty and 'Close' in df_weekly.columns:
-            latest_weekly_close_raw = df_weekly['Close'].iloc[-1]
-            latest_weekly_close: Optional[float] = None
-            if isinstance(latest_weekly_close_raw, (float, int)) and pd.notna(latest_weekly_close_raw):
-                latest_weekly_close = float(latest_weekly_close_raw)
-
-            if indicators["current_price"] is None and latest_weekly_close is not None:
-                indicators["current_price"] = latest_weekly_close
-
-            # Calculate RSI
-            if len(df_weekly) > rsi_period:
-                rsi_series = df_weekly.ta.rsi(length=rsi_period)
-                if rsi_series is not None and not rsi_series.empty:
-                    last_rsi_raw = rsi_series.iloc[-1]
-                    if isinstance(last_rsi_raw, (float, int)) and pd.notna(last_rsi_raw):
-                        indicators["rsi_weekly"] = float(last_rsi_raw)
-                    else:
-                        self.logger.info(f"RSI for {symbol} was NaN or not scalar: {last_rsi_raw}.")
-                else:
-                    self.logger.info(f"RSI series calculation for {symbol} returned None or empty.")
-
-            # Calculate 200-week MA
-            if len(df_weekly) >= 200:
-                ma_200w_series = df_weekly.ta.sma(length=200)
-                if ma_200w_series is not None and not ma_200w_series.empty:
-                    ma_200w_raw = ma_200w_series.iloc[-1]
-                    if isinstance(ma_200w_raw, (float, int)) and pd.notna(ma_200w_raw):
-                        indicators["ma_200w"] = float(ma_200w_raw)
-                    else:
-                        self.logger.info(f"200w MA for {symbol} was NaN or not scalar: {ma_200w_raw}.")
-                    if indicators["ma_200w"] is not None and indicators["ma_200w"] > 0 and latest_weekly_close is not None:
-                        indicators["price_vs_200w_ma_percent"] = ((latest_weekly_close - indicators["ma_200w"]) / indicators["ma_200w"]) * 100
-
-        self.logger.debug(f"Calculated TA indicators for {symbol}: RSI={indicators['rsi_weekly']}, PriceForTA={indicators['current_price']}, MA200w={indicators['ma_200w']}")
-        return indicators
 
     def _load_strategy_state(self) -> Dict[str, Any]:
         """Loads the state of all strategies from a JSON file."""
@@ -993,13 +933,13 @@ class CryptoPortfolioTracker:
         if is_testnet:
             self.logger.warning("TESTNET MODE: Syncing SPOT TRADES ONLY. Other transaction types are not supported on the testnet.")
             tasks = [
-                asyncio.to_thread(self.fetch_binance_transactions),
+                asyncio.to_thread(self.fetch_binance_transactions, days_back=self.config.get("history_lookback_days", {}).get("trades", 90)),
             ]
         else:
             self.logger.info(f"LIVE MODE: Syncing all transaction types for target assets: {list(self.target_assets_for_sync)}")
             lookback_config = self.config.get("history_lookback_days", {})
             tasks = [
-                asyncio.to_thread(self.fetch_binance_transactions),
+                asyncio.to_thread(self.fetch_binance_transactions, days_back=lookback_config.get("trades", 90)),
                 asyncio.to_thread(self.fetch_deposit_history, days_back=lookback_config.get("deposits", 90)),
                 asyncio.to_thread(self.fetch_withdrawal_history, days_back=lookback_config.get("withdrawals", 90)),
                 asyncio.to_thread(self.fetch_p2p_usdt_buys, days_back=lookback_config.get("p2p_buys", 90)),
@@ -1140,10 +1080,10 @@ class CryptoPortfolioTracker:
         earn_balances = {}
         if not self.config_manager.is_testnet_mode:
             print("Verifying balances in Spot and Earn wallets...")
-            earn_balances = self.fetch_simple_earn_balances()
+            spot_balances_df = self.fetch_binance_balances()
+            earn_balances = self.fetch_simple_earn_balances(spot_balances_df)
         else:
             print("🟡 TESTNET MODE: Skipping Earn wallet check.")
-
 
         # 4. Pass everything to the Executor for Confirmation and Trading
         self._execute_rebalancing_trades(suggestions_df, earn_balances)
@@ -1465,16 +1405,16 @@ class CryptoPortfolioTracker:
                     free = float(b.get('free', 0.0))
                     locked = float(b.get('locked', 0.0))
                     quantity = free + locked
+
                     if quantity > 0.00000001:
-                        asset_symbol_api = b.get('asset').upper()
-                        normalized_symbol_s1 = self.norm_map.get(asset_symbol_api, asset_symbol_api)
-                        final_symbol = normalized_symbol_s1
-                        if normalized_symbol_s1.startswith('LD') and len(normalized_symbol_s1) > 2:
-                            base_equivalent = normalized_symbol_s1[2:]
-                            if normalized_symbol_s1 in self.symbol_mappings and base_equivalent in self.symbol_mappings:
-                                final_symbol = base_equivalent
-                                self.logger.debug(f"Consolidated API symbol '{asset_symbol_api}' (norm1: '{normalized_symbol_s1}') to base '{final_symbol}' based on coingecko_ids structure.")
-                        processed_balances.append({'symbol': final_symbol, 'quantity': quantity})
+                        # Get the raw symbol from the API
+                        asset_symbol_api = b.get('asset', '')
+                        final_symbol = self.symbol_mappings.normalize_symbol(asset_symbol_api)
+
+                        # Only append if the final symbol is valid (not empty)
+                        if final_symbol:
+                            processed_balances.append({'symbol': final_symbol, 'quantity': quantity})
+
 
                 if not processed_balances:
                     self.logger.info("Found raw balances, but all were zero or negligible after processing.")
@@ -1500,7 +1440,7 @@ class CryptoPortfolioTracker:
                 break
         return pd.DataFrame(columns=['symbol', 'quantity'])
 
-    def fetch_binance_transactions(self) -> List[Dict[str, Any]]:
+    def fetch_binance_transactions(self, days_back: int = 90) -> List[Dict[str, Any]]:
         if not self.binance_client:
             self.logger.warning("Binance client not initialized. Cannot fetch transactions.")
             return []
@@ -1511,7 +1451,6 @@ class CryptoPortfolioTracker:
         # # --- END TEMPORARY MODIFICATION ---
 
         transactions = []
-        norm_map = self.config.get("symbol_normalization_map", {})
 
         stablecoin_quotes = self.config.get("portfolio",{}).get("stablecoin_symbols", ["USDT"])
         crypto_quotes_from_targets = [s for s in self.config.get("portfolio", {}).get("crypto_quotes", ["BTC", "ETH"]) if s in self.target_assets_for_sync]
@@ -1534,18 +1473,18 @@ class CryptoPortfolioTracker:
             overall_latest_known_ts_for_trades = latest_ts_synthetic
 
         now_utc = datetime.datetime.now(datetime.timezone.utc)
-        lookback_days_trades = self.config.get("history_lookback_days", {}).get("trades", 90)
+        # days_back = self.config.get("history_lookback_days", {}).get("trades", 90)
 
         overall_sync_start_time_dt: datetime.datetime
         if overall_latest_known_ts_for_trades:
             # Fetch from a bit before to ensure no gaps, up to the general lookback days
             effective_start_from_db = overall_latest_known_ts_for_trades - datetime.timedelta(minutes=60) # 1 hour buffer
-            fallback_start_from_days = now_utc - datetime.timedelta(days=lookback_days_trades)
+            fallback_start_from_days = now_utc - datetime.timedelta(days=days_back)
             overall_sync_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
             self.logger.info(f"Selective sync for Binance Trades/Synthetic: Effective overall start date {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
-            overall_sync_start_time_dt = now_utc - datetime.timedelta(days=lookback_days_trades)
-            self.logger.info(f"Full sync for Binance Trades/Synthetic: Fetching last {lookback_days_trades} days from {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            overall_sync_start_time_dt = now_utc - datetime.timedelta(days=days_back)
+            self.logger.info(f"Full sync for Binance Trades/Synthetic: Fetching last {days_back} days from {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if overall_sync_start_time_dt >= now_utc:
             self.logger.info("Trade history is very recent. No new trades to fetch based on overall selective sync time.")
@@ -1648,7 +1587,7 @@ class CryptoPortfolioTracker:
                         is_buy_of_base = trade['isBuyer']
                         fee_quantity_raw = float(trade['commission'])
                         fee_currency_raw = trade['commissionAsset'].upper()
-                        normalized_fee_currency = norm_map.get(fee_currency_raw, fee_currency_raw)
+                        normalized_fee_currency = self.symbol_mappings.normalize_symbol(fee_currency_raw)
                         trade_date_str = timestamp_obj.strftime('%d-%m-%Y')
                         price_base_in_usd = 0.0
                         price_quote_in_usd_for_trade = None
@@ -1742,7 +1681,6 @@ class CryptoPortfolioTracker:
             return []
 
         deposits_data_unfiltered = []
-        norm_map = self.config.get("symbol_normalization_map", {})
         pepe_gift_config = self.config.get("pepe_gift_details", {})
         pepe_gift_symbol = pepe_gift_config.get("symbol", "PEPE").upper()
         try:
@@ -1788,7 +1726,7 @@ class CryptoPortfolioTracker:
                     self.logger.warning(f"Deposit record {i+1} missing 'coin' field (TxID: {deposit.get('txId')}). Skipping.")
                     continue
 
-                normalized_symbol = norm_map.get(symbol_original.upper(), symbol_original.upper())
+                normalized_symbol = self.symbol_mappings.normalize_symbol(symbol_original.upper())
 
                 if normalized_symbol not in self.target_assets_for_sync:
                     # self.logger.debug(f"Skipping deposit for non-target asset: {normalized_symbol}") # Optional: can be verbose
@@ -1865,7 +1803,6 @@ class CryptoPortfolioTracker:
             return []
 
         withdrawals_data_unfiltered = []
-        norm_map = self.config.get("symbol_normalization_map", {})
         cg_config = self.config.get("apis", {}).get("coingecko", {})
         cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_deposit", 1500))
 
@@ -1903,7 +1840,7 @@ class CryptoPortfolioTracker:
                     self.logger.warning(f"Withdrawal record {i+1} missing 'coin' field. Skipping. Data: {withdrawal}")
                     continue
 
-                normalized_symbol = norm_map.get(symbol_original.upper(), symbol_original.upper())
+                normalized_symbol = self.symbol_mappings.normalize_symbol(symbol_original.upper())
 
                 if normalized_symbol not in self.target_assets_for_sync:
                     # self.logger.debug(f"Skipping withdrawal for non-target asset: {normalized_symbol}")
@@ -2091,7 +2028,7 @@ class CryptoPortfolioTracker:
                                                 f"Rate: 1 {p2p_fiat_currency} = {fiat_to_usd_rate:.6f} {target_usd_currency}. "
                                                 f"USD Cost: ${usd_equivalent_of_fiat_paid:.2f} for {usdt_quantity:.2f} USDT. "
                                                 f"Effective USDT/USD Price: ${actual_usdt_price_in_usd:.6f}.")
-                                self.logger.info(f"P2P Trade {order_number}: {notes_detail}")
+                                self.logger.debug(f"P2P Trade {order_number}: {notes_detail}")
                             else:
                                 self.logger.warning(f"P2P Trade {order_number}: Could not get {p2p_fiat_currency}/{target_usd_currency} rate for {trade_date_str_yyyy_mm_dd}. Using placeholder $1.00/USDT cost.")
                                 notes_detail = f"Fiat paid: {fiat_amount_paid:.2f} {p2p_fiat_currency}. USD rate lookup failed. Using placeholder cost."
@@ -2256,7 +2193,7 @@ class CryptoPortfolioTracker:
                                 if tran_id in processed_tran_ids: continue
                                 processed_tran_ids.add(tran_id)
 
-                                normalized_symbol = self.norm_map.get(item['asset'].upper(), item['asset'].upper())
+                                normalized_symbol = self.symbol_mappings.normalize_symbol(item['asset'].upper())
                                 quantity = float(item['amount'])
                                 price_at_transfer = 1.0 # Default for USDT or if price fetch fails
                                 if normalized_symbol not in self.stablecoin_symbols:
@@ -2516,10 +2453,10 @@ class CryptoPortfolioTracker:
                     if trade.get('orderStatus') == "SUCCESS":
                         # Ensure "source": source_name is used
                         from_asset_orig = trade['fromAsset'].upper()
-                        from_asset = self.norm_map.get(from_asset_orig, from_asset_orig)
+                        from_asset = self.symbol_mappings.normalize_symbol(from_asset_orig)
                         from_amount = float(trade['fromAmount'])
                         to_asset_orig = trade['toAsset'].upper()
-                        to_asset = self.norm_map.get(to_asset_orig, to_asset_orig)
+                        to_asset = self.symbol_mappings.normalize_symbol(to_asset_orig)
                         to_amount = float(trade['toAmount'])
 
                         if not (from_asset in self.target_assets_for_sync or to_asset in self.target_assets_for_sync):
@@ -2582,55 +2519,43 @@ class CryptoPortfolioTracker:
         self.logger.info(f"Processed {len(all_convert_transactions_filtered)} new targeted individual transactions from Spot Convert History API.")
         return all_convert_transactions_filtered
 
-    def fetch_simple_earn_balances(self) -> Dict[str, float]:
-        """Fetch current balances from Binance Simple Earn Flexible products, ensuring normalized base symbols."""
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn balances.")
+    def fetch_simple_earn_balances(self, spot_balances_df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Efficiently fetch balances from Binance Simple Earn Flexible products
+        by only checking for assets that exist in the provided spot balances dataframe.
+        """
+        if not self.binance_client or spot_balances_df.empty:
+            self.logger.info("Binance client not available or no spot balances to check for Earn positions.")
             return {}
 
         earn_balances_aggregated: Dict[str, float] = {}
-        assets_in_config = list(self.symbol_mappings.keys())
-        potential_earn_assets = set()
-        for symbol_variant_config_key in assets_in_config:
-            normalized_symbol = self.norm_map.get(symbol_variant_config_key.upper(), symbol_variant_config_key.upper())
-            if not normalized_symbol.startswith('LD'):
-                 potential_earn_assets.add(normalized_symbol)
+        # Get the list of assets to check directly from the spot balances DataFrame
+        assets_to_check_api = spot_balances_df['symbol'].unique().tolist()
 
-        common_bases = ['BTC', 'ETH', 'USDT', 'SOL', 'PEPE', 'HMSTR', 'TAO', 'RENDER'] # Make sure USDT is here
-        for base in common_bases:
-            potential_earn_assets.add(base.upper())
-
-        assets_to_check_api = sorted(list(potential_earn_assets))
-        self.logger.info(f"Fetching Simple Earn Flexible balances for up to {len(assets_to_check_api)} potential base assets...")
-
+        self.logger.info(f"Fetching Simple Earn Flexible balances for the {len(assets_to_check_api)} assets found in your spot wallet...")
 
         for asset_api_name in assets_to_check_api:
             try:
-                self.logger.debug(f"Fetching Simple Earn position for {asset_api_name}...")
-                # Ensure asset_api_name is not empty
-                if not asset_api_name:
-                    self.logger.debug(f"Skipping empty asset_api_name for Simple Earn fetch.")
-                    continue
+                if not asset_api_name: continue
+
                 positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset_api_name)
 
-                if positions and isinstance(positions.get('rows'), list):
-                    total_amount_for_asset = 0.0
-                    for pos in positions['rows']:
-                        try: total_amount_for_asset += float(pos.get('totalAmount', 0.0))
-                        except (ValueError, TypeError): self.logger.warning(f"Could not parse 'totalAmount' for {asset_api_name}: {pos.get('totalAmount')}")
-
+                if positions and isinstance(positions.get('rows'), list) and positions['rows']:
+                    total_amount_for_asset = sum(float(pos.get('totalAmount', 0.0)) for pos in positions['rows'])
                     if total_amount_for_asset > 0:
-                        current_bal = earn_balances_aggregated.get(asset_api_name, 0.0)
-                        earn_balances_aggregated[asset_api_name] = current_bal + total_amount_for_asset
+                        earn_balances_aggregated[asset_api_name] = total_amount_for_asset
                         self.logger.info(f"Found {total_amount_for_asset:.8f} {asset_api_name} in Simple Earn.")
-                time.sleep(0.3) # Be kind to the API
+
+                time.sleep(0.3) # A small delay is still good practice
             except BinanceAPIException as e:
-                if e.code == -6001 or "product does not exist" in str(e).lower() or "not supported" in str(e).lower() or "invalid asset" in str(e).lower(): # Added "invalid asset"
-                     self.logger.debug(f"No Simple Earn for {asset_api_name} or asset not supported (API Info: {e}).")
-                else: self.logger.error(f"API Error Simple Earn for {asset_api_name}: {e}")
-            except Exception as e: self.logger.error(f"Unexpected error Simple Earn for {asset_api_name}: {e}", exc_info=True)
-        self.logger.debug(f"DEBUG: Balances from EARN after all processing in fetch_simple_earn_balances: {earn_balances_aggregated if earn_balances_aggregated else 'EMPTY DICT'}")
-        self.logger.info(f"Fetched {len(earn_balances_aggregated)} asset balances from Simple Earn (after normalization).")
+                if e.code in [-6001, -11001] or "not supported" in str(e).lower() or "invalid asset" in str(e).lower():
+                     self.logger.debug(f"No active Simple Earn product for {asset_api_name} or asset not supported.")
+                else:
+                     self.logger.error(f"API Error checking Simple Earn for {asset_api_name}: {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error checking Simple Earn for {asset_api_name}: {e}", exc_info=True)
+
+        self.logger.info(f"Finished checking Earn balances. Found holdings for {len(earn_balances_aggregated)} asset(s).")
         return earn_balances_aggregated
 
     def fetch_simple_earn_flexible_rewards(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -2712,7 +2637,7 @@ class CryptoPortfolioTracker:
                             continue
 
                         asset_rewarded = item.get('asset','').upper()
-                        normalized_symbol = self.norm_map.get(asset_rewarded, asset_rewarded)
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset_rewarded)
                         if normalized_symbol not in self.target_assets_for_sync:
                             continue
 
@@ -2853,7 +2778,7 @@ class CryptoPortfolioTracker:
                         processed_ids.add(purchase_id)
 
                         asset_subscribed = item.get('asset','').upper()
-                        normalized_symbol = self.norm_map.get(asset_subscribed, asset_subscribed)
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset_subscribed)
                         if normalized_symbol not in self.target_assets_for_sync:
                             continue
                         quantity = float(item.get('amount', 0.0))
@@ -2981,7 +2906,7 @@ class CryptoPortfolioTracker:
                         processed_ids.add(redeem_id)
 
                         asset_redeemed = item.get('asset','').upper()
-                        normalized_symbol = self.norm_map.get(asset_redeemed, asset_redeemed)
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset_redeemed)
                         if normalized_symbol not in self.target_assets_for_sync:
                             continue
                         quantity = float(item.get('amount', 0.0))
@@ -3107,7 +3032,7 @@ class CryptoPortfolioTracker:
 
                     asset_received = item.get('asset','').upper()
                     if not asset_received: self.logger.warning(f"Skipping dividend item with missing asset: {item}"); continue
-                    normalized_symbol = self.norm_map.get(asset_received, asset_received)
+                    normalized_symbol = self.symbol_mappings.normalize_symbol(asset_received)
                     if normalized_symbol not in self.target_assets_for_sync:
                         continue
                     quantity = float(item.get('amount', 0.0))
@@ -3238,7 +3163,7 @@ class CryptoPortfolioTracker:
                             processed_txn_ids_this_run.add(txn_id)
 
                             asset = item.get('asset','').upper()
-                            normalized_symbol = self.norm_map.get(asset, asset)
+                            normalized_symbol = self.symbol_mappings.normalize_symbol(asset)
                             if normalized_symbol not in self.target_assets_for_sync:
                                 continue
                             quantity = float(item.get('amount', 0.0))
@@ -3351,30 +3276,35 @@ class CryptoPortfolioTracker:
         """
         self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
 
-        # 1. Fetch balances from both wallets
+        # 1. Fetch balances
         cost_basis_df = self.db_manager.get_holdings()
-        # This is the total balance from the main account endpoint
         total_api_df = self.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
-        earn_dict = self.fetch_simple_earn_balances()
-        earn_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
+
+        # Default to an empty DataFrame for Earn balances.
+        earn_df = pd.DataFrame(columns=['symbol', 'earn_quantity'])
+
+        # Only attempt to fetch from Simple Earn if NOT in testnet mode.
+        if not self.config_manager.is_testnet_mode:
+            earn_dict = self.fetch_simple_earn_balances(total_api_df)
+            if earn_dict:
+                 earn_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
+        else:
+            self.logger.info("TESTNET MODE: Skipping Simple Earn balance fetch during metrics calculation.")
 
         # 2. Merge the dataframes
         holdings_df = pd.merge(total_api_df, earn_df, on='symbol', how='outer').fillna(0)
+        holdings_df['earn_quantity'] = holdings_df['earn_quantity'].fillna(0.0)
 
         # For each asset, the true total quantity is the larger of the two values reported by the APIs.
-        # This handles the discrepancy and correctly reflects that the Earn balance is the true total if an asset is staked.
         holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
 
-        # 4. Now that we have a definitive total, the breakdown is simple and robust.
         holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
-
         holdings_df = holdings_df[holdings_df['total_quantity'] > 0.00000001].reset_index(drop=True)
 
         if holdings_df.empty:
             self.logger.warning("No non-zero holdings found. Portfolio value is $0.")
             return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
 
-        # Merge cost basis and price data
         if not cost_basis_df.empty:
             holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
         holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
@@ -3382,7 +3312,6 @@ class CryptoPortfolioTracker:
         prices = self._get_current_prices(holdings_df['symbol'].tolist())
         holdings_df['current_price'] = holdings_df['symbol'].map(prices).fillna(0.0)
 
-        # Perform all financial calculations
         holdings_df['value_usd'] = holdings_df['total_quantity'] * holdings_df['current_price']
         holdings_df['cost_basis_total'] = holdings_df['total_quantity'] * holdings_df['average_cost_basis']
         holdings_df['unrealized_pl_usd'] = holdings_df['value_usd'] - holdings_df['cost_basis_total']
@@ -3546,11 +3475,26 @@ class CryptoPortfolioTracker:
         print("="*88)
 
     def print_configuration(self):
-        """Print the current configuration (excluding sensitive data)."""
+        """Prints a security-redacted version of the current configuration."""
         print("\n" + "="*50 + "\n⚙️ Current Configuration\n" + "="*50)
-        safe_config = self.config.copy()
-        if "api_keys" in safe_config: safe_config["api_keys"] = {k: '********' for k in safe_config["api_keys"]}
-        print(json.dumps(safe_config, indent=2) + "\n" + "="*50)
+
+        # Use deepcopy to ensure we don't accidentally modify the live config object
+        safe_config = copy.deepcopy(self.config)
+
+        # Redact main API keys
+        if "api_keys" in safe_config:
+            safe_config["api_keys"] = {k: '********' for k in safe_config["api_keys"]}
+
+        # --- FIX: Redact sub-account keys as well ---
+        if "sub_accounts" in safe_config:
+            for account in safe_config["sub_accounts"]:
+                if "binance_key" in account:
+                    account["binance_key"] = "********"
+                if "binance_secret" in account:
+                    account["binance_secret"] = "********"
+
+        print(json.dumps(safe_config, indent=2))
+        print("="*50)
 
     def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
     def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
@@ -3563,9 +3507,12 @@ class CryptoPortfolioTracker:
             try: self.binance_client.ping(); print("✅ Binance Connection: SUCCESS")
             except Exception as e: print(f"❌ Binance Connection: FAILED ({e})")
         else: print("⚠️ Binance Connection: SKIPPED (Failed to Initialize Client/No API keys)")
-        test_id = list(self.symbol_mappings.values())[0] if self.symbol_mappings else 'bitcoin'
-        price = self._get_coingecko_price(test_id)
-        if price: print(f"✅ CoinGecko Connection: SUCCESS ({test_id.capitalize()} price: ${price})")
+
+        test_id = 'BTC'
+        prices = self._get_current_prices([test_id])
+        price = prices.get(test_id)
+
+        if price: print(f"✅ CoinGecko Connection: SUCCESS ({test_id.upper()} price: ${price})")
         else: print("❌ CoinGecko Connection: FAILED")
         print("-" * 30)
 

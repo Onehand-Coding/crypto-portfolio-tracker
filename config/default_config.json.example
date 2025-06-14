@@ -68,30 +68,6 @@
       "buy_amount_multiplier": 1.0
     }
   },
-  "symbol_mappings": {
-    "coingecko_ids": {
-      "USDT": "tether",
-      "LDUSDT": "tether",
-      "BTC": "bitcoin",
-      "LDBTC": "bitcoin",
-      "ETH": "ethereum",
-      "LDETH": "ethereum",
-      "SOL": "solana",
-      "LDSOL": "solana",
-      "RENDER": "render-token",
-      "LDRENDER": "render-token",
-      "TAO": "bittensor",
-      "LDTAO": "bittensor",
-      "ONDO": "ondo-finance",
-      "LDONDO": "ondo-finance",
-      "AVAX": "avalanche-2",
-      "LDAVAX": "avalanche-2",
-      "LINK": "chainlink",
-      "LDLINK": "chainlink",
-      "PEPE": "pepe",
-      "LDPEPE": "pepe"
-    }
-  },
   "symbol_normalization_map": {
     "RNDR": "RENDER"
   },

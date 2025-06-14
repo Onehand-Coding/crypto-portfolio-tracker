@@ -111,8 +111,8 @@ def show_interactive_menu():
     print("9. 📋 Export Reports Only")
     print("10. 📈 Generate Charts Only")
     print("11. 💾 Export Data Backup")
-    print("12. ⚙️  View Configuration")
-    print("13. 🧹 Clean Old Data")
+    print("12. 🧹 Clean Old Data")
+    print("13. ⚙️  View Configuration")
     print("14. 🔧 Test API Connections")
     print("15. ❌ Exit")
     print("="*50)
@@ -210,14 +210,14 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 input("\n✅ CSV Backup completed. Press Enter to continue...")
 
             elif choice == 12:
-                print("\n⚙  Current Configuration:")
-                tracker.print_configuration()
-                input("\nPress Enter to continue...")
-
-            elif choice == 13:
                 print("\n🧹 Cleaning old data...")
                 tracker.cleanup_old_data()
                 input("\n✅ Cleanup completed. Press Enter to continue...")
+
+            elif choice == 13:
+                print("\n⚙  Current Configuration:")
+                tracker.print_configuration()
+                input("\nPress Enter to continue...")
 
             elif choice == 14:
                 print("\n🔧 Testing API connections...")

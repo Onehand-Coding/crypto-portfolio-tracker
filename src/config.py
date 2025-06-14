@@ -6,11 +6,13 @@ Handles loading configuration from environment variables, files, and defaults.
 import os
 import json
 import logging
+import colorlog
 import logging.handlers
 from pathlib import Path
-from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
-import colorlog
+from typing import Dict, Any, Optional, List
+
+from symbol_mapper import SymbolMapper
 
 
 class ConfigManager:
@@ -45,6 +47,8 @@ class ConfigManager:
 
         # Determine testnet status from environment
         self.is_testnet_mode: bool = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
+
+        self.symbol_mapper = SymbolMapper(self.config)
 
         self._create_directories()
 

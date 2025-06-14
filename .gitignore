@@ -4,3 +4,4 @@ logs/
 data/
 *.sublime-*
 .env
+default_config.json
