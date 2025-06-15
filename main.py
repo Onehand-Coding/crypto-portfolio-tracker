@@ -10,7 +10,10 @@ import logging
 import platform
 import argparse
 import warnings
+import colorlog
+import logging.handlers
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 # Suppress the UserWarning from the pandas_ta library right away.
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
@@ -19,7 +22,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from portfolio_tracker import CryptoPortfolioTracker
-from config import setup_logging, ConfigManager
+from config import ConfigManager
 
 
 def clear_screen() -> None:
@@ -238,85 +241,116 @@ def run_interactive_mode(tracker: CryptoPortfolioTracker):
             input("Press Enter to continue...")
 
 
+def setup_logging(level: str = "INFO", config: Optional[Dict[str, Any]] = None):
+    """
+    Setup application logging. Can be called multiple times.
+    It first clears existing handlers to allow for reconfiguration.
+    """
+    log_level = getattr(logging, level.upper(), logging.INFO)
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    root_logger = logging.getLogger()
+
+    # Clear any existing handlers to prevent duplicate messages
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+
+    root_logger.setLevel(log_level)
+
+    # If a full config dict is provided, use it for detailed setup
+    if config:
+        log_format = config.get("format", log_format)
+        if config.get("console_config", {}).get("enabled", True):
+            handler_format = colorlog.ColoredFormatter(
+                f"%(log_color)s{log_format}",
+                log_colors={'DEBUG': 'cyan', 'INFO': 'green', 'WARNING': 'yellow', 'ERROR': 'red', 'CRITICAL': 'red,bg_white'}
+            )
+            console_handler = colorlog.StreamHandler()
+            console_handler.setFormatter(handler_format)
+            root_logger.addHandler(console_handler)
+
+        file_config = config.get("file_config", {})
+        if file_config.get("enabled", True):
+            log_path = Path(file_config.get("path", "logs/portfolio_tracker.log"))
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            max_size = file_config.get("max_size_mb", 10) * 1024 * 1024
+            backup_count = file_config.get("backup_count", 5)
+            file_handler = logging.handlers.RotatingFileHandler(log_path, maxBytes=max_size, backupCount=backup_count)
+            file_handler.setFormatter(logging.Formatter(log_format))
+            root_logger.addHandler(file_handler)
+    else:
+        # Otherwise, perform a basic console-only setup for initial startup
+        console_handler = colorlog.StreamHandler()
+        console_handler.setFormatter(colorlog.ColoredFormatter(f"%(log_color)s{log_format}"))
+        root_logger.addHandler(console_handler)
+
+
 def main():
     """Main function"""
     parser = create_argument_parser()
     args = parser.parse_args()
 
-    # Step 1: Instantiate the new ConfigManager. It handles all config loading internally.
-    manager = ConfigManager(args.config)
-    config_data = manager.config # Get the non-sensitive config dict for logging setup
-
-    # Determine the final log level
-    log_level = config_data.get("logging", {}).get("level", "INFO")
+    # Step 1: Perform a basic logging setup immediately to capture startup messages
+    log_level = "INFO"
     if args.verbose:
         log_level = "DEBUG"
     elif args.quiet:
         log_level = "WARNING"
+    setup_logging(level=log_level) # Basic console setup
 
-    # Setup logging
-    setup_logging(config=config_data.get("logging"), level=log_level)
-
+    # Define logger after basic setup so initial messages can be captured
     logger = logging.getLogger(__name__)
-    logger.info("Starting Crypto Portfolio Tracker")
 
     try:
-        # Step 2: Pass the entire ConfigManager instance to the tracker.
+        # Step 2: Create the ConfigManager.
+        manager = ConfigManager(args.config)
+
+        # Step 3: Re-configure logging with the full configuration from the loaded file.
+        setup_logging(level=log_level, config=manager.config.get("logging"))
+
+        logger.info("Starting Crypto Portfolio Tracker")
+
         tracker = CryptoPortfolioTracker(config_manager=manager)
 
         if args.sync_only:
-            logger.info("Running sync-only mode")
             asyncio.run(tracker.sync_data())
             print("✅ Data synchronization completed")
         elif args.export_only:
-            logger.info("Running export-only mode")
             metrics = tracker.calculate_portfolio_metrics()
-            if "error" in metrics:
-                print(f"❌ Error calculating metrics: {metrics['error']}")
-            else:
+            if "error" not in metrics:
                 export_performed = False
-                if args.format == "excel" or args.format == "all":
-                    if tracker.config.get("exports",{}).get("formats",{}).get("excel",{}).get("enabled", False):
-                        tracker.export_to_excel(metrics)
-                        export_performed = True
-                if args.format == "html" or args.format == "all":
-                    if tracker.config.get("exports",{}).get("formats",{}).get("html",{}).get("enabled", False):
-                        tracker.export_to_html(metrics)
-                        export_performed = True
-                if args.format == "csv" or args.format == "all":
-                    if tracker.config.get("exports",{}).get("formats",{}).get("csv",{}).get("enabled", False):
-                        tracker.export_csv_backup()
-                        export_performed = True
-
-                if export_performed:
-                    print("✅ Export completed (for enabled formats).")
-                else:
-                    print("⚠️ No export formats enabled or specified for export-only mode.")
-        elif args.charts_only:
-            logger.info("Running charts-only mode")
-            metrics = tracker.calculate_portfolio_metrics()
-            if "error" in metrics:
-                print(f"❌ Error calculating metrics: {metrics['error']}")
+                if args.format in ["excel", "all"] and tracker.config.get("exports",{}).get("formats",{}).get("excel",{}).get("enabled", False):
+                    tracker.export_to_excel(metrics)
+                    export_performed = True
+                if args.format in ["html", "all"] and tracker.config.get("exports",{}).get("formats",{}).get("html",{}).get("enabled", False):
+                    tracker.export_to_html(metrics)
+                    export_performed = True
+                if args.format in ["csv", "all"] and tracker.config.get("exports",{}).get("formats",{}).get("csv",{}).get("enabled", False):
+                    tracker.export_csv_backup()
+                    export_performed = True
+                if export_performed: print("✅ Export completed.")
             else:
+                print(f"❌ Error calculating metrics: {metrics['error']}")
+        elif args.charts_only:
+            metrics = tracker.calculate_portfolio_metrics()
+            if "error" not in metrics:
                 tracker.create_portfolio_charts(metrics)
-                print("✅ Charts generated (if data available).")
+                print("✅ Charts generated.")
+            else:
+                print(f"❌ Error calculating metrics: {metrics['error']}")
         else:
             run_interactive_mode(tracker)
 
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye!")
-        logging.info("Application interrupted by user")
-    except FileNotFoundError as e:
-        logging.error(f"Configuration file not found or path error: {e}", exc_info=True)
-        print(f"\n💥 Configuration Error: {e}")
-        print("Please ensure your config/config.json or config/default_config.json file exists.")
+        if 'logger' in locals(): logging.info("Application interrupted by user")
     except Exception as e:
-        logging.error(f"Fatal error in main execution: {e}", exc_info=True)
+        if 'logger' in locals():
+            logger.error(f"Fatal error in main execution: {e}", exc_info=True)
+        else:
+            print(f"A fatal error occurred before logger was configured: {e}")
         print(f"\n💥 A fatal error occurred: {e}")
-        print("Please check logs for detailed error information.")
-        sys.exit(1)
     finally:
-        logging.info("Application finished")
+        if 'logger' in locals(): logging.info("Application finished")
 
 
 if __name__ == "__main__":

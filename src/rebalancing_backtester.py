@@ -125,6 +125,11 @@ class RebalancingBacktester:
                     action_value_usd = trade['action_usd_value']
                     min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
 
+                    # A price of zero or None means the asset likely didn't exist yet on this simulation date.
+                    if price is None or price < 0.00001:
+                        self.logger.warning(f"SIM: {sim_date.date()}: Skipping {signal} for {asset} due to missing or invalid price data (${price}).")
+                        continue
+
                     if action_value_usd < min_trade_usd: continue
 
                     if signal == 'SELL' and portfolio.get(asset, 0) > 0 and price > 0:

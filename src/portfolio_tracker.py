@@ -2544,7 +2544,7 @@ class CryptoPortfolioTracker:
                     total_amount_for_asset = sum(float(pos.get('totalAmount', 0.0)) for pos in positions['rows'])
                     if total_amount_for_asset > 0:
                         earn_balances_aggregated[asset_api_name] = total_amount_for_asset
-                        self.logger.info(f"Found {total_amount_for_asset:.8f} {asset_api_name} in Simple Earn.")
+                        self.logger.debug(f"Found {total_amount_for_asset:.8f} {asset_api_name} in Simple Earn.")
 
                 time.sleep(0.3) # A small delay is still good practice
             except BinanceAPIException as e:
@@ -2555,7 +2555,7 @@ class CryptoPortfolioTracker:
             except Exception as e:
                 self.logger.error(f"Unexpected error checking Simple Earn for {asset_api_name}: {e}", exc_info=True)
 
-        self.logger.info(f"Finished checking Earn balances. Found holdings for {len(earn_balances_aggregated)} asset(s).")
+        self.logger.info(f"Finished checking Earn balances. Found holdings for {len(earn_balances_aggregated)} " + ("asset" if len(earn_balances_aggregated) <= 1 else "assets"))
         return earn_balances_aggregated
 
     def fetch_simple_earn_flexible_rewards(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -3307,6 +3307,9 @@ class CryptoPortfolioTracker:
 
         if not cost_basis_df.empty:
             holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
+        else:
+            # If there's no cost basis data, create the column and fill it with zeros
+            holdings_df['average_cost_basis'] = 0.0
         holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
 
         prices = self._get_current_prices(holdings_df['symbol'].tolist())

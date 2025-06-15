@@ -24,17 +24,28 @@ class ConfigManager:
     def __init__(self, config_path: Optional[str] = None):
         """Initialize and load all configurations."""
         self.project_root = Path(__file__).parent.parent
-        self.config_file_path = config_path or self.project_root / "config" / "config.json"
+        self.config_file_path = config_path or self.project_root / "config" / "default_config.json"
         self.env_path = self.project_root / ".env"
 
-        # Load environment variables from .env file
         load_dotenv(self.env_path)
 
-        # Load non-sensitive settings from JSON config file
         self.config: Dict[str, Any] = self._load_json_config()
+
+        # Determine testnet status from environment *before* resolving paths
+        self.is_testnet_mode: bool = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
+
+        # If in testnet mode, swap the database path with the testnet path
+        if self.is_testnet_mode:
+            logging.warning("TESTNET mode active. Switching to testnet database.")
+            db_config = self.config.get("database", {})
+            testnet_db_path = db_config.get("testnet_path")
+            if testnet_db_path:
+                db_config["path"] = testnet_db_path
+            else:
+                logging.warning("Testnet mode is active, but no 'testnet_path' found in database config.")
+
         self.config = self._resolve_paths(self.config)
 
-        # Load sensitive keys directly from environment variables
         self.main_api_keys: Dict[str, Optional[str]] = {
             "api_key": os.getenv("MAIN_API_KEY"),
             "api_secret": os.getenv("MAIN_API_SECRET")
@@ -44,9 +55,6 @@ class ConfigManager:
             "api_secret": os.getenv("TESTNET_API_SECRET")
         }
         self.sub_accounts: List[Dict[str, Any]] = self._load_sub_accounts()
-
-        # Determine testnet status from environment
-        self.is_testnet_mode: bool = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
 
         self.symbol_mapper = SymbolMapper(self.config)
 
@@ -138,53 +146,3 @@ class ConfigManager:
         ]
         for path in paths_to_create:
             path.mkdir(parents=True, exist_ok=True)
-
-
-def setup_logging(level: str = "INFO", config: Optional[Dict[str, Any]] = None):
-    """Setup application logging"""
-    if config is None:
-        # This will work now because load_config no longer tries to log prematurely
-        temp_config_manager = ConfigManager()
-        config = temp_config_manager.config.get("logging", {})
-
-    log_level = getattr(logging, level.upper(), logging.INFO)
-    log_format = config.get("format", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    root_logger = logging.getLogger()
-
-    if root_logger.hasHandlers():
-        root_logger.handlers.clear()
-
-    root_logger.setLevel(log_level)
-
-    if config.get("console_config", {}).get("enabled", True):
-        handler_format = colorlog.ColoredFormatter(
-            f"%(log_color)s{log_format}",
-            log_colors={
-                'DEBUG': 'cyan', 'INFO': 'green', 'WARNING': 'yellow',
-                'ERROR': 'red', 'CRITICAL': 'red,bg_white',
-            }
-        )
-        console_handler = colorlog.StreamHandler()
-        console_handler.setFormatter(handler_format)
-        root_logger.addHandler(console_handler)
-
-    file_config = config.get("file_config", {})
-    if file_config.get("enabled", True):
-        log_path = Path(file_config.get("path", "logs/portfolio_tracker.log"))
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        max_size = file_config.get("max_size_mb", 10) * 1024 * 1024
-        backup_count = file_config.get("backup_count", 5)
-        file_handler = logging.handlers.RotatingFileHandler(
-            log_path, maxBytes=max_size, backupCount=backup_count
-        )
-        file_handler.setFormatter(logging.Formatter(log_format))
-        root_logger.addHandler(file_handler)
-
-    # This will now be the first message logged by the configured logger
-    logging.info("Logging setup complete.")
-
-
-def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """Load configuration for the application"""
-    manager = ConfigManager(config_path)
-    return manager.config
