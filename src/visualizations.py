@@ -2,14 +2,16 @@
 Visualizations Module
 Handles creating charts and graphs for portfolio analysis.
 """
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
 import logging
 from pathlib import Path
 from typing import Dict, Any
 
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 logger = logging.getLogger(__name__)
+
 
 class Visualizer:
     """Manages creation of portfolio visualizations."""

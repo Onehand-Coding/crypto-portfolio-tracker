@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from typing import Dict, Any, Optional
 
-from crypto_trend_analyzer import CryptoTrendAnalyzer
+from src.crypto_trend_analyzer import CryptoTrendAnalyzer
 
 
 class StrategyBacktester:

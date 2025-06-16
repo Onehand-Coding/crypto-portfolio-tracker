@@ -2,7 +2,7 @@ import pandas as pd
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 
-from crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
+from src.crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 async def get_live_rebalance_suggestions(
     analyzer: CryptoTrendAnalyzer, portfolio_df: pd.DataFrame, config: Dict[str, Any]

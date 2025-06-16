@@ -6,8 +6,9 @@ import pandas as pd
 import yfinance as yf
 import pandas_ta as ta
 
-from rebalancing_logic import get_backtest_rebalance_suggestions
-from crypto_trend_analyzer import CryptoTrendAnalyzer
+from src.rebalancing_logic import get_backtest_rebalance_suggestions
+from src.crypto_trend_analyzer import CryptoTrendAnalyzer
+
 
 class RebalancingBacktester:
     """

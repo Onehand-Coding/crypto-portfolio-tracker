@@ -28,16 +28,18 @@ from binance.client import Client
 from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
-from config import ConfigManager
-from database import DatabaseManager
-from visualizations import Visualizer
-from symbol_mapper import SymbolMapper
-from strategy_backtester import StrategyBacktester
-import trading_strategies as trading_strategies
-from rebalancing_backtester import RebalancingBacktester
-from exporters import ExcelExporter, HtmlExporter, CsvExporter
-from rebalancing_logic import get_live_rebalance_suggestions
-from crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
+from src.config import ConfigManager
+from src.database import DatabaseManager
+from src.visualizations import Visualizer
+from src.symbol_mapper import SymbolMapper
+from src.price_enricher import PriceEnricher
+from src.binance_fetcher import BinanceFetcher
+import src.trading_strategies as trading_strategies
+from src.strategy_backtester import StrategyBacktester
+from src.rebalancing_backtester import RebalancingBacktester
+from src.exporters import ExcelExporter, HtmlExporter, CsvExporter
+from src.rebalancing_logic import get_live_rebalance_suggestions
+from src.crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 logger = logging.getLogger(__name__)
 
@@ -150,36 +152,40 @@ class CryptoPortfolioTracker:
     """Main class for the crypto portfolio tracker."""
 
     def __init__(self, config_manager: ConfigManager):
-        """Initialize the tracker with a pre-loaded configuration manager."""
+        """Initialize the tracker and its specialist components."""
         self.config_manager = config_manager
         self.config = self.config_manager.config
         self.logger = logging.getLogger(__name__)
+
+        # --- Set up API keys and sub accounts ---
         self.config['api_keys'] = self.config_manager.main_api_keys
         self.config['sub_accounts'] = self.config_manager.sub_accounts
+
+        # --- Initialize Core Components ---
         self.db_manager = DatabaseManager(self.config)
+        self.symbol_mappings = self.config_manager.symbol_mapper
+        self.binance_client = self._init_binance_client()
+
+        # --- Initialize Caches ---
+        self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.coingecko_price_cache = Cache(str(self.cache_dir / "coingecko_historical"))
+
+        # --- Instantiate our new specialist classes ---
+        self.fetcher = BinanceFetcher(self.binance_client, self.symbol_mappings, self.config)
+        self.enricher = PriceEnricher(self.symbol_mappings, self.config, self.coingecko_price_cache)
+
+        # --- Initialize other components ---
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
         self.csv_exporter = CsvExporter(self.config)
         self.visualizer = Visualizer(self.config)
-        self.binance_client = self._init_binance_client()
-        self.coingecko_api = self.config.get("apis", {}).get("coingecko", {})
-        self.binance_api_config = self.config.get("apis", {}).get("binance", {})
-        self.symbol_mappings = self.config_manager.symbol_mapper
-        self.stablecoin_symbols = [s.upper() for s in self.config.get("portfolio", {}).get("stablecoin_symbols", ["USDT", "USDC", "BUSD", "DAI"])]
-        self.fiat_exchange_rate_cache: Dict[str, Optional[float]] = {}
-        self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.coingecko_historical_price_disk_cache = Cache(str(self.cache_dir / "coingecko_historical"))
-        self.logger.info(f"Disk cache for CoinGecko historical prices initialized at: {self.cache_dir / 'coingecko_historical'}")
-        self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_ohlcv"))
-        self.logger.info(f"Disk cache for yfinance historical data initialized at: {self.cache_dir / 'yfinance_ohlcv'}")
-        self.yfinance_config = self.config.get("apis", {}).get("yfinance", {})
-        target_coins_from_config = list(self.config.get("target_allocation", {}).keys())
-        self.target_assets_for_sync = set(s.upper() for s in target_coins_from_config)
-        self.target_assets_for_sync.add("USDT")
+
+        # --- Initialize strategy state ---
         self.strategy_state_path = self.cache_dir.parent / "strategy_state.json"
         self.strategy_states = self._load_strategy_state()
-        self.logger.info(f"Tracker initialized.")
+
+        self.logger.info("Tracker and all components initialized.")
 
     def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
         """Initialize and return Binance client with robust session and retries."""
@@ -223,71 +229,48 @@ class CryptoPortfolioTracker:
 
     def _get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """
-        Get current prices for a list of symbols, using an efficient bulk discovery
-        process for any unknown symbols to avoid API rate limiting.
+        Get current prices for a list of symbols, with a simple retry for rate limiting.
         """
+        if not symbols:
+            return {}
+
         prices: Dict[str, Optional[float]] = {symbol: 0.0 for symbol in symbols}
-        # Create a set of unique, uppercase symbols to work with
-        unique_symbols_to_process = set(s.upper() for s in symbols if s)
+        coingecko_config = self.config.get("apis", {}).get("coingecko", {})
 
-        # This dictionary will hold the final mapping from a normalized symbol to its CoinGecko ID
-        symbols_to_fetch_cg_ids = {}
-        unmapped_symbols = []
-
-        # Step 1: First pass to see which symbols are already mapped
-        for symbol in unique_symbols_to_process:
-            # We use .get() here because it does NOT trigger discovery; it only checks existing mappings.
-            coin_id = self.symbol_mappings.get(symbol)
-            if coin_id:
-                symbols_to_fetch_cg_ids[symbol] = coin_id
-            else:
-                unmapped_symbols.append(symbol)
-
-        # Step 2: If we found any unmapped symbols, trigger the efficient bulk discovery
-        if unmapped_symbols:
-            self.logger.info(f"Found {len(unmapped_symbols)} unmapped symbols. Starting discovery process...")
-            self.symbol_mappings.discover_mappings(unmapped_symbols)
-
-            # After discovery, try again to get the IDs for the symbols that were just discovered
-            for symbol in unmapped_symbols:
-                coin_id = self.symbol_mappings.get(symbol)
-                if coin_id:
-                    symbols_to_fetch_cg_ids[symbol] = coin_id
-                else:
-                    self.logger.error(f"Discovery failed for '{symbol}'. It will not be priced.")
-
-            time.sleep(2)
-
-        # Step 3: Fetch all prices in a single batch call using the IDs we've gathered
-        unique_coingecko_ids = set(symbols_to_fetch_cg_ids.values())
-        if not unique_coingecko_ids:
-            self.logger.warning("No valid CoinGecko IDs to fetch prices for.")
+        ids_to_fetch = {self.symbol_mappings.get(s.upper()) for s in symbols if self.symbol_mappings.get(s.upper())}
+        if not ids_to_fetch:
             return prices
 
-        ids_string = ",".join(list(unique_coingecko_ids))
-        base_url = self.coingecko_api.get("base_url")
-        url = f"{base_url}/simple/price"
-        timeout = self.coingecko_api.get("timeout", 30)
+        ids_string = ",".join(list(ids_to_fetch))
+        url = f"{coingecko_config.get('base_url')}/simple/price"
         params = {'ids': ids_string, 'vs_currencies': 'usd'}
 
-        self.logger.info(f"Fetching prices for {len(unique_coingecko_ids)} unique assets from CoinGecko...")
-        try:
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            fetched_price_data = response.json()
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
-            return prices # Return empty prices on failure
+        for attempt in range(3): # Try up to 3 times
+            try:
+                self.logger.info(f"Fetching current prices for {len(ids_to_fetch)} unique assets...")
+                response = requests.get(url, params=params, timeout=coingecko_config.get("timeout", 30))
+                response.raise_for_status()
+                fetched_price_data = response.json()
 
-        # Step 4: Map the fetched prices back to the original symbols from your holdings
-        for symbol_in_holdings in symbols:
-            normalized_symbol = self.symbol_mappings.normalize_symbol(symbol_in_holdings.upper())
-            coin_id = symbols_to_fetch_cg_ids.get(normalized_symbol)
+                for symbol in symbols:
+                    coin_id = self.symbol_mappings.get(symbol.upper())
+                    if coin_id in fetched_price_data:
+                        prices[symbol] = fetched_price_data[coin_id].get("usd")
 
-            if coin_id and coin_id in fetched_price_data:
-                prices[symbol_in_holdings] = fetched_price_data[coin_id].get("usd")
+                return prices # Return on success
 
-        self.logger.info("Price fetching complete.")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429 and attempt < 2:
+                    self.logger.warning("Rate limited fetching current prices. Waiting 10 seconds before retrying...")
+                    time.sleep(10)
+                    continue # Go to the next attempt
+                else:
+                    self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
+                    return prices
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
+                return prices
+
         return prices
 
     def _get_coingecko_historical_price(self, coin_id: str, date_str: str) -> Optional[float]:
@@ -926,58 +909,81 @@ class CryptoPortfolioTracker:
         return suggestions_df
 
     async def sync_data(self):
-        """Asynchronously synchronize data from all sources, and update holdings."""
-        self.logger.info("Starting data synchronization...")
-        is_testnet = self.config_manager.is_testnet_mode
+        """Orchestrates the Gather, Enrich, and Process pipeline with improved logging."""
+        self.logger.info("Starting data synchronization pipeline...")
+        lookback_config = self.config.get("history_lookback_days", {})
 
-        if is_testnet:
-            self.logger.warning("TESTNET MODE: Syncing SPOT TRADES ONLY. Other transaction types are not supported on the testnet.")
-            tasks = [
-                asyncio.to_thread(self.fetch_binance_transactions, days_back=self.config.get("history_lookback_days", {}).get("trades", 90)),
-            ]
+        # Define all simple data sources and their configurations
+        data_sources = {
+            "Binance Trade": {"fetcher": self.fetcher.fetch_binance_transactions, "days": lookback_config.get("trades", 90)},
+            "Binance Deposit": {"fetcher": self.fetcher.fetch_deposit_history, "days": lookback_config.get("deposits", 90)},
+            "Binance Withdrawal": {"fetcher": self.fetcher.fetch_withdrawal_history, "days": lookback_config.get("withdrawals", 90)},
+            "Binance P2P Buy": {"fetcher": self.fetcher.fetch_p2p_usdt_buys, "days": lookback_config.get("p2p_buys", 90)},
+            "Binance Convert": {"fetcher": self.fetcher.fetch_spot_convert_history, "days": lookback_config.get("spot_convert_history", 90)},
+            "Binance Dividend": {"fetcher": self.fetcher.fetch_dividend_history, "days": lookback_config.get("dividend_history", 90)},
+            "Binance Simple Earn Reward": {"fetcher": self.fetcher.fetch_simple_earn_rewards, "days": lookback_config.get("simple_earn_rewards", 90)},
+            "Binance Simple Earn Subscription": {"fetcher": self.fetcher.fetch_simple_earn_subscriptions, "days": lookback_config.get("simple_earn_subscriptions", 90)},
+            "Binance Simple Earn Redemption": {"fetcher": self.fetcher.fetch_simple_earn_redemptions, "days": lookback_config.get("simple_earn_redemptions", 90)},
+        }
+
+        fetcher_tasks = []
+        for source, config in data_sources.items():
+            latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source)
+            if latest_known_ts:
+                self.logger.info(f"✅ History found for '{source}'. Initiating selective sync from {latest_known_ts.strftime('%Y-%m-%d %H:%M')}.")
+            else:
+                self.logger.info(f"ℹ️ No history found for '{source}'. Initiating full sync for the last {config['days']} days.")
+
+            fetcher_tasks.append(
+                asyncio.to_thread(config["fetcher"], days_back=config['days'], latest_known_ts=latest_known_ts)
+            )
+
+        # Special handling for Staking History, which needs a map of timestamps
+        staking_ts_map = {
+            "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source("Binance Staking Subscription"),
+            "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source("Binance Staking Redemption"),
+            "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source("Binance Staking Interest"),
+        }
+        self.logger.info("ℹ️ Checking for Staking history (Subscriptions, Redemptions, Interest)...")
+        fetcher_tasks.append(
+            asyncio.to_thread(self.fetcher.fetch_staking_history, days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
+        )
+
+        # 1. GATHER
+        self.logger.info(f"Launching {len(fetcher_tasks)} data fetching tasks concurrently...")
+        results = await asyncio.gather(*fetcher_tasks, return_exceptions=True)
+
+        all_raw_transactions = []
+        for res in results:
+            if isinstance(res, list):
+                all_raw_transactions.extend(res)
+            elif isinstance(res, Exception):
+                self.logger.error(f"An error occurred during a fetching task: {res}", exc_info=False)
+
+        if not all_raw_transactions:
+            self.logger.info("No new raw transactions were fetched. Sync complete.")
+            return
+
+        # 2. ENRICH
+        self.logger.info(f"Passing {len(all_raw_transactions)} raw transactions to the PriceEnricher.")
+        enriched_transactions = await self.enricher.enrich_transactions(all_raw_transactions)
+
+        # 3. PROCESS
+        if enriched_transactions:
+            enriched_transactions.sort(key=lambda x: x['timestamp'])
+            self.logger.info(f"Saving {len(enriched_transactions)} enriched transactions to the database...")
+            num_inserted = self.db_manager.bulk_insert_transactions(enriched_transactions)
+            self.logger.info(f"Database update complete. {num_inserted} new transactions were saved.")
         else:
-            self.logger.info(f"LIVE MODE: Syncing all transaction types for target assets: {list(self.target_assets_for_sync)}")
-            lookback_config = self.config.get("history_lookback_days", {})
-            tasks = [
-                asyncio.to_thread(self.fetch_binance_transactions, days_back=lookback_config.get("trades", 90)),
-                asyncio.to_thread(self.fetch_deposit_history, days_back=lookback_config.get("deposits", 90)),
-                asyncio.to_thread(self.fetch_withdrawal_history, days_back=lookback_config.get("withdrawals", 90)),
-                asyncio.to_thread(self.fetch_p2p_usdt_buys, days_back=lookback_config.get("p2p_buys", 90)),
-                asyncio.to_thread(self.fetch_internal_transfers, days_back=lookback_config.get("internal_transfers", 90)),
-                asyncio.to_thread(self.fetch_spot_futures_transfers, asset="USDT", days_back=lookback_config.get("spot_futures_transfers", 90)),
-                asyncio.to_thread(self.fetch_spot_convert_history, days_back=lookback_config.get("spot_convert_history", 90)),
-                asyncio.to_thread(self.fetch_simple_earn_flexible_rewards, days_back=lookback_config.get("simple_earn_rewards", 90)),
-                asyncio.to_thread(self.fetch_simple_earn_flexible_subscriptions, days_back=lookback_config.get("simple_earn_subscriptions", 90)),
-                asyncio.to_thread(self.fetch_simple_earn_flexible_redemptions, days_back=lookback_config.get("simple_earn_redemptions", 90)),
-                asyncio.to_thread(self.fetch_dividend_history, days_back=lookback_config.get("dividend_history", 90)),
-                asyncio.to_thread(self.fetch_staking_history, days_back=lookback_config.get("staking_history", 90)),
-            ]
-
-        self.logger.info(f"Launching {len(tasks)} data fetching tasks concurrently...")
-        results_from_all_tasks = await asyncio.gather(*tasks, return_exceptions=True)
-
-        all_new_transactions = []
-        for result in results_from_all_tasks:
-            if isinstance(result, Exception):
-                self.logger.error(f"An error occurred in a sync task: {result}", exc_info=False)
-            elif result:
-                all_new_transactions.extend(result)
-
-        if all_new_transactions:
-            self.logger.info(f"Processing a total of {len(all_new_transactions)} fetched/parsed transaction items.")
-            all_new_transactions.sort(key=lambda x: x['timestamp'])
-            num_inserted_updated = self.db_manager.bulk_insert_transactions(all_new_transactions)
-            self.logger.info(f"Database reported {num_inserted_updated if num_inserted_updated is not None else 'unknown'} changes/insertions.")
-        else:
-            self.logger.info("No new transactions fetched or processed from any source.")
+            self.logger.warning("Enrichment process returned no transactions. Nothing to save.")
 
         self.update_holdings_from_transactions()
-        self.logger.info("Data synchronization finished.")
+        self.logger.info("Data synchronization pipeline finished successfully.")
 
     async def run_full_sync(self) -> Dict[str, Any]:
         """Runs the full async data sync and then calculates metrics."""
         await self.sync_data()
-        return self.calculate_portfolio_metrics()
+        return await self.calculate_portfolio_metrics()
 
     async def view_trends(self):
         """
@@ -1048,7 +1054,6 @@ class CryptoPortfolioTracker:
             period_str = input("Enter backtest period (e.g., 2y, 3y, 5y - default: 3y): ")
             period = period_str if period_str else '3y'
 
-            # --- FIX: Call the new SYNCHRONOUS run method ---
             backtester.run(initial_capital=initial_capital, period=period)
             backtester.generate_report()
 
@@ -1081,7 +1086,7 @@ class CryptoPortfolioTracker:
         if not self.config_manager.is_testnet_mode:
             print("Verifying balances in Spot and Earn wallets...")
             spot_balances_df = self.fetch_binance_balances()
-            earn_balances = self.fetch_simple_earn_balances(spot_balances_df)
+            earn_balances = self.fetcher.fetch_simple_earn_balances(spot_balances_df)
         else:
             print("🟡 TESTNET MODE: Skipping Earn wallet check.")
 
@@ -1440,1782 +1445,6 @@ class CryptoPortfolioTracker:
                 break
         return pd.DataFrame(columns=['symbol', 'quantity'])
 
-    def fetch_binance_transactions(self, days_back: int = 90) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch transactions.")
-            return []
-
-        # # --- TEMPORARY MODIFICATION FOR FULL HISTORY SYNC ---
-        # days_back = 1095  # Override to 3 years for one-time full sync
-        # self.logger.warning(f"TEMPORARY OVERRIDE: Fetching full trade history for the last {days_back} days.")
-        # # --- END TEMPORARY MODIFICATION ---
-
-        transactions = []
-
-        stablecoin_quotes = self.config.get("portfolio",{}).get("stablecoin_symbols", ["USDT"])
-        crypto_quotes_from_targets = [s for s in self.config.get("portfolio", {}).get("crypto_quotes", ["BTC", "ETH"]) if s in self.target_assets_for_sync]
-        all_quotes_to_check = sorted(list(set(stablecoin_quotes + crypto_quotes_from_targets)))
-        potential_base_assets = [s for s in self.target_assets_for_sync if s not in stablecoin_quotes]
-
-        self.logger.info(f"Attempting to fetch trades for target base symbols: {potential_base_assets} against quotes: {all_quotes_to_check}")
-
-        source_trade = "Binance Trade"
-        source_synthetic = "Binance Synthetic"
-        latest_ts_trade = self.db_manager.get_latest_timestamp_for_source(source_trade)
-        latest_ts_synthetic = self.db_manager.get_latest_timestamp_for_source(source_synthetic)
-
-        overall_latest_known_ts_for_trades = None
-        if latest_ts_trade and latest_ts_synthetic:
-            overall_latest_known_ts_for_trades = max(latest_ts_trade, latest_ts_synthetic)
-        elif latest_ts_trade:
-            overall_latest_known_ts_for_trades = latest_ts_trade
-        elif latest_ts_synthetic:
-            overall_latest_known_ts_for_trades = latest_ts_synthetic
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        # days_back = self.config.get("history_lookback_days", {}).get("trades", 90)
-
-        overall_sync_start_time_dt: datetime.datetime
-        if overall_latest_known_ts_for_trades:
-            # Fetch from a bit before to ensure no gaps, up to the general lookback days
-            effective_start_from_db = overall_latest_known_ts_for_trades - datetime.timedelta(minutes=60) # 1 hour buffer
-            fallback_start_from_days = now_utc - datetime.timedelta(days=days_back)
-            overall_sync_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for Binance Trades/Synthetic: Effective overall start date {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        else:
-            overall_sync_start_time_dt = now_utc - datetime.timedelta(days=days_back)
-            self.logger.info(f"Full sync for Binance Trades/Synthetic: Fetching last {days_back} days from {overall_sync_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_sync_start_time_dt >= now_utc:
-            self.logger.info("Trade history is very recent. No new trades to fetch based on overall selective sync time.")
-            return []
-
-        processed_pairs = set()
-        max_retries = self.config.get("apis", {}).get("binance", {}).get("max_retries_per_batch", 3)
-        wait_time_seconds = self.config.get("apis", {}).get("binance", {}).get("retry_delay_sec", 15)
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        binance_api_delay_ms = self.config.get("apis",{}).get("binance",{}).get("request_delay_ms", 250)
-
-        # Define a safe batch duration, e.g., 23 hours
-        batch_duration_for_trades = datetime.timedelta(hours=23)
-
-        for base_asset in potential_base_assets:
-            for quote_asset in all_quotes_to_check:
-                if base_asset == quote_asset:
-                    continue
-                pair = f"{base_asset}{quote_asset}"
-                if pair in processed_pairs:
-                    continue
-                processed_pairs.add(pair)
-
-                self.logger.debug(f"Processing pair: {pair}")
-
-                # Iterate through the lookback period in 23-hour chunks for this pair
-                current_chunk_start_dt = overall_sync_start_time_dt
-
-                while current_chunk_start_dt < now_utc:
-                    current_chunk_end_dt = min(current_chunk_start_dt + batch_duration_for_trades, now_utc)
-
-                    api_start_time_ms_chunk = int(current_chunk_start_dt.timestamp() * 1000)
-                    api_end_time_ms_chunk = int(current_chunk_end_dt.timestamp() * 1000)
-
-                    if api_start_time_ms_chunk >= api_end_time_ms_chunk: # Should not happen if loop is correct
-                        break
-
-                    trades_for_pair_chunk = []
-                    retries_left = max_retries
-                    while retries_left > 0:
-                        try:
-                            self.logger.debug(f"Fetching trades for {pair} (Chunk: {current_chunk_start_dt.strftime('%Y-%m-%d %H:%M')} to {current_chunk_end_dt.strftime('%Y-%m-%d %H:%M')}, Attempt {max_retries - retries_left + 1})")
-                            trades_for_pair_chunk = self.binance_client.get_my_trades(
-                                symbol=pair,
-                                startTime=api_start_time_ms_chunk,
-                                endTime=api_end_time_ms_chunk,
-                                limit=1000 # Max limit per call
-                            )
-                            if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                            break
-                        except BinanceAPIException as e_api:
-                            if e_api.status_code == 400 and (e_api.code == -1121 or "Invalid symbol" in str(e_api.message)):
-                                self.logger.debug(f"Invalid or non-existent pair: {pair}. Skipping this pair.")
-                                trades_for_pair_chunk = None # Signal to break outer pair loop
-                                break # Break retry loop
-                            elif e_api.code == -1127: # Should be avoided by batching, but good to log if it still happens
-                                self.logger.error(f"API Error -1127 (More than 24h) for {pair} even with batching: {e_api}. Chunk: {current_chunk_start_dt} to {current_chunk_end_dt}. Skipping this chunk.")
-                                break # Break retry loop, move to next chunk
-                            elif e_api.code == -1021 :
-                                self.logger.warning(f"Timestamp error for {pair}, may need to sync system clock or adjust recvWindow. {e_api}")
-                                # Potentially break or retry based on strategy
-                            else:
-                                self.logger.error(f"API Error fetching trades for {pair} (Chunk): {e_api}")
-                            # Handle retry logic for other API errors
-                            retries_left -=1
-                            if retries_left == 0: self.logger.error(f"Max retries for {pair} (Chunk)."); break
-                            time.sleep(wait_time_seconds)
-                        except Exception as e_net:
-                            retries_left -=1
-                            self.logger.error(f"Network/Other error for {pair} (Chunk): {e_net}. Retries left: {retries_left}")
-                            if retries_left == 0: self.logger.error(f"Max retries for {pair} (Chunk)."); break
-                            time.sleep(wait_time_seconds)
-
-                    if trades_for_pair_chunk is None: # Break from outer pair loop if symbol is invalid
-                        break
-
-                    if not trades_for_pair_chunk:
-                        # self.logger.debug(f"No trades found for {pair} in chunk: {current_chunk_start_dt} to {current_chunk_end_dt}")
-                        # Move to the next chunk for this pair
-                        current_chunk_start_dt = current_chunk_end_dt # Next chunk starts where this one ended
-                        if current_chunk_start_dt >= now_utc: break # Reached current time
-                        continue
-
-                    self.logger.info(f"Fetched {len(trades_for_pair_chunk)} trades for {pair} in chunk: {current_chunk_start_dt.date()} to {current_chunk_end_dt.date()}")
-                    for trade in trades_for_pair_chunk:
-                        timestamp_obj = pd.to_datetime(trade['time'], unit='ms', utc=True).to_pydatetime()
-
-                        # Selective sync: skip if older than determined overall_sync_start_time_dt
-                        if timestamp_obj < overall_sync_start_time_dt:
-                            continue
-                        # Additional check: if overall_latest_known_ts_for_trades exists, skip if not newer
-                        if overall_latest_known_ts_for_trades and timestamp_obj <= overall_latest_known_ts_for_trades:
-                            continue
-
-                        normalized_base_asset = base_asset
-                        normalized_quote_asset = quote_asset
-                        quantity_base = float(trade['qty'])
-                        price_in_quote_terms = float(trade['price'])
-                        is_buy_of_base = trade['isBuyer']
-                        fee_quantity_raw = float(trade['commission'])
-                        fee_currency_raw = trade['commissionAsset'].upper()
-                        normalized_fee_currency = self.symbol_mappings.normalize_symbol(fee_currency_raw)
-                        trade_date_str = timestamp_obj.strftime('%d-%m-%Y')
-                        price_base_in_usd = 0.0
-                        price_quote_in_usd_for_trade = None
-                        coingecko_called_for_trade_pricing = False
-
-                        if normalized_quote_asset in self.stablecoin_symbols:
-                            price_base_in_usd = price_in_quote_terms
-                            price_quote_in_usd_for_trade = 1.0
-                        elif normalized_base_asset in self.stablecoin_symbols:
-                            price_base_in_usd = 1.0
-                            price_quote_in_usd_for_trade = 1.0 / price_in_quote_terms if price_in_quote_terms > 0 else 0.0
-                        else:
-                            quote_coin_id = self.symbol_mappings.get(normalized_quote_asset)
-                            if quote_coin_id:
-                                price_quote_in_usd_for_trade = self._get_coingecko_historical_price(quote_coin_id, trade_date_str)
-                                coingecko_called_for_trade_pricing = True
-                                if price_quote_in_usd_for_trade is not None:
-                                    price_base_in_usd = price_in_quote_terms * price_quote_in_usd_for_trade
-                                else: self.logger.warning(f"Trade {pair}: Could not get hist price for quote {normalized_quote_asset}. Base USD price will be $0.")
-                            else: self.logger.warning(f"Trade {pair}: No CoinGecko ID for quote {normalized_quote_asset}. Base USD price will be $0.")
-
-                        fee_usd = 0.0
-                        if normalized_fee_currency in self.stablecoin_symbols:
-                            fee_usd = fee_quantity_raw
-                        elif normalized_fee_currency == normalized_base_asset and price_base_in_usd > 0.0:
-                            fee_usd = fee_quantity_raw * price_base_in_usd
-                        elif normalized_fee_currency == normalized_quote_asset :
-                            if normalized_quote_asset in self.stablecoin_symbols: fee_usd = fee_quantity_raw
-                            elif price_quote_in_usd_for_trade is not None : fee_usd = fee_quantity_raw * price_quote_in_usd_for_trade
-                            else: # Attempt to price fee currency if it was the quote and quote wasn't priced yet
-                                fee_quote_coin_id = self.symbol_mappings.get(normalized_quote_asset)
-                                if fee_quote_coin_id:
-                                    temp_price = self._get_coingecko_historical_price(fee_quote_coin_id, trade_date_str)
-                                    if temp_price is not None: fee_usd = fee_quantity_raw * temp_price
-                                    if temp_price is not None and not coingecko_called_for_trade_pricing: time.sleep(cg_delay_ms / 1000.0) # Delay if fresh call
-                        else: # Fee in a third currency
-                            fee_asset_coin_id = self.symbol_mappings.get(normalized_fee_currency)
-                            if fee_asset_coin_id:
-                                price_fee_asset_in_usd = self._get_coingecko_historical_price(fee_asset_coin_id, trade_date_str)
-                                if price_fee_asset_in_usd is not None:
-                                    fee_usd = fee_quantity_raw * price_fee_asset_in_usd
-                                    if not coingecko_called_for_trade_pricing: time.sleep(cg_delay_ms / 1000.0)
-                        # --- End of Fee Pricing ---
-
-                        transactions.append({
-                            "symbol": normalized_base_asset, "timestamp": timestamp_obj,
-                            "type": 'BUY' if is_buy_of_base else 'SELL',
-                            "quantity": quantity_base, "price_usd": price_base_in_usd,
-                            "fee_quantity": fee_quantity_raw, "fee_currency": normalized_fee_currency, "fee_usd": fee_usd,
-                            "source": source_trade,
-                            "transaction_hash": f"binance_trade_{trade['id']}_{normalized_base_asset}",
-                            "notes": f"Pair: {pair}, Price: {price_in_quote_terms} {quote_asset}, Fee: {fee_quantity_raw} {fee_currency_raw}"
-                        })
-
-                        if normalized_quote_asset in self.target_assets_for_sync:
-                            qty_quote_exchanged = quantity_base * price_in_quote_terms
-                            price_quote_for_synth = 0.0
-                            if normalized_quote_asset in self.stablecoin_symbols: price_quote_for_synth = 1.0
-                            elif price_quote_in_usd_for_trade is not None : price_quote_for_synth = price_quote_in_usd_for_trade
-
-                            transactions.append({
-                                "symbol": normalized_quote_asset, "timestamp": timestamp_obj,
-                                "type": 'SELL' if is_buy_of_base else 'BUY',
-                                "quantity": qty_quote_exchanged, "price_usd": price_quote_for_synth,
-                                "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                "source": source_synthetic,
-                                "transaction_hash": f"binance_trade_{trade['id']}_synth_{normalized_quote_asset}",
-                                "notes": f"Synthetic for {pair} trade. Original fee: {fee_quantity_raw} {fee_currency_raw}"
-                            })
-                        if coingecko_called_for_trade_pricing and (price_base_in_usd > 0.0 or (price_quote_in_usd_for_trade is not None and price_quote_in_usd_for_trade > 0.0)):
-                            if cg_delay_ms > 0: time.sleep(cg_delay_ms / 1000.0)
-                    # End of for trade in trades_for_pair_chunk
-
-                    # Move to next chunk for this pair
-                    current_chunk_start_dt = current_chunk_end_dt
-                    if current_chunk_start_dt >= now_utc: break # Reached current time for this pair
-                # End of while current_chunk_start_dt < now_utc (chunking loop for a pair)
-                if trades_for_pair_chunk is None: # If pair was invalid, break from quote asset loop
-                    break
-            # End of for quote_asset loop
-            if potential_base_assets and binance_api_delay_ms > 0 and base_asset != potential_base_assets[-1]: # Delay between different base assets
-                 time.sleep(binance_api_delay_ms / 1000.0)
-        # End of for base_asset loop
-
-        self.logger.info(f"Fetched a total of {len(transactions)} new spot trade transactions (including synthetic, filtered for target assets) using selective sync and daily batching.")
-        return transactions
-
-    def fetch_deposit_history(self, days_back: int = 90) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch deposit history.")
-            return []
-
-        deposits_data_unfiltered = []
-        pepe_gift_config = self.config.get("pepe_gift_details", {})
-        pepe_gift_symbol = pepe_gift_config.get("symbol", "PEPE").upper()
-        try:
-            your_pepe_gift_amount = float(pepe_gift_config.get("amount", "0"))
-        except ValueError:
-            your_pepe_gift_amount = 0.0
-            self.logger.warning(f"PEPE gift amount '{pepe_gift_config.get('amount')}' is invalid for deposits.")
-
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_deposit", 1500))
-
-        source_name = "Binance Deposit"
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        endTime = int(now_utc.timestamp() * 1000)
-        startTime = 0
-
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("deposits", days_back)
-
-        if latest_known_ts:
-            start_datetime_obj = latest_known_ts - datetime.timedelta(minutes=5)
-            startTime = int(start_datetime_obj.timestamp() * 1000)
-            self.logger.info(f"Selective sync for '{source_name}': Fetching since ~{start_datetime_obj} (last known: {latest_known_ts})")
-        else:
-            start_datetime_obj = now_utc - datetime.timedelta(days=specific_lookback_days)
-            startTime = int(start_datetime_obj.timestamp() * 1000)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days since {start_datetime_obj}")
-
-        if startTime >= endTime:
-            self.logger.info(f"'{source_name}' history is very recent. Setting startTime to endTime-1min to fetch minimal window.")
-            startTime = endTime - (60 * 1000)
-
-        try:
-            self.logger.info(f"Fetching deposit history (startTime: {pd.to_datetime(startTime, unit='ms', utc=True)}, endTime: {pd.to_datetime(endTime, unit='ms', utc=True)})...")
-            all_deposits = self.binance_client.get_deposit_history(startTime=startTime, endTime=endTime, status=1)
-            self.logger.info(f"Fetched {len(all_deposits)} successful deposit records (startTime: {startTime}, endTime: {endTime}, pre-filter).")
-
-            for i, deposit in enumerate(all_deposits):
-                self.logger.debug(f"Processing raw deposit record {i+1}/{len(all_deposits)}: {deposit}")
-                symbol_original = deposit.get('coin')
-                if not symbol_original:
-                    self.logger.warning(f"Deposit record {i+1} missing 'coin' field (TxID: {deposit.get('txId')}). Skipping.")
-                    continue
-
-                normalized_symbol = self.symbol_mappings.normalize_symbol(symbol_original.upper())
-
-                if normalized_symbol not in self.target_assets_for_sync:
-                    # self.logger.debug(f"Skipping deposit for non-target asset: {normalized_symbol}") # Optional: can be verbose
-                    continue
-
-                insert_time_raw = deposit.get('insertTime')
-                if insert_time_raw is None:
-                    self.logger.error(f"Deposit for {normalized_symbol} (TxID: {deposit.get('txId')}) has missing 'insertTime'. Skipping.")
-                    continue
-
-                deposit_timestamp_obj_pandas = pd.to_datetime(insert_time_raw, unit='ms', utc=True)
-                if pd.isna(deposit_timestamp_obj_pandas):
-                    self.logger.error(f"Parsed timestamp is NaT for {normalized_symbol} (TxID: {deposit.get('txId')}) from raw value '{insert_time_raw}'. Skipping.")
-                    continue
-                deposit_timestamp_py = deposit_timestamp_obj_pandas.to_pydatetime()
-
-                price_usd_at_deposit = 0.0
-                is_pepe_gift = (normalized_symbol == pepe_gift_symbol and
-                                abs(float(deposit.get('amount', 0)) - your_pepe_gift_amount) < 1e-9 and
-                                your_pepe_gift_amount > 0)
-
-                coingecko_called = False
-                if is_pepe_gift:
-                    self.logger.info(f"Identified PEPE gift deposit ({deposit.get('amount')} {normalized_symbol}). Assigning $0 cost.")
-                elif normalized_symbol in self.stablecoin_symbols:
-                    price_usd_at_deposit = 1.0
-                else:
-                    coin_id = self.symbol_mappings.get(normalized_symbol)
-                    if coin_id:
-                        date_str = deposit_timestamp_obj_pandas.strftime('%d-%m-%Y')
-                        historical_price = self._get_coingecko_historical_price(coin_id, date_str)
-                        coingecko_called = True
-                        if historical_price is not None:
-                            price_usd_at_deposit = historical_price
-                            self.logger.info(f"Fetched historical price for {normalized_symbol} (deposit) on {date_str}: ${price_usd_at_deposit:.6f}")
-                        else:
-                            self.logger.warning(f"Could not fetch historical price for {normalized_symbol} (deposit) on {date_str}. Cost for deposit will be $0.")
-                    else:
-                        self.logger.warning(f"No CoinGecko ID for {normalized_symbol} (deposit). Cost for deposit will be $0.")
-
-                tx_hash = deposit.get('txId', f"binance_deposit_{deposit.get('id', i)}_{insert_time_raw}")
-
-                # Ensure this deposit is newer than the latest known to avoid re-processing if overlap is used
-                if latest_known_ts and deposit_timestamp_py <= latest_known_ts:
-                    # This check might be redundant if ON CONFLICT handles it, but can prevent re-pricing
-                    # self.logger.debug(f"Skipping deposit {tx_hash} as its timestamp ({deposit_timestamp_py}) is not newer than last known ({latest_known_ts}) for source {source_name}")
-                    continue
-
-                deposits_data_unfiltered.append({
-                    "symbol": normalized_symbol,
-                    "timestamp": deposit_timestamp_py,
-                    "type": "DEPOSIT",
-                    "quantity": float(deposit.get('amount', 0)),
-                    "price_usd": price_usd_at_deposit,
-                    "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                    "source": source_name,
-                    "transaction_hash": tx_hash,
-                    "notes": f"Status: {deposit.get('status', 'N/A')}, Network: {deposit.get('network')}"
-                })
-                if coingecko_called and historical_price is not None and historical_price > 0.0:
-                    time.sleep(cg_delay_ms / 1000.0)
-
-        except BinanceAPIException as e:
-            self.logger.error(f"API Error fetching deposit history: {e}")
-        except Exception as e:
-            self.logger.error(f"Unexpected error fetching deposit history: {e}", exc_info=True)
-
-        self.logger.info(f"Fetched {len(deposits_data_unfiltered)} targeted deposit transactions for source '{source_name}'.")
-        return deposits_data_unfiltered
-
-    def fetch_withdrawal_history(self, days_back: int = 90) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch withdrawal history.")
-            return []
-
-        withdrawals_data_unfiltered = []
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_deposit", 1500))
-
-        source_name = "Binance Withdrawal"
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        endTime = int(now_utc.timestamp() * 1000)
-        startTime = 0
-
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("withdrawals", days_back)
-
-        if latest_known_ts:
-            start_datetime_obj = latest_known_ts - datetime.timedelta(minutes=5)
-            startTime = int(start_datetime_obj.timestamp() * 1000)
-            self.logger.info(f"Selective sync for '{source_name}': Fetching since ~{start_datetime_obj}")
-        else:
-            start_datetime_obj = now_utc - datetime.timedelta(days=specific_lookback_days)
-            startTime = int(start_datetime_obj.timestamp() * 1000)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days.")
-
-        if startTime >= endTime: # Ensure startTime is not after endTime
-            self.logger.info(f"'{source_name}' history is very recent. Setting startTime to endTime-1min.")
-            startTime = endTime - (60 * 1000)
-
-        try:
-            self.logger.info(f"Fetching withdrawal history (startTime: {pd.to_datetime(startTime, unit='ms', utc=True)}, endTime: {pd.to_datetime(endTime, unit='ms', utc=True)})...")
-            all_withdrawals = self.binance_client.get_withdraw_history(startTime=startTime, endTime=endTime, status=6)
-            self.logger.info(f"Fetched {len(all_withdrawals)} completed withdrawal records (startTime: {startTime}, endTime: {endTime}, pre-filter).")
-
-            for i, withdrawal in enumerate(all_withdrawals):
-                self.logger.debug(f"Processing raw withdrawal record {i+1}/{len(all_withdrawals)}: {withdrawal}")
-                symbol_original = withdrawal.get('coin')
-                if not symbol_original:
-                    self.logger.warning(f"Withdrawal record {i+1} missing 'coin' field. Skipping. Data: {withdrawal}")
-                    continue
-
-                normalized_symbol = self.symbol_mappings.normalize_symbol(symbol_original.upper())
-
-                if normalized_symbol not in self.target_assets_for_sync:
-                    # self.logger.debug(f"Skipping withdrawal for non-target asset: {normalized_symbol}")
-                    continue
-
-                apply_time_raw = withdrawal.get('applyTime') # Using applyTime as it reflects initiation
-                if not apply_time_raw:
-                    self.logger.warning(f"Withdrawal for {normalized_symbol} (TxID: {withdrawal.get('txId')}) has missing 'applyTime'. Skipping.")
-                    continue
-
-                try:
-                    # applyTime can be a string like "2021-09-15 10:00:00" or sometimes a timestamp
-                    withdrawal_timestamp_obj_pandas = pd.to_datetime(apply_time_raw, utc=True)
-                except (ValueError, TypeError):
-                    try:
-                        withdrawal_timestamp_obj_pandas = pd.to_datetime(int(apply_time_raw), unit='ms', utc=True)
-                    except (ValueError, TypeError):
-                        self.logger.error(f"Could not parse applyTime '{apply_time_raw}' for {normalized_symbol} (TxID: {withdrawal.get('txId')}). Skipping.")
-                        continue
-
-                if pd.isna(withdrawal_timestamp_obj_pandas):
-                    self.logger.error(f"Parsed withdrawal timestamp is NaT for {normalized_symbol} (TxID: {withdrawal.get('txId')}). Skipping.")
-                    continue
-                withdrawal_timestamp_py = withdrawal_timestamp_obj_pandas.to_pydatetime()
-
-                tx_hash = withdrawal.get('txId', f"binance_withdraw_{withdrawal.get('id', i)}_{apply_time_raw}")
-                if latest_known_ts and withdrawal_timestamp_py <= latest_known_ts:
-                    # self.logger.debug(f"Skipping withdrawal {tx_hash} as its timestamp ({withdrawal_timestamp_py}) is not newer than last known ({latest_known_ts})")
-                    continue
-
-                fee_quantity = float(withdrawal.get('transactionFee', 0.0))
-                fee_currency_api = withdrawal.get('network') # For withdrawals, fee is often implied by network, or is the asset itself
-                                                         # The 'commissionAsset' field is not typical for withdrawal history.
-                                                         # Assuming fee is paid in the withdrawn asset.
-                fee_currency = normalized_symbol
-
-
-                price_usd_at_withdrawal = 0.0
-                fee_usd_at_withdrawal = 0.0
-                coingecko_called = False
-
-                if normalized_symbol in self.stablecoin_symbols:
-                    price_usd_at_withdrawal = 1.0
-                    fee_usd_at_withdrawal = fee_quantity * 1.0
-                else:
-                    coin_id = self.symbol_mappings.get(normalized_symbol)
-                    if coin_id:
-                        date_str = withdrawal_timestamp_obj_pandas.strftime('%d-%m-%Y')
-                        historical_price = self._get_coingecko_historical_price(coin_id, date_str)
-                        coingecko_called = True
-                        if historical_price is not None:
-                            price_usd_at_withdrawal = historical_price
-                            fee_usd_at_withdrawal = fee_quantity * historical_price
-                            self.logger.info(f"Fetched historical price for {normalized_symbol} (withdrawal) on {date_str}: ${price_usd_at_withdrawal:.6f}")
-                        else:
-                            self.logger.warning(f"Could not fetch historical price for {normalized_symbol} (withdrawal) on {date_str}. Price/Fee USD for withdrawal will be $0.")
-                    else:
-                        self.logger.warning(f"No CoinGecko ID for {normalized_symbol} (withdrawal). Price/Fee USD for withdrawal will be $0.")
-
-                withdrawals_data_unfiltered.append({
-                    "symbol": normalized_symbol,
-                    "timestamp": withdrawal_timestamp_py,
-                    "type": "WITHDRAWAL",
-                    "quantity": float(withdrawal.get('amount', 0.0)),
-                    "price_usd": price_usd_at_withdrawal,
-                    "fee_quantity": fee_quantity,
-                    "fee_currency": fee_currency,
-                    "fee_usd": fee_usd_at_withdrawal,
-                    "source": source_name,
-                    "transaction_hash": tx_hash,
-                    "notes": f"Network: {withdrawal.get('network', 'N/A')}, Address: {withdrawal.get('address', 'N/A')}, Fee: {fee_quantity} {fee_currency}"
-                })
-                if coingecko_called and price_usd_at_withdrawal > 0.0:
-                    time.sleep(cg_delay_ms / 1000.0)
-
-        except BinanceAPIException as e:
-            self.logger.error(f"API Error fetching withdrawal history: {e}")
-        except Exception as e:
-            self.logger.error(f"Unexpected error fetching withdrawal history: {e}", exc_info=True)
-
-        self.logger.info(f"Fetched {len(withdrawals_data_unfiltered)} targeted withdrawal transactions for source '{source_name}'.")
-        return withdrawals_data_unfiltered
-
-    def fetch_p2p_usdt_buys(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch P2P history.")
-            return []
-
-        all_p2p_transactions = []
-        p2p_fiat_currency = self.config.get("portfolio", {}).get("p2p_fiat_currency", "PHP").upper()
-        target_usd_currency = "USD"
-        source_name = "Binance P2P Buy"
-
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("p2p_buys", days_back if days_back is not None else 90)
-
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-        overall_start_dt_for_lookback: datetime.datetime
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=60)
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_dt_for_lookback = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_dt_for_lookback.strftime('%Y-%m-%d %H:%M:%S %Z')} (last known: {latest_known_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_known_ts else 'None'})")
-        else:
-            overall_start_dt_for_lookback = now_utc - datetime.timedelta(days=specific_lookback_days)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_dt_for_lookback.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_start_dt_for_lookback >= now_utc:
-            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
-            return []
-
-        current_batch_end_dt = now_utc # Start batching from now, going backwards
-        rows_per_page = 50
-        binance_api_delay_ms = self.binance_api_config.get("request_delay_ms", 700)
-        max_retries = self.config.get("apis",{}).get("binance",{}).get("max_retries_per_batch", 3)
-        retry_delay_seconds = self.config.get("apis",{}).get("binance",{}).get("retry_delay_sec", 15)
-
-
-        self.logger.info(f"Fetching P2P USDT buy history against fiat: {p2p_fiat_currency} from {overall_start_dt_for_lookback.date()} to {current_batch_end_dt.date()} (batched).")
-
-        while current_batch_end_dt > overall_start_dt_for_lookback:
-            # Determine the start of the current batch (max 30 days prior or overall_start_dt_for_lookback)
-            current_batch_start_dt = current_batch_end_dt - datetime.timedelta(days=30)
-            if current_batch_start_dt < overall_start_dt_for_lookback:
-                current_batch_start_dt = overall_start_dt_for_lookback
-
-            start_ms = int(current_batch_start_dt.timestamp() * 1000)
-            end_ms = int(current_batch_end_dt.timestamp() * 1000)
-
-            if start_ms >= end_ms:
-                self.logger.debug(f"P2P fetch: Batch start_ms {start_ms} is not before end_ms {end_ms}. Ending batch processing for this period.")
-                break
-
-            current_page = 1
-            max_pages_to_try_per_batch = 20
-
-            while current_page <= max_pages_to_try_per_batch:
-                self.logger.debug(f"Fetching P2P BUY for {p2p_fiat_currency}/USDT. Period: {current_batch_start_dt.date()} to {current_batch_end_dt.date()}, Page: {current_page}")
-                try:
-                    history = self.binance_client.get_c2c_trade_history(
-                        tradeType='BUY', page=current_page, rows=rows_per_page,
-                        startTimestamp=start_ms, endTimestamp=end_ms
-                    )
-                    if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-
-                    trades_in_page = history.get('data', [])
-                    if not history or not trades_in_page:
-                        self.logger.debug(f"No P2P BUY data on page {current_page} for this batch, or end of data for this period.")
-                        break # Exit this page loop, move to next older batch
-
-                    new_transactions_in_page = 0
-                    for trade in trades_in_page:
-                        create_time_ms = trade.get('createTime')
-                        if not create_time_ms: continue
-                        timestamp_dt = pd.to_datetime(create_time_ms, unit='ms', utc=True).to_pydatetime()
-
-                        if timestamp_dt < overall_start_dt_for_lookback:
-                            continue
-
-                        if latest_known_ts and timestamp_dt <= latest_known_ts:
-                            continue
-
-                        if trade.get('asset', '').upper() == 'USDT' and trade.get('fiat', '').upper() == p2p_fiat_currency:
-                            order_number = trade.get('orderNumber')
-                            try:
-                                usdt_quantity = float(trade.get('amount', 0))
-                                fiat_amount_paid = float(trade.get('totalPrice', 0))
-                            except (ValueError, TypeError) as e_parse:
-                                self.logger.error(f"Could not parse P2P amount/totalPrice for order {order_number}: {e_parse}. Trade: {trade}")
-                                continue
-                            if usdt_quantity <= 0 or fiat_amount_paid <= 0: continue
-
-                            trade_date_str_yyyy_mm_dd = timestamp_dt.strftime('%Y-%m-%d')
-                            fiat_to_usd_rate = self._get_historical_fiat_exchange_rate(
-                                trade_date_str_yyyy_mm_dd, p2p_fiat_currency, target_usd_currency
-                            )
-                            actual_usdt_price_in_usd = 1.0
-                            notes_detail = ""
-                            if fiat_to_usd_rate is not None and fiat_to_usd_rate > 0:
-                                usd_equivalent_of_fiat_paid = fiat_amount_paid * fiat_to_usd_rate
-                                if usdt_quantity > 0:
-                                    actual_usdt_price_in_usd = usd_equivalent_of_fiat_paid / usdt_quantity
-                                notes_detail = (f"Fiat paid: {fiat_amount_paid:.2f} {p2p_fiat_currency}. "
-                                                f"Rate: 1 {p2p_fiat_currency} = {fiat_to_usd_rate:.6f} {target_usd_currency}. "
-                                                f"USD Cost: ${usd_equivalent_of_fiat_paid:.2f} for {usdt_quantity:.2f} USDT. "
-                                                f"Effective USDT/USD Price: ${actual_usdt_price_in_usd:.6f}.")
-                                self.logger.debug(f"P2P Trade {order_number}: {notes_detail}")
-                            else:
-                                self.logger.warning(f"P2P Trade {order_number}: Could not get {p2p_fiat_currency}/{target_usd_currency} rate for {trade_date_str_yyyy_mm_dd}. Using placeholder $1.00/USDT cost.")
-                                notes_detail = f"Fiat paid: {fiat_amount_paid:.2f} {p2p_fiat_currency}. USD rate lookup failed. Using placeholder cost."
-                            notes = f"P2P Buy. OrderNo: {order_number}. {notes_detail}"
-
-                            all_p2p_transactions.append({
-                                "symbol": "USDT", "timestamp": timestamp_dt, "type": "BUY",
-                                "quantity": usdt_quantity, "price_usd": actual_usdt_price_in_usd,
-                                "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                "source": source_name, "transaction_hash": str(order_number), "notes": notes,
-                            })
-                            new_transactions_in_page +=1
-
-                    self.logger.debug(f"Added {new_transactions_in_page} new P2P transactions from page {current_page}.")
-                    current_page += 1
-                    if history.get('total') is not None and ((current_page -1) * rows_per_page >= int(history.get('total', 0))):
-                        self.logger.debug(f"Fetched all P2P records ({history.get('total')}) for this batch based on API total count.")
-                        break
-
-                except BinanceAPIException as e_binance:
-                    self.logger.error(f"Binance API Error fetching P2P history (Batch {current_batch_start_dt.date()}-{current_batch_end_dt.date()}, Page {current_page}): {e_binance}")
-                    break
-                except Exception as e_generic:
-                    self.logger.error(f"Unexpected error fetching P2P history (Batch {current_batch_start_time_dt.date()}-{current_batch_end_dt.date()}, Page {current_page}): {e_generic}", exc_info=True)
-                    break
-            # End of 'while current_page <= max_pages_to_try_per_batch:' loop
-
-            current_batch_end_dt = current_batch_start_dt
-
-            if current_batch_end_dt <= overall_start_dt_for_lookback:
-                 self.logger.info(f"P2P fetching has processed batches up to or before the overall start date limit. Stopping.")
-                 break
-        # End of 'while current_batch_end_dt > overall_start_dt_for_lookback:' loop
-
-        self.logger.info(f"Fetched a total of {len(all_p2p_transactions)} new P2P USDT buy transactions against {p2p_fiat_currency}.")
-        return all_p2p_transactions
-
-    def fetch_internal_transfers(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch internal transfers.")
-            return []
-
-        all_processed_transfers = []
-        config_portfolio = self.config.get("portfolio", {})
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        config_apis_coingecko = self.config.get("apis", {}).get("coingecko", {})
-
-        default_assets_to_check = ['USDT']
-        assets_to_check_list = config_portfolio.get("assets_for_internal_transfer_check", default_assets_to_check)
-        # Filter by target_assets_for_sync, but always include USDT if it was in the original check list
-        assets_to_check_for_transfers = [
-            asset.upper() for asset in assets_to_check_list
-            if asset.upper() in self.target_assets_for_sync or asset.upper() == "USDT"
-        ]
-
-        if not assets_to_check_for_transfers:
-            self.logger.info("No target assets configured for internal transfer check that overlap with sync targets. Skipping.")
-            return []
-        # Ensure USDT is first if present, for consistent logging if nothing else
-        if "USDT" in assets_to_check_for_transfers and assets_to_check_for_transfers[0] != "USDT":
-            assets_to_check_for_transfers.insert(0, assets_to_check_for_transfers.pop(assets_to_check_for_transfers.index("USDT")))
-        assets_to_check_for_transfers = sorted(list(set(assets_to_check_for_transfers))) # Unique and sorted
-
-
-        batch_days = min(config_apis_binance.get("transfer_history_batch_days", 7), 7) # Max 7 for this API, ensure positive
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 3)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        cg_delay_ms = config_apis_coingecko.get("request_delay_ms_internal_transfer", config_apis_coingecko.get("request_delay_ms",10000))
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms_transfer_history", config_apis_binance.get("request_delay_ms", 500))
-        recv_window_ms = config_apis_binance.get("recv_window", 60000)
-
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("internal_transfers", days_back if days_back is not None else 90)
-
-        processed_tran_ids = set()
-        endpoint_path = 'asset/transfer' # SAPI v1
-
-        transfer_configs = [
-            {"api_transferType_param": "FUNDING_MAIN", "flow_type": "DEPOSIT", "log_label": "Funding to Spot", "source_name": "Binance API FUNDING_MAIN (Asset Transfer)"},
-            {"api_transferType_param": "MAIN_FUNDING", "flow_type": "WITHDRAWAL", "log_label": "Spot to Funding", "source_name": "Binance API MAIN_FUNDING (Asset Transfer)"}
-        ]
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-        for config_entry in transfer_configs:
-            api_transfer_type = config_entry["api_transferType_param"]
-            transaction_flow_type = config_entry["flow_type"]
-            log_label = config_entry["log_label"]
-            source_name_current_type = config_entry["source_name"]
-
-            latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name_current_type)
-            overall_start_time_dt_for_type: datetime.datetime
-            if latest_known_ts:
-                effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10) # Small buffer
-                fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-                overall_start_time_dt_for_type = max(effective_start_from_db, fallback_start_from_days)
-                self.logger.info(f"Selective sync for Internal Transfers '{source_name_current_type}': Effective start date {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            else:
-                overall_start_time_dt_for_type = now_utc - datetime.timedelta(days=specific_lookback_days)
-                self.logger.info(f"Full sync for Internal Transfers '{source_name_current_type}': Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-            if overall_start_time_dt_for_type >= now_utc:
-                self.logger.info(f"'{source_name_current_type}' history is very recent. Skipping fetch for this type.")
-                continue
-
-            self.logger.info(f"Fetching {log_label} ({api_transfer_type}) for assets: {assets_to_check_for_transfers} from {overall_start_time_dt_for_type.date()}.")
-
-            for asset_symbol_for_api in assets_to_check_for_transfers:
-                self.logger.info(f"Processing asset for {api_transfer_type} transfers: {asset_symbol_for_api}")
-                asset_specific_transfers_for_current_asset_type = []
-                current_batch_end_time_dt = now_utc
-
-                while current_batch_end_time_dt > overall_start_time_dt_for_type:
-                    current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-                    if current_batch_start_time_dt < overall_start_time_dt_for_type:
-                        current_batch_start_time_dt = overall_start_time_dt_for_type
-
-                    start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-                    end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-
-                    if start_ms >= end_ms: break
-
-                    self.logger.debug(f"Fetching {api_transfer_type} for {asset_symbol_for_api}: Batch Period {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-                    current_page_api = 1; fetched_all_for_batch = False
-                    while not fetched_all_for_batch:
-                        fetched_rows_in_page = None; api_response_total_count = 0
-                        for attempt in range(max_retries):
-                            try:
-                                params = {
-                                    "type": api_transfer_type, "asset": asset_symbol_for_api,
-                                    "startTime": start_ms, "endTime": end_ms,
-                                    "current": current_page_api, "size": limit_per_page,
-                                    "recvWindow": recv_window_ms
-                                }
-                                self.logger.debug(f"API Call ({api_transfer_type} page {current_page_api}) attempt {attempt+1} for {asset_symbol_for_api}. EP: '{endpoint_path}', Params: {params}")
-                                transfer_history = self.binance_client._request_margin_api('get', endpoint_path, True, data=params) # SAPI is fine
-                                fetched_rows_in_page = transfer_history.get('rows', [])
-                                api_response_total_count = transfer_history.get('total', 0)
-                                self.logger.debug(f"Raw API response for {api_transfer_type} page {current_page_api} {asset_symbol_for_api} (attempt {attempt+1}): Fetched {len(fetched_rows_in_page) if fetched_rows_in_page is not None else 'None'} rows. API 'total': {api_response_total_count}. Sample: {str(transfer_history)[:300]}...")
-                                if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                                break
-                            except Exception as e_api_internal:
-                                self.logger.error(f"API/Net Error attempt {attempt+1} for {api_transfer_type} {asset_symbol_for_api} page {current_page_api}: {e_api_internal}. Code: {getattr(e_api_internal, 'code', 'N/A')}")
-                                if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                                else: self.logger.error(f"Max retries for {api_transfer_type} {asset_symbol_for_api} page {current_page_api}."); fetched_all_for_batch = True
-
-                        if fetched_rows_in_page:
-                            for item in fetched_rows_in_page:
-                                timestamp_ms = item.get('timestamp')
-                                if not timestamp_ms: continue
-                                timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                                if latest_known_ts and timestamp <= latest_known_ts:
-                                    continue
-
-                                tran_id_val = item.get('tranId')
-                                if tran_id_val is None: # tranId can be integer or string, ensure it's a string for set
-                                    tran_id = f"{api_transfer_type}_pg{current_page_api}_{item.get('asset')}_{timestamp_ms}" # Fallback unique ID
-                                else:
-                                    tran_id = str(tran_id_val)
-
-                                if tran_id in processed_tran_ids: continue
-                                processed_tran_ids.add(tran_id)
-
-                                normalized_symbol = self.symbol_mappings.normalize_symbol(item['asset'].upper())
-                                quantity = float(item['amount'])
-                                price_at_transfer = 1.0 # Default for USDT or if price fetch fails
-                                if normalized_symbol not in self.stablecoin_symbols:
-                                    coin_id_to_fetch = self.symbol_mappings.get(normalized_symbol)
-                                    if coin_id_to_fetch:
-                                        fetched_price = self._get_coingecko_historical_price(coin_id_to_fetch, timestamp.strftime('%d-%m-%Y'))
-                                        if fetched_price is not None: price_at_transfer = fetched_price
-                                        else: price_at_transfer = 0.0 # Mark as 0 if fetch failed
-                                        if cg_delay_ms > 0 and fetched_price is not None: time.sleep(cg_delay_ms / 1000.0)
-                                    else: price_at_transfer = 0.0 # No mapping
-
-                                asset_specific_transfers_for_current_asset_type.append({
-                                    "symbol": normalized_symbol, "timestamp": timestamp, "type": transaction_flow_type,
-                                    "quantity": quantity, "price_usd": price_at_transfer,
-                                    "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                    "source": source_name_current_type, "transaction_hash": tran_id,
-                                    "notes": f"{log_label} ({item['asset']}): {quantity:.8f} {normalized_symbol}"
-                                })
-                            if not fetched_rows_in_page or (api_response_total_count > 0 and current_page_api * limit_per_page >= api_response_total_count) or len(fetched_rows_in_page) < limit_per_page :
-                                fetched_all_for_batch = True
-                            else: current_page_api += 1
-                        else: fetched_all_for_batch = True # No rows or error after retries
-
-                        if fetched_all_for_batch:
-                            self.logger.debug(f"Completed batch for {asset_symbol_for_api} ({api_transfer_type}).")
-                            break
-
-                    current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-                    # Removed general sleep, it's now after successful API call.
-                    if current_batch_end_time_dt <= overall_start_time_dt_for_type: break
-
-                if asset_specific_transfers_for_current_asset_type:
-                    all_processed_transfers.extend(asset_specific_transfers_for_current_asset_type)
-                    self.logger.info(f"Added {len(asset_specific_transfers_for_current_asset_type)} new transfers for {asset_symbol_for_api} ({api_transfer_type}).")
-
-                if asset_symbol_for_api != assets_to_check_for_transfers[-1] and binance_api_delay_ms > 0:
-                    time.sleep(binance_api_delay_ms / 1000.0) # Delay between assets if checking multiple
-
-            if config_entry != transfer_configs[-1] and binance_api_delay_ms > 0:
-                time.sleep(binance_api_delay_ms * 2 / 1000.0) # Longer delay between FUNDING_MAIN and MAIN_FUNDING runs
-
-        self.logger.info(f"Fetched a total of {len(all_processed_transfers)} new internal transfers after selective sync.")
-        return all_processed_transfers
-
-    def fetch_spot_futures_transfers(self, asset: str = "USDT", days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        asset_upper = asset.upper()
-
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get(
-            "spot_futures_transfers", days_back if days_back is not None else 90
-        )
-
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Spot-Futures transfer history.")
-            return []
-
-        all_spot_futures_transfers = []
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-        transfer_configs = [
-            {"api_call_type_param_value": "MAIN_UMFUTURE", "spot_equivalent_action": "SELL", "log_label": "Spot to USD-M Futures", "source_name": "Binance API MAIN_UMFUTURE"},
-            {"api_call_type_param_value": "UMFUTURE_MAIN", "spot_equivalent_action": "BUY", "log_label": "USD-M Futures to Spot", "source_name": "Binance API UMFUTURE_MAIN"}
-        ]
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        batch_days = min(config_apis_binance.get("transfer_history_batch_days", 7), 7) # Max 7 for this API usually, ensure positive
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 3)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms_transfer_history", config_apis_binance.get("request_delay_ms", 500))
-        recv_window_ms = config_apis_binance.get("recv_window", 60000)
-        endpoint_path = 'asset/transfer'
-
-        self.logger.info(f"Fetching Spot <-> USDⓈ-M Futures transfers for {asset_upper} (lookback: {specific_lookback_days} days), Batch size: {batch_days} days.")
-        processed_tran_ids_spot_futures = set()
-
-        for config_entry in transfer_configs:
-            api_call_transfer_type_value = config_entry["api_call_type_param_value"]
-            spot_action = config_entry["spot_equivalent_action"]
-            log_label_detail = config_entry["log_label"]
-            source_name_current_type = config_entry["source_name"]
-
-            latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name_current_type)
-            overall_start_time_dt_for_type: datetime.datetime
-            if latest_known_ts:
-                effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
-                fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-                overall_start_time_dt_for_type = max(effective_start_from_db, fallback_start_from_days)
-                self.logger.info(f"Selective sync for '{source_name_current_type}' ({asset_upper}): Start date {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            else:
-                overall_start_time_dt_for_type = now_utc - datetime.timedelta(days=specific_lookback_days)
-                self.logger.info(f"Full sync for '{source_name_current_type}' ({asset_upper}): Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_type.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-            if overall_start_time_dt_for_type >= now_utc:
-                self.logger.info(f"'{source_name_current_type}' ({asset_upper}) history is very recent. Skipping.")
-                continue
-
-            self.logger.info(f"Fetching {log_label_detail} ({api_call_transfer_type_value}) for {asset_upper} (Spot action: {spot_action}) from {overall_start_time_dt_for_type.date()}.")
-            current_batch_end_time_dt = now_utc
-
-            while current_batch_end_time_dt > overall_start_time_dt_for_type:
-                current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-                if current_batch_start_time_dt < overall_start_time_dt_for_type:
-                    current_batch_start_time_dt = overall_start_time_dt_for_type
-                start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-                end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-                if start_ms >= end_ms: break
-
-                self.logger.debug(f"Fetching {api_call_transfer_type_value} for {asset_upper}: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-                current_page_api = 1; fetched_all_for_this_batch_asset_type = False
-                while not fetched_all_for_this_batch_asset_type:
-                    fetched_rows_in_page = None; api_response_total_count = 0
-                    for attempt in range(max_retries):
-                        try:
-                            params = {
-                                "type": api_call_transfer_type_value, "asset": asset_upper,
-                                "startTime": start_ms, "endTime": end_ms,
-                                "current": current_page_api, "size": limit_per_page,
-                                "recvWindow": recv_window_ms,
-                            }
-                            self.logger.debug(f"API Call ({api_call_transfer_type_value} page {current_page_api}) attempt {attempt+1} for {asset_upper}. EP: '{endpoint_path}', Params: {params}")
-                            history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
-                            fetched_rows_in_page = history_page.get('rows', [])
-                            api_response_total_count = history_page.get('total', 0)
-                            self.logger.debug(f"Raw API response for {api_call_transfer_type_value} page {current_page_api} {asset_upper} (attempt {attempt+1}): Fetched {len(fetched_rows_in_page) if fetched_rows_in_page is not None else 'None'} rows. API 'total': {api_response_total_count}. Sample: {str(history_page)[:300]}...")
-                            if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                            break
-                        except Exception as e_api_sf:
-                            self.logger.error(f"API/Net Error attempt {attempt+1} for {api_call_transfer_type_value} {asset_upper} page {current_page_api}: {e_api_sf}. Code: {getattr(e_api_sf, 'code', 'N/A')}")
-                            if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                            else: self.logger.error(f"Max retries for {api_call_transfer_type_value} {asset_upper} page {current_page_api}."); fetched_all_for_this_batch_asset_type = True
-
-                    if fetched_rows_in_page:
-                        for t in fetched_rows_in_page:
-                            timestamp_ms = t.get('timestamp')
-                            if not timestamp_ms: continue
-                            tx_timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                            if latest_known_ts and tx_timestamp <= latest_known_ts:
-                                continue
-
-                            tran_id_val = t.get('tranId')
-                            if tran_id_val is None: tran_id = f"{api_call_transfer_type_value.lower()}_{asset_upper.lower()}_{timestamp_ms}_{current_page_api}"
-                            else: tran_id = str(tran_id_val)
-
-                            if tran_id in processed_tran_ids_spot_futures: continue
-                            processed_tran_ids_spot_futures.add(tran_id)
-
-                            quantity = float(t['amount'])
-                            price_usd = 1.0 # Default for USDT
-                            if asset_upper != "USDT":
-                                self.logger.warning(f"Spot-Futures transfer of non-USDT asset {asset_upper} - price lookup might be needed and is not implemented here yet for this transfer type.")
-                                # If this asset is a target non-stablecoin, you might want to price it here too.
-                                # For simplicity, assuming only USDT is transferred or other assets are valued at $0 for these transfers.
-
-                            all_spot_futures_transfers.append({
-                                "symbol": asset_upper, "timestamp": tx_timestamp, "type": spot_action,
-                                "quantity": quantity, "price_usd": price_usd,
-                                "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                "source": source_name_current_type, "transaction_hash": tran_id,
-                                "notes": f"{log_label_detail} of {quantity:.8f} {asset_upper}. TxID: {t.get('tranId','N/A')}"
-                            })
-                        if not fetched_rows_in_page or (api_response_total_count > 0 and current_page_api * limit_per_page >= api_response_total_count) or len(fetched_rows_in_page) < limit_per_page:
-                            fetched_all_for_this_batch_asset_type = True
-                        else: current_page_api += 1
-                    else: fetched_all_for_this_batch_asset_type = True
-
-                    if fetched_all_for_this_batch_asset_type:
-                        self.logger.debug(f"Completed fetching pages for batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')} for {asset_upper} ({api_call_transfer_type_value}).")
-                        break
-                current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-                # Delay moved into the API call loop attempt
-                if current_batch_end_time_dt <= overall_start_time_dt_for_type: break
-
-            if config_entry != transfer_configs[-1] and binance_api_delay_ms > 0:
-                 time.sleep(binance_api_delay_ms * 2 / 1000.0) # Delay between MAIN_UMFUTURE and UMFUTURE_MAIN runs
-
-        self.logger.info(f"Fetched a total of {len(all_spot_futures_transfers)} new Spot <-> USDⓈ-M Futures transfer records processed for {asset_upper}.")
-        return all_spot_futures_transfers
-
-    def fetch_spot_convert_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Spot Convert History.")
-            return []
-
-        source_name = "Binance API Spot Convert" # Define source name
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("spot_convert_history", days_back if days_back is not None else 90)
-
-        overall_start_time_dt = None
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=60) # 1 hour buffer
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt}")
-        else:
-            overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt}")
-
-        if overall_start_time_dt >= now_utc:
-            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
-            return []
-
-        self.logger.info(f"Fetching Spot Convert History from {overall_start_time_dt.date()} to {now_utc.date()}.")
-        all_convert_transactions_filtered = []
-
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms", 1500))
-        binance_api_delay_ms = self.config.get("apis",{}).get("binance",{}).get("request_delay_ms", 250)
-
-        batch_days = 29 # Convert API can take up to 30 days range, use 29 for safety
-        limit_per_batch = 1000 # Max limit for this endpoint
-        max_retries = self.config.get("apis", {}).get("binance", {}).get("max_retries_per_batch", 3)
-        retry_delay_seconds = self.config.get("apis", {}).get("binance", {}).get("retry_delay_sec", 15)
-
-        current_iteration_end_time_dt = now_utc
-        processed_quote_ids = set() # To avoid double processing if a quote_id appears across fetches (unlikely with ON CONFLICT)
-
-        while current_iteration_end_time_dt > overall_start_time_dt:
-            current_iteration_start_time_dt = current_iteration_end_time_dt - datetime.timedelta(days=batch_days)
-            if current_iteration_start_time_dt < overall_start_time_dt:
-                current_iteration_start_time_dt = overall_start_time_dt
-
-            start_ms = int(current_iteration_start_time_dt.timestamp() * 1000)
-            end_ms = int(current_iteration_end_time_dt.timestamp() * 1000)
-
-            if start_ms >= end_ms: break
-
-            self.logger.debug(f"Fetching Spot Convert History batch: {current_iteration_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_iteration_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-            current_batch_data = None
-            for attempt in range(max_retries):
-                try:
-                    history_page = self.binance_client.get_convert_trade_history(
-                        startTime=start_ms, endTime=end_ms, limit=limit_per_batch
-                    )
-                    current_batch_data = history_page.get('list', [])
-                    self.logger.debug(f"Successfully fetched Spot Convert History batch (attempt {attempt+1}). Count: {len(current_batch_data) if current_batch_data else 0}")
-                    if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                    break
-                except Exception as e:
-                    self.logger.error(f"Error fetching Spot Convert History batch (attempt {attempt+1}): {e}")
-                    if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                    else: self.logger.error("Max retries for Spot Convert History batch."); break
-
-            if current_batch_data:
-                for trade in current_batch_data:
-                    timestamp = pd.to_datetime(trade['createTime'], unit='ms', utc=True).to_pydatetime()
-                    if latest_known_ts and timestamp <= latest_known_ts:
-                        # self.logger.debug(f"Skipping already processed convert trade {trade.get('quoteId')} based on timestamp")
-                        continue
-
-                    quote_id = trade.get('quoteId', trade.get('orderId', f"convert_{trade['fromAsset']}_{trade['toAsset']}_{trade['createTime']}"))
-                    if quote_id in processed_quote_ids: continue # Skip if already processed in this run
-                    processed_quote_ids.add(quote_id)
-
-                    if trade.get('orderStatus') == "SUCCESS":
-                        # Ensure "source": source_name is used
-                        from_asset_orig = trade['fromAsset'].upper()
-                        from_asset = self.symbol_mappings.normalize_symbol(from_asset_orig)
-                        from_amount = float(trade['fromAmount'])
-                        to_asset_orig = trade['toAsset'].upper()
-                        to_asset = self.symbol_mappings.normalize_symbol(to_asset_orig)
-                        to_amount = float(trade['toAmount'])
-
-                        if not (from_asset in self.target_assets_for_sync or to_asset in self.target_assets_for_sync):
-                            # self.logger.debug(f"Skipping Spot Convert trade {quote_id} as neither {from_asset} nor {to_asset} are target assets.")
-                            continue
-
-                        price_ratio = float(trade.get('ratio', "0"))
-                        sell_price_usd = 0.0; buy_price_usd = 0.0
-                        cg_call_made_for_this_convert = False # Reset for each trade
-
-                        if from_asset in self.stablecoin_symbols: sell_price_usd = 1.0
-                        elif from_asset in self.target_assets_for_sync:
-                            coin_id_from = self.symbol_mappings.get(from_asset)
-                            if coin_id_from:
-                                date_str = timestamp.strftime('%d-%m-%Y')
-                                fetched_price = self._get_coingecko_historical_price(coin_id_from, date_str)
-                                cg_call_made_for_this_convert = True
-                                if fetched_price is not None: sell_price_usd = fetched_price
-                                else: self.logger.warning(f"Spot Convert (Sell {from_asset}): Could not get hist price. Using $0.")
-                            else: self.logger.warning(f"Spot Convert (Sell {from_asset}): No CoinGecko ID. Using $0.")
-
-                        if to_asset in self.stablecoin_symbols: buy_price_usd = 1.0
-                        elif to_asset in self.target_assets_for_sync:
-                            coin_id_to = self.symbol_mappings.get(to_asset)
-                            if coin_id_to:
-                                date_str = timestamp.strftime('%d-%m-%Y')
-                                fetched_price = self._get_coingecko_historical_price(coin_id_to, date_str)
-                                if not cg_call_made_for_this_convert : cg_call_made_for_this_convert = True
-                                elif cg_call_made_for_this_convert == True: cg_call_made_for_this_convert = "Done"
-
-                                if fetched_price is not None: buy_price_usd = fetched_price
-                                else: self.logger.warning(f"Spot Convert (Buy {to_asset}): Could not get hist price. Using $0.")
-                            else: self.logger.warning(f"Spot Convert (Buy {to_asset}): No CoinGecko ID. Using $0.")
-
-                        if from_asset in self.target_assets_for_sync:
-                            all_convert_transactions_filtered.append({
-                                "symbol": from_asset, "timestamp": timestamp, "type": "SELL",
-                                "quantity": from_amount, "price_usd": sell_price_usd,
-                                "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                "source": source_name, "transaction_hash": f"convert_sell_{quote_id}",
-                                "notes": f"Convert: {from_amount:.8f} {from_asset} to {to_amount:.8f} {to_asset} @ {price_ratio}"
-                            })
-                        if to_asset in self.target_assets_for_sync:
-                            all_convert_transactions_filtered.append({
-                                "symbol": to_asset, "timestamp": timestamp, "type": "BUY",
-                                "quantity": to_amount, "price_usd": buy_price_usd,
-                                "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                "source": source_name, "transaction_hash": f"convert_buy_{quote_id}",
-                                "notes": f"Convert: {to_amount:.8f} {to_asset} from {from_amount:.8f} {from_asset} @ {price_ratio}"
-                            })
-                        if cg_call_made_for_this_convert == True and (sell_price_usd > 0.0 or buy_price_usd > 0.0):
-                            if cg_delay_ms > 0: time.sleep(cg_delay_ms / 1000.0)
-                    else:
-                        self.logger.info(f"Skipping non-SUCCESS Spot Convert trade: {quote_id} - Status: {trade.get('orderStatus')}")
-
-            current_iteration_end_time_dt = current_iteration_start_time_dt - datetime.timedelta(milliseconds=1)
-            # Removed the general Coingecko delay here; it's now per-priced item.
-            if current_iteration_end_time_dt <= overall_start_time_dt: break
-
-        self.logger.info(f"Processed {len(all_convert_transactions_filtered)} new targeted individual transactions from Spot Convert History API.")
-        return all_convert_transactions_filtered
-
-    def fetch_simple_earn_balances(self, spot_balances_df: pd.DataFrame) -> Dict[str, float]:
-        """
-        Efficiently fetch balances from Binance Simple Earn Flexible products
-        by only checking for assets that exist in the provided spot balances dataframe.
-        """
-        if not self.binance_client or spot_balances_df.empty:
-            self.logger.info("Binance client not available or no spot balances to check for Earn positions.")
-            return {}
-
-        earn_balances_aggregated: Dict[str, float] = {}
-        # Get the list of assets to check directly from the spot balances DataFrame
-        assets_to_check_api = spot_balances_df['symbol'].unique().tolist()
-
-        self.logger.info(f"Fetching Simple Earn Flexible balances for the {len(assets_to_check_api)} assets found in your spot wallet...")
-
-        for asset_api_name in assets_to_check_api:
-            try:
-                if not asset_api_name: continue
-
-                positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset_api_name)
-
-                if positions and isinstance(positions.get('rows'), list) and positions['rows']:
-                    total_amount_for_asset = sum(float(pos.get('totalAmount', 0.0)) for pos in positions['rows'])
-                    if total_amount_for_asset > 0:
-                        earn_balances_aggregated[asset_api_name] = total_amount_for_asset
-                        self.logger.debug(f"Found {total_amount_for_asset:.8f} {asset_api_name} in Simple Earn.")
-
-                time.sleep(0.3) # A small delay is still good practice
-            except BinanceAPIException as e:
-                if e.code in [-6001, -11001] or "not supported" in str(e).lower() or "invalid asset" in str(e).lower():
-                     self.logger.debug(f"No active Simple Earn product for {asset_api_name} or asset not supported.")
-                else:
-                     self.logger.error(f"API Error checking Simple Earn for {asset_api_name}: {e}")
-            except Exception as e:
-                self.logger.error(f"Unexpected error checking Simple Earn for {asset_api_name}: {e}", exc_info=True)
-
-        self.logger.info(f"Finished checking Earn balances. Found holdings for {len(earn_balances_aggregated)} " + ("asset" if len(earn_balances_aggregated) <= 1 else "assets"))
-        return earn_balances_aggregated
-
-    def fetch_simple_earn_flexible_rewards(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible rewards.")
-            return []
-
-        source_name_prefix = "Binance API Simple Earn Reward"
-        # We'll query for the latest timestamp using a wildcard to cover all reward types initially
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(f"{source_name_prefix} (%)")
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("simple_earn_rewards", days_back if days_back is not None else 90)
-
-        overall_start_time_dt: datetime.datetime
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(hours=1) # 1 hour buffer for rewards
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for '{source_name_prefix}': Effective start {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')} (last known relevant reward: {latest_known_ts.strftime('%Y-%m-%d %H:%M:%S %Z') if latest_known_ts else 'None'})")
-        else:
-            overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            self.logger.info(f"Full sync for '{source_name_prefix}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_start_time_dt >= now_utc:
-            self.logger.info(f"'{source_name_prefix}' history is very recent. No new data to fetch.")
-            return []
-
-        self.logger.info(f"Fetching Simple Earn Flexible rewards from {overall_start_time_dt.date()} (all types, filtered for target assets).")
-        all_rewards_transactions = []
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        batch_days = config_apis_binance.get("transfer_history_batch_days", 7) # Consistent batching
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 2)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms", 250)
-        recv_window_ms = config_apis_binance.get("recv_window", 10000)
-        endpoint_path = 'simple-earn/flexible/history/rewardRecord'
-        processed_reward_ids = set()
-        current_batch_end_time_dt = now_utc
-
-        while current_batch_end_time_dt > overall_start_time_dt:
-            current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-            if current_batch_start_time_dt < overall_start_time_dt:
-                current_batch_start_time_dt = overall_start_time_dt
-            start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-            end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-            if start_ms >= end_ms: break
-
-            self.logger.debug(f"Fetching SE Rewards: Batch Period {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-            current_page_api = 1; fetched_all_for_batch = False
-            while not fetched_all_for_batch:
-                response_data = None; fetched_rows = None; api_total = 0
-                for attempt in range(max_retries):
-                    try:
-                        params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        self.logger.debug(f"API Call (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
-                        response_data = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
-                        fetched_rows = response_data.get('rows', [])
-                        api_total = response_data.get('total', 0)
-                        self.logger.debug(f"Raw API (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows) if fetched_rows else '0'} rows. API Total: {api_total}. Sample: {str(response_data)[:200]}...")
-                        if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                        break
-                    except Exception as e:
-                        self.logger.error(f"Error (SE Rewards Pg: {current_page_api}) Att: {attempt + 1}: {e}. Code: {getattr(e, 'code', 'N/A')}")
-                        if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                        else: fetched_all_for_batch = True
-
-                if fetched_rows:
-                    for item in fetched_rows:
-                        timestamp_ms = item.get('time')
-                        if not timestamp_ms: continue
-                        timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                        if latest_known_ts and timestamp <= latest_known_ts:
-                            continue
-
-                        asset_rewarded = item.get('asset','').upper()
-                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset_rewarded)
-                        if normalized_symbol not in self.target_assets_for_sync:
-                            continue
-
-                        reward_type_from_item = item.get('type', 'UNKNOWN_REWARD_TYPE')
-                        reward_id_str = str(item.get('tranId', f"ser_{reward_type_from_item}_{asset_rewarded}_{timestamp_ms}_{item.get('rewards')}"))
-                        if reward_id_str in processed_reward_ids: continue
-                        processed_reward_ids.add(reward_id_str)
-
-                        quantity = float(item.get('rewards', 0.0))
-                        if quantity == 0: continue
-
-                        current_item_source_name = f"{source_name_prefix} ({reward_type_from_item})"
-
-                        price_usd_at_reward = 0.0
-                        coingecko_called_for_item = False
-                        if normalized_symbol in self.stablecoin_symbols:
-                            price_usd_at_reward = 1.0
-                        else:
-                            coin_id = self.symbol_mappings.get(normalized_symbol)
-                            if coin_id:
-                                date_str_for_price = timestamp.strftime('%d-%m-%Y')
-                                fetched_price = self._get_coingecko_historical_price(coin_id, date_str_for_price)
-                                coingecko_called_for_item = True
-                                if fetched_price is not None:
-                                    price_usd_at_reward = fetched_price
-                                    self.logger.debug(f"SE Reward: Fetched hist_price ${price_usd_at_reward:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                else:
-                                    self.logger.warning(f"SE Reward: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                            else:
-                                self.logger.warning(f"SE Reward: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
-
-                        all_rewards_transactions.append({
-                            "symbol": normalized_symbol, "timestamp": timestamp, "type": "DEPOSIT",
-                            "quantity": quantity, "price_usd": price_usd_at_reward,
-                            "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                            "source": current_item_source_name,
-                            "transaction_hash": reward_id_str,
-                            "notes": f"Simple Earn Reward: {reward_type_from_item} {quantity:.8f} {normalized_symbol}"
-                        })
-                        if coingecko_called_for_item and price_usd_at_reward > 0.0 and cg_delay_ms > 0:
-                            time.sleep(cg_delay_ms / 1000.0)
-
-                    if not fetched_rows or (api_total > 0 and current_page_api * limit_per_page >= api_total) or len(fetched_rows) < limit_per_page:
-                        fetched_all_for_batch = True
-                    else:
-                        current_page_api += 1
-                else: fetched_all_for_batch = True
-
-                if fetched_all_for_batch:
-                    self.logger.debug(f"Completed SE Rewards batch for {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}.")
-                    break
-
-            current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-            if current_batch_end_time_dt <= overall_start_time_dt: break
-
-        self.logger.info(f"Fetched and processed {len(all_rewards_transactions)} new Simple Earn Flexible reward transactions for target assets.")
-        return all_rewards_transactions
-
-    def fetch_simple_earn_flexible_subscriptions(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible subscriptions.")
-            return []
-
-        source_name = "Binance API Simple Earn Subscription"
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("simple_earn_subscriptions", days_back if days_back is not None else 90)
-
-        overall_start_time_dt: datetime.datetime
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        else:
-            overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_start_time_dt >= now_utc:
-            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
-            return []
-
-        self.logger.info(f"Fetching Simple Earn Flexible subscriptions from {overall_start_time_dt.date()}.")
-        all_subscription_transactions = []
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        batch_days = config_apis_binance.get("transfer_history_batch_days", 7)
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 2)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms", 250)
-        recv_window_ms = config_apis_binance.get("recv_window", 10000)
-        endpoint_path = 'simple-earn/flexible/history/subscriptionRecord'
-        processed_ids = set()
-        current_batch_end_time_dt = now_utc
-
-        while current_batch_end_time_dt > overall_start_time_dt:
-            current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-            if current_batch_start_time_dt < overall_start_time_dt:
-                current_batch_start_time_dt = overall_start_time_dt
-            start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-            end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-            if start_ms >= end_ms: break
-
-            self.logger.debug(f"Fetching SE Subscriptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-            current_page_api = 1; fetched_all_for_batch = False
-            while not fetched_all_for_batch:
-                history_page = None; fetched_rows_in_page = None; api_total_for_this_query = 0
-                for attempt in range(max_retries):
-                    try:
-                        params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        self.logger.debug(f"API Call (SE Subs Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
-                        history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
-                        fetched_rows_in_page = history_page.get('rows', [])
-                        api_total_for_this_query = history_page.get('total', 0)
-                        self.logger.debug(f"Raw API (SE Subs Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
-                        if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                        break
-                    except Exception as e:
-                        self.logger.error(f"API/Net Error attempt {attempt + 1} for SE Subs page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
-                        if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                        else: self.logger.error(f"Max retries for SE Subs page {current_page_api}."); fetched_all_for_batch = True
-
-                if fetched_rows_in_page:
-                    for item in fetched_rows_in_page:
-                        timestamp_ms = item.get('time')
-                        if not timestamp_ms: continue
-                        timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                        if latest_known_ts and timestamp <= latest_known_ts:
-                            continue
-
-                        purchase_id = str(item.get('purchaseId', f"ses_{item.get('asset')}_{timestamp_ms}_{item.get('amount')}"))
-                        if purchase_id in processed_ids: continue
-                        processed_ids.add(purchase_id)
-
-                        asset_subscribed = item.get('asset','').upper()
-                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset_subscribed)
-                        if normalized_symbol not in self.target_assets_for_sync:
-                            continue
-                        quantity = float(item.get('amount', 0.0))
-                        if quantity == 0: continue
-
-                        price_usd = 0.0
-                        coingecko_called_for_item = False
-                        if normalized_symbol in self.stablecoin_symbols: price_usd = 1.0
-                        else:
-                            coin_id = self.symbol_mappings.get(normalized_symbol)
-                            if coin_id:
-                                date_str_for_price = timestamp.strftime('%d-%m-%Y')
-                                fetched_price = self._get_coingecko_historical_price(coin_id, date_str_for_price)
-                                coingecko_called_for_item = True
-                                if fetched_price is not None:
-                                    price_usd = fetched_price
-                                    self.logger.debug(f"SE Sub: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                else: self.logger.warning(f"SE Sub: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                            else: self.logger.warning(f"SE Sub: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
-
-                        all_subscription_transactions.append({
-                            "symbol": normalized_symbol, "timestamp": timestamp, "type": "SELL",
-                            "quantity": quantity, "price_usd": price_usd,
-                            "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                            "source": source_name, "transaction_hash": purchase_id,
-                            "notes": f"Simple Earn Subscription: {quantity:.8f} {normalized_symbol}"
-                        })
-                        if coingecko_called_for_item and price_usd > 0.0 and cg_delay_ms > 0:
-                             time.sleep(cg_delay_ms / 1000.0)
-
-                    if not fetched_rows_in_page or (api_total_for_this_query > 0 and current_page_api * limit_per_page >= api_total_for_this_query) or len(fetched_rows_in_page) < limit_per_page:
-                        fetched_all_for_batch = True
-                    else: current_page_api += 1
-                else: fetched_all_for_batch = True
-
-                if fetched_all_for_batch:
-                    self.logger.debug(f"Completed SE Subscriptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
-                    break
-
-            current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-            if current_batch_end_time_dt <= overall_start_time_dt: break
-
-        self.logger.info(f"Fetched and processed {len(all_subscription_transactions)} new Simple Earn Flexible subscription transactions for target assets.")
-        return all_subscription_transactions
-
-    def fetch_simple_earn_flexible_redemptions(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Simple Earn Flexible redemptions.")
-            return []
-
-        source_name = "Binance API Simple Earn Redemption"
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("simple_earn_redemptions", days_back if days_back is not None else 90)
-
-        overall_start_time_dt: datetime.datetime
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        else:
-            overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_start_time_dt >= now_utc:
-            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
-            return []
-
-        self.logger.info(f"Fetching Simple Earn Flexible redemptions from {overall_start_time_dt.date()}.")
-        all_redemption_transactions = []
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        batch_days = config_apis_binance.get("transfer_history_batch_days", 7)
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 2)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms", 250)
-        recv_window_ms = config_apis_binance.get("recv_window", 10000)
-        endpoint_path = 'simple-earn/flexible/history/redemptionRecord'
-        processed_ids = set()
-        current_batch_end_time_dt = now_utc
-
-        while current_batch_end_time_dt > overall_start_time_dt:
-            current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-            if current_batch_start_time_dt < overall_start_time_dt:
-                current_batch_start_time_dt = overall_start_time_dt
-            start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-            end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-            if start_ms >= end_ms: break
-
-            self.logger.debug(f"Fetching SE Redemptions: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-            current_page_api = 1; fetched_all_for_batch = False
-            while not fetched_all_for_batch:
-                history_page = None; fetched_rows_in_page = None; api_total_for_this_query = 0
-                for attempt in range(max_retries):
-                    try:
-                        params = {"startTime": start_ms, "endTime": end_ms, "current": current_page_api, "size": limit_per_page, "recvWindow": recv_window_ms}
-                        self.logger.debug(f"API Call (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
-                        history_page = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
-                        fetched_rows_in_page = history_page.get('rows', [])
-                        api_total_for_this_query = history_page.get('total', 0)
-                        self.logger.debug(f"Raw API (SE Redemptions Pg: {current_page_api}) Att: {attempt + 1}: Fetched {len(fetched_rows_in_page) if fetched_rows_in_page else '0'} rows. API total: {api_total_for_this_query}. Sample: {str(history_page)[:200]}...")
-                        if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                        break
-                    except Exception as e:
-                        self.logger.error(f"API/Net Error attempt {attempt + 1} for SE Redemptions page {current_page_api}: {e}. Code: {getattr(e, 'code', 'N/A')}")
-                        if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                        else: self.logger.error(f"Max retries for SE Redemptions page {current_page_api}."); fetched_all_for_batch = True
-
-                if fetched_rows_in_page:
-                    for item in fetched_rows_in_page:
-                        timestamp_ms = item.get('time')
-                        if not timestamp_ms: continue
-                        timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                        if latest_known_ts and timestamp <= latest_known_ts:
-                            continue
-
-                        redeem_id = str(item.get('redeemId', f"serd_{item.get('asset')}_{timestamp_ms}_{item.get('amount')}"))
-                        if redeem_id in processed_ids: continue
-                        processed_ids.add(redeem_id)
-
-                        asset_redeemed = item.get('asset','').upper()
-                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset_redeemed)
-                        if normalized_symbol not in self.target_assets_for_sync:
-                            continue
-                        quantity = float(item.get('amount', 0.0))
-                        if quantity == 0: continue
-
-                        price_usd = 0.0
-                        coingecko_called_for_item = False
-                        if normalized_symbol in self.stablecoin_symbols: price_usd = 1.0
-                        else:
-                            coin_id = self.symbol_mappings.get(normalized_symbol)
-                            if coin_id:
-                                date_str_for_price = timestamp.strftime('%d-%m-%Y')
-                                fetched_price = self._get_coingecko_historical_price(coin_id, date_str_for_price)
-                                coingecko_called_for_item = True
-                                if fetched_price is not None:
-                                    price_usd = fetched_price
-                                    self.logger.debug(f"SE Redemp: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                else: self.logger.warning(f"SE Redemp: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                            else: self.logger.warning(f"SE Redemp: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
-
-                        all_redemption_transactions.append({
-                            "symbol": normalized_symbol, "timestamp": timestamp, "type": "BUY",
-                            "quantity": quantity, "price_usd": price_usd,
-                            "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                            "source": source_name, "transaction_hash": redeem_id,
-                            "notes": f"Simple Earn Redemption: {quantity:.8f} {normalized_symbol}"
-                        })
-                        if coingecko_called_for_item and price_usd > 0.0 and cg_delay_ms > 0:
-                             time.sleep(cg_delay_ms / 1000.0)
-
-                    if not fetched_rows_in_page or (api_total_for_this_query > 0 and current_page_api * limit_per_page >= api_total_for_this_query) or len(fetched_rows_in_page) < limit_per_page:
-                        fetched_all_for_batch = True
-                    else: current_page_api += 1
-                else: fetched_all_for_batch = True
-
-                if fetched_all_for_batch:
-                    self.logger.debug(f"Completed SE Redemptions batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}.")
-                    break
-
-            current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-            if current_batch_end_time_dt <= overall_start_time_dt: break
-
-        self.logger.info(f"Fetched and processed {len(all_redemption_transactions)} new Simple Earn Flexible redemption transactions for target assets.")
-        return all_redemption_transactions
-
-    def fetch_dividend_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch dividend history.")
-            return []
-
-        source_name = "Binance API Dividend"
-        latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name)
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("dividend_history", days_back if days_back is not None else 90)
-
-        overall_start_time_dt: datetime.datetime
-        if latest_known_ts:
-            effective_start_from_db = latest_known_ts - datetime.timedelta(hours=1) # 1 hour buffer
-            fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-            overall_start_time_dt = max(effective_start_from_db, fallback_start_from_days)
-            self.logger.info(f"Selective sync for '{source_name}': Effective start date {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-        else:
-            overall_start_time_dt = now_utc - datetime.timedelta(days=specific_lookback_days)
-            self.logger.info(f"Full sync for '{source_name}': Fetching last {specific_lookback_days} days from {overall_start_time_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        if overall_start_time_dt >= now_utc:
-            self.logger.info(f"'{source_name}' history is very recent. No new data to fetch.")
-            return []
-
-        self.logger.info(f"Fetching asset dividend history from {overall_start_time_dt.date()}.")
-        all_dividend_transactions = []
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        batch_max_days = config_apis_binance.get("transfer_history_batch_days", 7) # Consistent batching
-        limit_per_api_call = 500 # Max for this endpoint
-        max_retries = config_apis_binance.get("max_retries_per_batch", 2)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms", 250)
-        processed_tran_ids = set()
-        current_batch_end_time_dt = now_utc
-
-        while current_batch_end_time_dt > overall_start_time_dt:
-            current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_max_days)
-            if current_batch_start_time_dt < overall_start_time_dt:
-                current_batch_start_time_dt = overall_start_time_dt
-            start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-            end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-            if start_ms >= end_ms: break
-
-            self.logger.debug(f"Fetching dividend history: Batch {current_batch_start_time_dt.strftime('%Y-%m-%d %H:%M')} to {current_batch_end_time_dt.strftime('%Y-%m-%d %H:%M')}")
-            fetched_dividends_for_batch = None
-            for attempt in range(max_retries):
-                try:
-                    fetched_dividends_for_batch = self.binance_client.get_asset_dividend_history(
-                        startTime=start_ms, endTime=end_ms, limit=limit_per_api_call
-                    )
-                    rows_fetched_count = len(fetched_dividends_for_batch.get('rows', [])) if fetched_dividends_for_batch and 'rows' in fetched_dividends_for_batch else 0
-                    self.logger.debug(f"Raw API (Dividends) Att {attempt + 1}: Fetched {rows_fetched_count} records. Sample: {str(fetched_dividends_for_batch)[:200]}...")
-                    if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                    break
-                except Exception as e_api_div:
-                    self.logger.error(f"API/Net Error attempt {attempt + 1} for dividend history: {e_api_div}. Code: {getattr(e_api_div, 'code', 'N/A')}")
-                    if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                    else: self.logger.error(f"Max retries for dividend history batch."); # No fetched_all_for_batch here, will just process what we have if any
-
-            if fetched_dividends_for_batch and fetched_dividends_for_batch.get('rows'):
-                for item in fetched_dividends_for_batch['rows']:
-                    timestamp_ms = item.get('divTime')
-                    if not timestamp_ms: continue
-                    timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                    if latest_known_ts and timestamp <= latest_known_ts:
-                        continue
-
-                    tran_id = str(item.get('tranId'))
-                    if not tran_id or tran_id == 'None' or tran_id in processed_tran_ids :
-                        self.logger.debug(f"Skipping dividend item with missing or duplicate tranId: {item}")
-                        continue
-                    processed_tran_ids.add(tran_id)
-
-                    asset_received = item.get('asset','').upper()
-                    if not asset_received: self.logger.warning(f"Skipping dividend item with missing asset: {item}"); continue
-                    normalized_symbol = self.symbol_mappings.normalize_symbol(asset_received)
-                    if normalized_symbol not in self.target_assets_for_sync:
-                        continue
-                    quantity = float(item.get('amount', 0.0))
-                    if quantity == 0: continue
-
-                    price_usd = 0.0
-                    coingecko_called_for_item = False
-                    if normalized_symbol in self.stablecoin_symbols: price_usd = 1.0
-                    else:
-                        coin_id = self.symbol_mappings.get(normalized_symbol)
-                        if coin_id:
-                            date_str_for_price = timestamp.strftime('%d-%m-%Y')
-                            fetched_price = self._get_coingecko_historical_price(coin_id, date_str_for_price)
-                            coingecko_called_for_item = True
-                            if fetched_price is not None:
-                                price_usd = fetched_price
-                                self.logger.debug(f"Dividend: Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                            else: self.logger.warning(f"Dividend: Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                        else: self.logger.warning(f"Dividend: No CoinGecko ID for {normalized_symbol}. Using $0.00.")
-
-                    all_dividend_transactions.append({
-                        "symbol": normalized_symbol, "timestamp": timestamp, "type": "DEPOSIT",
-                        "quantity": quantity, "price_usd": price_usd,
-                        "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                        "source": source_name, "transaction_hash": tran_id,
-                        "notes": f"Dividend: {item.get('enInfo', '')} - {quantity:.8f} {normalized_symbol}"
-                    })
-                    if coingecko_called_for_item and price_usd > 0.0 and cg_delay_ms > 0 :
-                         time.sleep(cg_delay_ms / 1000.0)
-
-            current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-            if current_batch_end_time_dt <= overall_start_time_dt: break
-
-        self.logger.info(f"Fetched and processed {len(all_dividend_transactions)} new dividend transactions for target assets.")
-        return all_dividend_transactions
-
-    def fetch_staking_history(self, days_back: Optional[int] = None) -> List[Dict[str, Any]]:
-        if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch staking history.")
-            return []
-
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        specific_lookback_days = self.config.get("history_lookback_days", {}).get("staking_history", days_back if days_back is not None else 90)
-
-        self.logger.info(f"Fetching staking history (Product: STAKING) with lookback: {specific_lookback_days} days.")
-        all_transactions = []
-
-        config_apis_binance = self.config.get("apis", {}).get("binance", {})
-        cg_config = self.config.get("apis", {}).get("coingecko", {})
-        cg_delay_ms = cg_config.get("request_delay_ms_generic_historical", cg_config.get("request_delay_ms_csv", 1500))
-        batch_days = 89
-        limit_per_page = 100
-        max_retries = config_apis_binance.get("max_retries_per_batch", 2)
-        retry_delay_seconds = config_apis_binance.get("retry_delay_sec", 30)
-        binance_api_delay_ms = config_apis_binance.get("request_delay_ms", 250)
-        recv_window_ms = config_apis_binance.get("recv_window", 10000)
-        endpoint_path = 'staking/history'
-        processed_txn_ids_this_run = set() # Avoid reprocessing within the same sync_data call if tranId appears multiple times
-        staking_product_type = "STAKING"
-        transaction_types_to_fetch = ["SUBSCRIPTION", "REDEMPTION", "INTEREST"]
-
-        for txn_type_filter in transaction_types_to_fetch:
-            source_name_current_filter = f"Binance API Staking ({staking_product_type} {txn_type_filter})"
-            latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source_name_current_filter)
-
-            overall_start_time_dt_for_filter: datetime.datetime
-            if latest_known_ts:
-                effective_start_from_db = latest_known_ts - datetime.timedelta(minutes=10)
-                fallback_start_from_days = now_utc - datetime.timedelta(days=specific_lookback_days)
-                overall_start_time_dt_for_filter = max(effective_start_from_db, fallback_start_from_days)
-                self.logger.info(f"Selective sync for '{source_name_current_filter}': Effective start date {overall_start_time_dt_for_filter.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-            else:
-                overall_start_time_dt_for_filter = now_utc - datetime.timedelta(days=specific_lookback_days)
-                self.logger.info(f"Full sync for '{source_name_current_filter}': Fetching last {specific_lookback_days} days from {overall_start_time_dt_for_filter.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-            if overall_start_time_dt_for_filter >= now_utc:
-                self.logger.info(f"'{source_name_current_filter}' history is very recent. Skipping.")
-                continue
-
-            self.logger.info(f"Fetching staking history for Product: {staking_product_type}, TxnType: {txn_type_filter} from {overall_start_time_dt_for_filter.date()}.")
-            current_batch_end_time_dt = now_utc
-
-            while current_batch_end_time_dt > overall_start_time_dt_for_filter:
-                current_batch_start_time_dt = current_batch_end_time_dt - datetime.timedelta(days=batch_days)
-                if current_batch_start_time_dt < overall_start_time_dt_for_filter:
-                    current_batch_start_time_dt = overall_start_time_dt_for_filter
-                start_ms = int(current_batch_start_time_dt.timestamp() * 1000)
-                end_ms = int(current_batch_end_time_dt.timestamp() * 1000)
-                if start_ms >= end_ms: break
-
-                self.logger.debug(f"Fetching staking ({staking_product_type}/{txn_type_filter}): Batch {current_batch_start_time_dt.strftime('%Y-%m-%d')} to {current_batch_end_time_dt.strftime('%Y-%m-%d')}")
-                current_page_api = 1; fetched_all_for_batch_prod_type = False
-                while not fetched_all_for_batch_prod_type:
-                    response_data = None; fetched_rows_in_page = None
-                    for attempt in range(max_retries):
-                        try:
-                            params = {
-                                "product": staking_product_type, "txnType": txn_type_filter,
-                                "startTime": start_ms, "endTime": end_ms,
-                                "current": current_page_api, "size": limit_per_page,
-                                "recvWindow": recv_window_ms
-                            }
-                            self.logger.debug(f"API Call (Staking {staking_product_type}/{txn_type_filter}, Pg: {current_page_api}) Att {attempt + 1}. EP: '{endpoint_path}', Params: {params}")
-                            response_data = self.binance_client._request_margin_api('get', endpoint_path, True, data=params)
-                            fetched_rows_in_page = response_data if isinstance(response_data, list) else []
-                            self.logger.debug(f"Raw API (Staking {staking_product_type}/{txn_type_filter}, pg {current_page_api}, att {attempt+1}): Fetched {len(fetched_rows_in_page)} records. Sample: {str(response_data)[:200]}...")
-                            if binance_api_delay_ms > 0: time.sleep(binance_api_delay_ms / 1000.0)
-                            break
-                        except Exception as e_api_stake:
-                            self.logger.error(f"API/Net Error staking ({staking_product_type}/{txn_type_filter}, pg {current_page_api}, att {attempt+1}): {e_api_stake}. Code: {getattr(e_api_stake, 'code', 'N/A')}")
-                            if attempt < max_retries - 1: time.sleep(retry_delay_seconds)
-                            else: self.logger.error(f"Max retries for staking history."); fetched_all_for_batch_prod_type = True
-
-                    if fetched_rows_in_page:
-                        for item in fetched_rows_in_page:
-                            timestamp_ms = item.get('time')
-                            if not timestamp_ms: continue
-                            timestamp = pd.to_datetime(timestamp_ms, unit='ms', utc=True).to_pydatetime()
-
-                            if latest_known_ts and timestamp <= latest_known_ts:
-                                continue
-
-                            txn_id_val = item.get('txnId')
-                            if txn_id_val is None: txn_id = f"stk_{item.get('asset')}_{timestamp_ms}_{item.get('amount')}_{txn_type_filter}"
-                            else: txn_id = str(txn_id_val)
-
-                            if txn_id in processed_txn_ids_this_run: continue
-                            processed_txn_ids_this_run.add(txn_id)
-
-                            asset = item.get('asset','').upper()
-                            normalized_symbol = self.symbol_mappings.normalize_symbol(asset)
-                            if normalized_symbol not in self.target_assets_for_sync:
-                                continue
-                            quantity = float(item.get('amount', 0.0))
-                            if quantity == 0: continue
-
-                            tx_type_mapped = ""; notes_prefix = ""
-                            if txn_type_filter == "SUBSCRIPTION": tx_type_mapped = "SELL"; notes_prefix = "Staking Subscription"
-                            elif txn_type_filter == "REDEMPTION": tx_type_mapped = "BUY"; notes_prefix = "Staking Redemption"
-                            elif txn_type_filter == "INTEREST": tx_type_mapped = "DEPOSIT"; notes_prefix = "Staking Interest"
-                            else: self.logger.warning(f"Unknown staking txnType: {txn_type_filter} for item {item}"); continue
-
-                            price_usd = 0.0
-                            coingecko_called_for_item = False
-                            if normalized_symbol in self.stablecoin_symbols: price_usd = 1.0
-                            else:
-                                coin_id = self.symbol_mappings.get(normalized_symbol)
-                                if coin_id:
-                                    date_str_for_price = timestamp.strftime('%d-%m-%Y')
-                                    fetched_price = self._get_coingecko_historical_price(coin_id, date_str_for_price)
-                                    coingecko_called_for_item = True
-                                    if fetched_price is not None:
-                                        price_usd = fetched_price
-                                        self.logger.debug(f"Staking ({notes_prefix}): Fetched hist_price ${price_usd:.6f} for {normalized_symbol} on {date_str_for_price}.")
-                                    else: self.logger.warning(f"Staking ({notes_prefix}): Could not get hist price for {normalized_symbol} on {date_str_for_price}. Using $0.00.")
-                                else: self.logger.warning(f"Staking ({notes_prefix}): No CoinGecko ID for {normalized_symbol}. Using $0.00.")
-
-                            all_transactions.append({
-                                "symbol": normalized_symbol, "timestamp": timestamp, "type": tx_type_mapped,
-                                "quantity": quantity, "price_usd": price_usd,
-                                "fee_quantity": 0.0, "fee_currency": None, "fee_usd": 0.0,
-                                "source": source_name_current_filter,
-                                "transaction_hash": txn_id,
-                                "notes": f"{notes_prefix}: {quantity:.8f} {normalized_symbol}"
-                            })
-                            if coingecko_called_for_item and price_usd > 0.0 and cg_delay_ms > 0:
-                                 time.sleep(cg_delay_ms / 1000.0)
-
-                        if len(fetched_rows_in_page) < limit_per_page: fetched_all_for_batch_prod_type = True
-                        else: current_page_api += 1
-                    else: fetched_all_for_batch_prod_type = True
-
-                    if fetched_all_for_batch_prod_type: break
-
-                current_batch_end_time_dt = current_batch_start_time_dt - datetime.timedelta(milliseconds=1)
-                if current_batch_end_time_dt <= overall_start_time_dt_for_filter: break
-
-            if binance_api_delay_ms > 0 and txn_type_filter != transaction_types_to_fetch[-1] :
-                time.sleep(binance_api_delay_ms * 2 / 1000.0)
-
-        self.logger.info(f"Fetched and processed {len(all_transactions)} new staking transactions (Product: {staking_product_type}) for target assets.")
-        return all_transactions
-
     def update_holdings_from_transactions(self):
         """
         Processes all transactions and updates holdings table with FIFO cost basis.
@@ -3269,75 +1498,66 @@ class CryptoPortfolioTracker:
         else:
             self.logger.warning("No holdings with valid cost basis to update in the database.")
 
-    def calculate_portfolio_metrics(self) -> Dict[str, Any]:
+    async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
         """
         Calculates key portfolio metrics using a consolidated view of holdings,
-        correctly reflecting that the Earn balance is the authoritative total for assets in Earn.
+        correctly handling the relationship between Spot and Earn balances.
         """
         self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
-
-        # 1. Fetch balances
         cost_basis_df = self.db_manager.get_holdings()
-        total_api_df = self.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
 
-        # Default to an empty DataFrame for Earn balances.
-        earn_df = pd.DataFrame(columns=['symbol', 'earn_quantity'])
+        # 1. Fetch total balances from the main account endpoint
+        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
 
-        # Only attempt to fetch from Simple Earn if NOT in testnet mode.
+        # 2. Fetch Earn-only balances
+        earn_balances_df = pd.DataFrame(columns=['symbol', 'earn_quantity'])
         if not self.config_manager.is_testnet_mode:
-            earn_dict = self.fetch_simple_earn_balances(total_api_df)
+            earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
             if earn_dict:
-                 earn_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
-        else:
-            self.logger.info("TESTNET MODE: Skipping Simple Earn balance fetch during metrics calculation.")
+                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
 
-        # 2. Merge the dataframes
-        holdings_df = pd.merge(total_api_df, earn_df, on='symbol', how='outer').fillna(0)
-        holdings_df['earn_quantity'] = holdings_df['earn_quantity'].fillna(0.0)
+        # 3. Merge and correctly calculate quantities using your original, robust logic
+        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on='symbol', how='outer').fillna(0)
 
-        # For each asset, the true total quantity is the larger of the two values reported by the APIs.
+        # The true total quantity is the *maximum* of the two API reports, handling any sync lag.
         holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
-
         holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
-        holdings_df = holdings_df[holdings_df['total_quantity'] > 0.00000001].reset_index(drop=True)
+
+        holdings_df = holdings_df[holdings_df['total_quantity'] > 1e-8].reset_index(drop=True)
 
         if holdings_df.empty:
-            self.logger.warning("No non-zero holdings found. Portfolio value is $0.")
             return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
 
+        # 4. Enrich with cost basis and current price data
         if not cost_basis_df.empty:
             holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
         else:
-            # If there's no cost basis data, create the column and fill it with zeros
             holdings_df['average_cost_basis'] = 0.0
         holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
 
-        prices = self._get_current_prices(holdings_df['symbol'].tolist())
+        prices = await self.enricher.get_current_prices(holdings_df['symbol'].tolist())
         holdings_df['current_price'] = holdings_df['symbol'].map(prices).fillna(0.0)
 
+        # 5. Calculate final metrics
         holdings_df['value_usd'] = holdings_df['total_quantity'] * holdings_df['current_price']
         holdings_df['cost_basis_total'] = holdings_df['total_quantity'] * holdings_df['average_cost_basis']
         holdings_df['unrealized_pl_usd'] = holdings_df['value_usd'] - holdings_df['cost_basis_total']
-        holdings_df['unrealized_pl_percent'] = 0.0
-        mask = holdings_df['cost_basis_total'] > 0
-        holdings_df.loc[mask, 'unrealized_pl_percent'] = \
-            (holdings_df.loc[mask, 'unrealized_pl_usd'] / holdings_df.loc[mask, 'cost_basis_total']) * 100
+        holdings_df.loc[holdings_df['cost_basis_total'] > 0, 'unrealized_pl_percent'] = (holdings_df['unrealized_pl_usd'] / holdings_df['cost_basis_total']) * 100
 
         total_value = holdings_df['value_usd'].sum()
-        total_portfolio_cost_basis = holdings_df['cost_basis_total'].sum()
-        holdings_df['allocation'] = holdings_df['value_usd'] / total_value if total_value > 0 else 0
-        total_pl_usd = total_value - total_portfolio_cost_basis
-        total_pl_percent = (total_pl_usd / total_portfolio_cost_basis * 100) if total_portfolio_cost_basis > 0 else 0.0
+        total_cost_basis = holdings_df['cost_basis_total'].sum()
+        total_pl_usd = total_value - total_cost_basis
+        total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
 
         metrics = {
             "total_value_usd": total_value,
-            "total_cost_basis_usd": total_portfolio_cost_basis,
+            "total_cost_basis_usd": total_cost_basis,
             "unrealized_pl_usd": total_pl_usd,
             "unrealized_pl_percent": total_pl_percent,
             "holdings_df": holdings_df,
             "timestamp": datetime.datetime.now()
         }
-        self.logger.info(f"Consolidated Metrics Calculated: Total Value = ${total_value:,.2f}")
+        self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
         return metrics
 
     def create_portfolio_charts(self, metrics: Dict[str, Any]):

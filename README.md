@@ -467,7 +467,9 @@ All files are organized in the `data/` directory:
 
 ### Common Issues
 
-**"API Connection Failed"**
+#### API Connection Failed
+Test your API connections and verify configuration:
+
 ```bash
 # Test API connections
 python main.py  # Choose option 14 (Test API Connections)
@@ -479,29 +481,62 @@ python main.py  # Choose option 12 (View Configuration)
 cat .env
 ```
 
-**"Permission Denied" or "Invalid API Key"**
+#### Permission Denied or Invalid API Key
 - Ensure API key has correct permissions (Read-only for tracking, Spot Trading for live trades)
 - Verify IP whitelist settings in Binance
 - Check if API key is expired or suspended
 - Confirm recv_window setting (default: 60000ms)
 
-**"No Data Found" or "Empty Portfolio"**
+#### No Data Found or Empty Portfolio
 - Run full sync first: Choose option 1
 - Verify you have holdings in your Binance account (Spot or Earn wallets)
 - Check minimum value threshold in config (`minimum_value_usd`)
 - Review logs: `tail -f logs/portfolio_tracker.log`
 
-**"Symbol Not Found" in CoinGecko**
+#### Symbol Not Found in CoinGecko
 - Update `symbol_mappings.coingecko_ids` in config
 - Check if token is listed on CoinGecko API
 - Add custom mapping for new tokens
 - Use symbol normalization for ticker variations (RNDR → RENDER)
 
-**"Rate Limit Exceeded"**
+#### Rate Limit Exceeded
 - Increase `request_delay_ms` in API configuration
 - Reduce `batch_days` for smaller batches
 - Check rate limits in Binance account
 - Consider upgrading CoinGecko API plan
+
+#### pandas_ta NaN Import Error
+To avoid the "cannot import name 'NaN' from 'numpy'" error on fresh installations:
+
+1. **Activate the virtual environment:**
+   ```bash
+   source .venv/bin/activate
+   ```
+
+2. **Install compatible versions:**
+   ```bash
+   pip install --upgrade numpy pandas-ta
+   # OR use specific versions:
+   pip install numpy==1.26.4 pandas-ta==0.3.90b0
+   ```
+
+3. **If the error persists, apply manual fix:**
+   Edit `venv/lib/python3.12/site-packages/pandas_ta/momentum/squeeze_pro.py`
+
+   Change:
+   ```python
+   from numpy import NaN as npNaN
+   ```
+
+   To:
+   ```python
+   from numpy import nan as npNaN
+   ```
+
+4. **Verify the fix:**
+   ```bash
+   python main.py
+   ```
 
 ### Debug Mode
 
