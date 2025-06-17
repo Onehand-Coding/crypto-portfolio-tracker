@@ -1051,11 +1051,20 @@ class CryptoPortfolioTracker:
             initial_capital_str = input("Enter initial capital for simulation (default: 10000): ")
             initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
 
-            period_str = input("Enter backtest period (e.g., 2y, 3y, 5y - default: 3y): ")
-            period = period_str if period_str else '3y'
+            period = ""
+            while True:
+                period_str = input("Enter backtest period (e.g., 2y, 3y, 5y - default: 3y): ").strip().lower()
+                if not period_str:
+                    period = '3y'  # Default value
+                    break
+                # Regex to validate format like '1d', '6m', '5y'
+                if re.match(r"^\d+[dmy]$", period_str):
+                    period = period_str
+                    break
+                else:
+                    print("❌ Invalid format. Please use a number followed by 'd', 'm', or 'y' (e.g., '90d', '6m', '3y').")
 
             backtester.run(initial_capital=initial_capital, period=period)
-            backtester.generate_report()
 
         except Exception as e:
             self.logger.error(f"An error occurred during rebalancing backtest: {e}", exc_info=True)

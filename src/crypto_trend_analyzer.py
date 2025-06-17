@@ -241,6 +241,66 @@ class CryptoTrendAnalyzer:
             ma_periods=(sma_short_len, sma_long_len) if sma_short_len and sma_long_len else None
         )
 
+    def analyze_historical_row(self, data: pd.DataFrame, symbol: str, timeframe: str, sim_date: pd.Timestamp) -> TrendAnalysis:
+        """
+        Analyzes a single row of historical data for a specific simulation date.
+        This method is designed to be called by the backtester.
+        """
+        timeframe_cfg = self.timeframe_settings.get(timeframe, {})
+        # Assume indicators are already calculated on the 'data' DataFrame
+        indicator_df = data
+
+        if indicator_df.empty or sim_date not in indicator_df.index:
+            self.logger.warning(f"Backtest: Data for {symbol} on {sim_date} not available.")
+            return TrendAnalysis(symbol, timeframe, 0, 0, [TrendCondition.INSUFFICIENT_DATA.value], 50.0, 0, 0)
+
+        # Get the integer index of the simulation date to find the previous day
+        try:
+            date_idx = indicator_df.index.get_loc(sim_date)
+            if date_idx == 0: # Not enough data for a 'previous' row
+                return TrendAnalysis(symbol, timeframe, 0, 0, [TrendCondition.INSUFFICIENT_DATA.value], 50.0, 0, 0)
+            latest = indicator_df.iloc[date_idx]
+            previous = indicator_df.iloc[date_idx - 1]
+        except (KeyError, IndexError) as e:
+            self.logger.error(f"Backtest: Could not locate date {sim_date} or its predecessor for {symbol}. Error: {e}")
+            return TrendAnalysis(symbol, timeframe, 0, 0, [TrendCondition.INSUFFICIENT_DATA.value], 50.0, 0, 0)
+
+
+        current_price = latest.get('Close', 0.0)
+        # Note: price_change_pct is not meaningful in a backtest context like this, setting to 0.
+        price_change_pct = 0.0
+
+        sma_short_len = timeframe_cfg.get('sma_short_window')
+        sma_long_len = timeframe_cfg.get('sma_long_window')
+
+        sma_short_val = latest.get(f"SMA_{sma_short_len}", 0.0)
+        sma_long_val = latest.get(f"SMA_{sma_long_len}", 0.0)
+        rsi_val = latest.get(f"RSI_{self.rsi_period}", 50.0)
+
+        active_conditions = self._evaluate_conditions(latest, previous, sma_short_val, sma_long_val, rsi_val)
+
+        if 'Volume' in indicator_df.columns and pd.notna(latest.get('Volume')):
+             # Calculate rolling volume mean on data up to the current simulation date
+             volume_window = indicator_df.loc[:sim_date, 'Volume'].rolling(window=20).mean()
+             if not volume_window.empty and latest.get('Volume', 0) > volume_window.iloc[-1] * 2:
+                active_conditions.append(TrendCondition.VOLUME_SPIKE)
+
+        # For historical S/R, calculate based on the window ending on the sim_date
+        historical_slice = indicator_df.loc[:sim_date]
+        support, resistance = self._calculate_support_resistance(historical_slice)
+
+        return TrendAnalysis(
+            symbol=symbol,
+            timeframe=timeframe,
+            current_price=current_price,
+            price_change_pct=price_change_pct,
+            active_conditions=[condition.value for condition in active_conditions],
+            rsi=rsi_val,
+            support_level=support,
+            resistance_level=resistance,
+            ma_periods=(sma_short_len, sma_long_len) if sma_short_len and sma_long_len else None
+        )
+
     def _evaluate_conditions(self, latest: pd.Series, previous: pd.Series, sma_short: float, sma_long: float, rsi: float) -> List[TrendCondition]:
         """Evaluates and returns a list of active technical conditions from a data row."""
         conditions = []

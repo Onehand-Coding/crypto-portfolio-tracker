@@ -1,11 +1,15 @@
+import hashlib
 import logging
+from pathlib import Path
 from typing import Dict, Any, List
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import pandas_ta as ta
+
 from . rebalancing_logic import get_backtest_rebalance_suggestions
-from . crypto_trend_analyzer import CryptoTrendAnalyzer
+from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 
 class RebalancingBacktester:
@@ -64,13 +68,32 @@ class RebalancingBacktester:
 
     def _fetch_and_prepare_data(self, symbols: list, period: str) -> bool:
         """
-        Fetches and prepares historical price data from yfinance.
+        Fetches and prepares historical price data, using a local cache to ensure
+        reproducibility of backtests.
         """
-        self.logger.info(f"Fetching {period} of historical data for {len(symbols)} assets...")
+        cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache")) / "backtest_data"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        symbols_str = ",".join(sorted(symbols))
+        request_str = f"{symbols_str}_{period}"
+        request_hash = hashlib.md5(request_str.encode()).hexdigest()
+        cache_file = cache_dir / f"{request_hash}.pkl"
+
+        if cache_file.exists():
+            self.logger.info(f"Loading historical data from cache: {cache_file}")
+            self.data = pd.read_pickle(cache_file)
+            if self.data.empty:
+                self.logger.error("Cached data is empty. Refetching...")
+            else:
+                self.logger.info("Successfully loaded data from cache.")
+                return True
+
+
+        self.logger.info(f"Fetching {period} of historical data for {len(symbols)} assets from yfinance...")
         tickers = [f"{s.upper()}-USD" for s in symbols]
         try:
             self.data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, timeout=60)
             if self.data.empty:
+                self.logger.error("yf.download returned no data.")
                 return False
 
             if len(symbols) > 1:
@@ -80,6 +103,10 @@ class RebalancingBacktester:
 
             self.data.ffill(inplace=True)
             self.data.bfill(inplace=True)
+
+            self.data.to_pickle(cache_file)
+            self.logger.info(f"Saved new historical data to cache: {cache_file}")
+
         except Exception as e:
             self.logger.error(f"Critical error during yfinance download: {e}", exc_info=True)
             return False
@@ -140,7 +167,7 @@ class RebalancingBacktester:
         for asset in target_allocation.keys():
             portfolio[asset] = 0.0
 
-        # --- FIX: Define a minimum price threshold to avoid dust trades ---
+        # --- Define a minimum price threshold to avoid dust trades ---
         min_price_threshold = 0.0001
 
         rebalance_dates = self.data.resample('MS').first().index
@@ -165,12 +192,13 @@ class RebalancingBacktester:
             self.max_drawdown = max(self.max_drawdown, drawdown)
 
             suggestions = get_backtest_rebalance_suggestions(
-                full_historical_data_with_indicators=self.data,
-                portfolio_state=portfolio,
-                sim_date=date,
-                config=self.config,
-                analyzer_config=self.config.get('trend_analyzer', {})
-            )
+                    full_historical_data_with_indicators=self.data,
+                    portfolio_state=portfolio,
+                    sim_date=date,
+                    config=self.config,
+                    analyzer=self.analyzer,
+                    target_allocation=target_allocation
+                )
 
             if not suggestions.empty:
                 for index, suggestion_row in suggestions.iterrows():
@@ -179,9 +207,10 @@ class RebalancingBacktester:
                     amount_usd = suggestion_row['action_usd_value']
                     price = current_prices.get(asset)
 
-                    # --- FIX: Use the min_price_threshold in the check ---
+                    # --- Use the min_price_threshold in the check ---
                     if price is None or price < min_price_threshold or np.isnan(price):
-                        self.logger.warning(f"SIM: {date.date()}: Skipping {action} for {asset} due to invalid price (${price:.6f}).")
+                        price_str = f"${price:,.2f}" if price is not None else "None"
+                        self.logger.warning(f"SIM: {date.date()}: Skipping {action} for {asset} due to invalid price ({price_str}).")
                         continue
 
                     quantity = amount_usd / price

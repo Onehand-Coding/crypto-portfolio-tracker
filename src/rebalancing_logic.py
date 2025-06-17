@@ -1,8 +1,10 @@
-import pandas as pd
 import asyncio
+from dataclasses import asdict
 from typing import Dict, Any, List, Optional, Tuple
 
-from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition, get_market_regime
+import pandas as pd
+
+from src.crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition, get_market_regime
 
 
 async def get_live_rebalance_suggestions(
@@ -40,52 +42,69 @@ def get_backtest_rebalance_suggestions(
     portfolio_state: Dict[str, float],
     sim_date: pd.Timestamp,
     config: Dict[str, Any],
-    analyzer_config: Dict[str, Any]
+    analyzer: CryptoTrendAnalyzer,
+    target_allocation: Dict[str, float]
 ) -> pd.DataFrame:
     """
-    Orchestrates rebalancing suggestions for a backtest by reconstructing reports
-    and calling the same centralized logic as the live analysis.
+    Orchestrates rebalancing suggestions for a backtest by using the centralized
+    CryptoTrendAnalyzer to generate reports for a specific historical date.
     """
-    # This section reconstructs the reports from historical data...
-    latest_row = full_historical_data_with_indicators.loc[sim_date]
     swing_report = {"coin_analyses": {}}
     long_term_report = {"coin_analyses": {}}
-    target_assets = list(config.get("target_allocation", {}).keys())
-    if "BTC" not in target_assets: target_assets.append("BTC")
+    target_assets = list(target_allocation.keys())
+    if "BTC" not in target_assets:
+        target_assets.append("BTC")
 
     for asset in target_assets:
-        yf_symbol, current_price = f"{asset}-USD", latest_row.get(f"{asset}_Close")
-        if pd.isna(current_price): continue
-        sma_long, sma_short, rsi = latest_row.get(f'{asset}_SMA_L_long'), latest_row.get(f'{asset}_SMA_S_long'), latest_row.get(f'{asset}_RSI')
-        active_conditions = []
-        if not pd.isna(sma_long) and not pd.isna(sma_short):
-            if sma_short > sma_long: active_conditions.append(TrendCondition.GOLDEN_CROSS.value)
-            else: active_conditions.append(TrendCondition.DEATH_CROSS.value)
-        if not pd.isna(sma_long):
-            if current_price > sma_long: active_conditions.append(TrendCondition.PRICE_ABOVE_SMA200.value)
-            else: active_conditions.append(TrendCondition.PRICE_BELOW_SMA200.value)
-        if not pd.isna(rsi):
-            if rsi > analyzer_config.get('rsi_overbought', 70): active_conditions.append(TrendCondition.RSI_OVERBOUGHT.value)
-            elif rsi < analyzer_config.get('rsi_oversold', 30): active_conditions.append(TrendCondition.RSI_OVERSOLD.value)
-            elif 40 <= rsi <= 60: active_conditions.append(TrendCondition.NEUTRAL_RSI.value)
-        if not active_conditions: active_conditions.append(TrendCondition.INSUFFICIENT_DATA.value)
-        analysis_dict = {'symbol': yf_symbol,'current_price': current_price,'active_conditions': active_conditions, 'rsi': rsi, 'support_level': latest_row.get(f'{asset}_Support',0.0), 'resistance_level': latest_row.get(f'{asset}_Resistance', 0.0), 'price_change_pct': 0}
-        swing_report['coin_analyses'][yf_symbol] = analysis_dict
-        long_term_report['coin_analyses'][yf_symbol] = analysis_dict
-        if asset == "BTC": long_term_report['benchmark_analysis'] = analysis_dict
+        yf_symbol = f"{asset}-USD"
 
-    # --- Call the central function to determine market regime ---
+        # Create a temporary DataFrame for the single asset with generic column names
+        # that the analyzer expects ('Close', 'Low', 'High', etc.).
+
+        # 1. Define the mapping from generic names to the specific asset's column names
+        column_mapping = {
+            'Close': f'{asset}_Close', 'Open': f'{asset}_Open',
+            'High': f'{asset}_High', 'Low': f'{asset}_Low', 'Volume': f'{asset}_Volume'
+        }
+
+        # 2. Check if the essential 'Close' column exists for this asset in the main DataFrame
+        if column_mapping['Close'] not in full_historical_data_with_indicators.columns:
+            continue
+
+        # 3. Create the temporary DataFrame
+        single_asset_df = pd.DataFrame()
+
+        # 4. Copy data from the main DataFrame and rename columns
+        for generic_name, asset_specific_name in column_mapping.items():
+            if asset_specific_name in full_historical_data_with_indicators:
+                single_asset_df[generic_name] = full_historical_data_with_indicators[asset_specific_name]
+
+        # 5. Copy over all the pre-calculated indicators for that specific asset
+        for col_name in full_historical_data_with_indicators.columns:
+            if col_name.startswith(f"{asset}_") and col_name not in column_mapping.values():
+                single_asset_df[col_name] = full_historical_data_with_indicators[col_name]
+
+
+        # Use the new historical analysis method with the correctly formatted DataFrame
+        lt_analysis = analyzer.analyze_historical_row(single_asset_df, yf_symbol, "long_term", sim_date)
+        sw_analysis = analyzer.analyze_historical_row(single_asset_df, yf_symbol, "swing", sim_date)
+
+        long_term_report['coin_analyses'][yf_symbol] = asdict(lt_analysis)
+        swing_report['coin_analyses'][yf_symbol] = asdict(sw_analysis)
+
+        if asset == "BTC":
+            long_term_report['benchmark_analysis'] = asdict(lt_analysis)
+
     is_bear_market = get_market_regime(long_term_report)
 
-    # This section prepares the portfolio state...
+    latest_row = full_historical_data_with_indicators.loc[sim_date]
     portfolio_rows = [{'symbol': asset, 'value_usd': quantity * latest_row.get(f"{asset}_Close", 0)} for asset, quantity in portfolio_state.items() if asset != 'USDT']
     portfolio_rows.append({'symbol': 'USDT', 'value_usd': portfolio_state.get('USDT', 0)})
     portfolio_df = pd.DataFrame(portfolio_rows)
 
-    # The final call uses the same centralized suggestion engine
     return generate_rebalancing_suggestions(
         portfolio_df=portfolio_df,
-        target_allocation=config.get("target_allocation", {}),
+        target_allocation=target_allocation,
         long_term_report=long_term_report,
         swing_report=swing_report,
         asset_classes=config.get("asset_classes", {}),
