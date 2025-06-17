@@ -7,7 +7,7 @@ import httpx
 import yfinance as yf
 from diskcache import Cache
 
-from src.symbol_mapper import SymbolMapper
+from . symbol_mapper import SymbolMapper
 
 logger = logging.getLogger(__name__)
 

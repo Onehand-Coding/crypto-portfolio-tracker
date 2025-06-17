@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypto-portfolio-tracker"
+version = "2.1.0"
+requires-python = ">=3.10"
+
+# Core dependencies needed for the application to run
+dependencies = [
+    "httpx",
+    "pandas",
+    "requests",
+    "yfinance",
+    "pandas-ta",
+    "diskcache",
+    "python-binance",
+    "python-dotenv",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "openpyxl",
+    "xlsxwriter",
+    "jinja2",
+    "numpy",
+    "pytz",
+    "colorlog",
+    "tqdm"
+]
+
+# Optional dependencies only needed for development and testing
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+    "pytest-asyncio",
+    "pip-tools"
+]
+
+# The script to run your application
+[project.scripts]
+track-portfolio = "main:main"
+
+# Pytest configuration
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+    "tests",
+]

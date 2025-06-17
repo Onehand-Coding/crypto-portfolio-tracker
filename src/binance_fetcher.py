@@ -10,7 +10,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import requests
 
-from src.symbol_mapper import SymbolMapper
+from . symbol_mapper import SymbolMapper
 
 logger = logging.getLogger(__name__)
 

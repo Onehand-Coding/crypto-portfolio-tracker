@@ -12,7 +12,7 @@ import yfinance as yf
 import pandas_ta as ta
 from binance.client import Client
 
-from src.config import ConfigManager
+from . config import ConfigManager
 
 
 class TrendCondition(Enum):
@@ -40,6 +40,25 @@ class TrendAnalysis:
     support_level: float
     resistance_level: float
     ma_periods: Optional[Tuple[int, int]] = None
+
+
+def get_market_regime(long_term_report: Dict[str, Any]) -> bool:
+    """
+    Determines the market regime based on the benchmark asset's long-term trend.
+
+    Args:
+        long_term_report: The long-term trend analysis report.
+
+    Returns:
+        True if the market is considered to be in a bear regime, False otherwise.
+    """
+    btc_analysis = long_term_report.get("benchmark_analysis")
+    if not btc_analysis:
+        # Default to False (normal market) if benchmark data is unavailable
+        return False
+
+    # The single source of truth for our "bear market" definition
+    return TrendCondition.PRICE_BELOW_SMA200.value in btc_analysis.get("active_conditions", [])
 
 
 class CryptoTrendAnalyzer:

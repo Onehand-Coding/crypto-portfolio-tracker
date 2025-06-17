@@ -28,18 +28,18 @@ from binance.client import Client
 from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
-from src.config import ConfigManager
-from src.database import DatabaseManager
-from src.visualizations import Visualizer
-from src.symbol_mapper import SymbolMapper
-from src.price_enricher import PriceEnricher
-from src.binance_fetcher import BinanceFetcher
-import src.trading_strategies as trading_strategies
-from src.strategy_backtester import StrategyBacktester
-from src.rebalancing_backtester import RebalancingBacktester
-from src.exporters import ExcelExporter, HtmlExporter, CsvExporter
-from src.rebalancing_logic import get_live_rebalance_suggestions
-from src.crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
+from . config import ConfigManager
+from . database import DatabaseManager
+from . visualizations import Visualizer
+from . symbol_mapper import SymbolMapper
+from . price_enricher import PriceEnricher
+from . binance_fetcher import BinanceFetcher
+from . import trading_strategies
+from . strategy_backtester import StrategyBacktester
+from . rebalancing_backtester import RebalancingBacktester
+from . exporters import ExcelExporter, HtmlExporter, CsvExporter
+from . rebalancing_logic import get_live_rebalance_suggestions
+from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 logger = logging.getLogger(__name__)
 
@@ -1545,6 +1545,10 @@ class CryptoPortfolioTracker:
         holdings_df.loc[holdings_df['cost_basis_total'] > 0, 'unrealized_pl_percent'] = (holdings_df['unrealized_pl_usd'] / holdings_df['cost_basis_total']) * 100
 
         total_value = holdings_df['value_usd'].sum()
+        if total_value > 0:
+            holdings_df['allocation'] = holdings_df['value_usd'] / total_value
+        else:
+            holdings_df['allocation'] = 0
         total_cost_basis = holdings_df['cost_basis_total'].sum()
         total_pl_usd = total_value - total_cost_basis
         total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
