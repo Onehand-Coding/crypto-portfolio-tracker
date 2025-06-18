@@ -8,14 +8,13 @@ from typing import Dict, Any, List, Optional
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
-
 
 class DatabaseManager:
     """Manages SQLite database operations"""
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize database manager"""
+        self.logger = logging.getLogger(__name__)
         self.db_path = Path(config.get("database", {}).get("path", "data/portfolio.db"))
         self.db_config = config.get("database", {}) # Store the 'database' sub-dictionary
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,7 +28,7 @@ class DatabaseManager:
         self.PORTFOLIO_SNAPSHOTS_TABLE_NAME = "portfolio_snapshots"
 
         self._create_tables()
-        logger.info(f"Database initialized at: {self.db_path}")
+        self.logger.info(f"Database initialized at: {self.db_path}")
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection"""
@@ -39,7 +38,7 @@ class DatabaseManager:
             conn.execute("PRAGMA foreign_keys = ON;")
             return conn
         except sqlite3.Error as e:
-            logger.error(f"Database connection error: {e}")
+            self.logger.error(f"Database connection error: {e}")
             raise
 
     def _create_tables(self):
@@ -79,9 +78,9 @@ class DatabaseManager:
                 for command in commands:
                     cursor.execute(command)
                 conn.commit()
-                logger.info("Database tables checked/created successfully.")
+                self.logger.info("Database tables checked/created successfully.")
         except sqlite3.Error as e:
-            logger.error(f"Error creating tables: {e}")
+            self.logger.error(f"Error creating tables: {e}")
             raise
 
     def get_asset_id(self, symbol: str, name: Optional[str] = None, coingecko_id: Optional[str] = None, create_if_missing: bool = True) -> Optional[int]:
@@ -95,17 +94,17 @@ class DatabaseManager:
                 elif create_if_missing:
                     cursor.execute("INSERT INTO assets (symbol, name, coingecko_id) VALUES (?, ?, ?)", (symbol, name, coingecko_id))
                     conn.commit()
-                    logger.info(f"Created new asset: {symbol}")
+                    self.logger.info(f"Created new asset: {symbol}")
                     return cursor.lastrowid
                 else: return None
         except sqlite3.Error as e:
-            logger.error(f"Error getting/creating asset ID for {symbol}: {e}")
+            self.logger.error(f"Error getting/creating asset ID for {symbol}: {e}")
             return None
 
     def bulk_insert_transactions(self, transactions: List[Dict[str, Any]]) -> Optional[int]:
         """Bulk insert or update transactions using ON CONFLICT DO UPDATE."""
         if not transactions:
-            logger.info("No transactions provided for bulk insert.")
+            self.logger.info("No transactions provided for bulk insert.")
             return 0
 
         sql = f"""
@@ -132,7 +131,7 @@ class DatabaseManager:
             symbol = tx_dict.get('symbol')
             asset_id = self.get_asset_id(symbol, create_if_missing=True)
             if asset_id is None:
-                logger.warning(f"Could not get or create asset_id for symbol: {symbol}. Skipping transaction: {tx_dict.get('transaction_hash')}")
+                self.logger.warning(f"Could not get or create asset_id for symbol: {symbol}. Skipping transaction: {tx_dict.get('transaction_hash')}")
                 continue
 
             timestamp_val = tx_dict.get('timestamp')
@@ -149,10 +148,10 @@ class DatabaseManager:
                 else:
                      timestamp_for_db = timestamp_val.astimezone('utc').to_pydatetime().isoformat(sep=' ', timespec='milliseconds')
             elif timestamp_val is not None: # Fallback for other types, store as string
-                logger.warning(f"Timestamp for tx {tx_dict.get('transaction_hash')} is not standard datetime/pandas ({type(timestamp_val)}). Storing as string: {timestamp_val}")
+                self.logger.warning(f"Timestamp for tx {tx_dict.get('transaction_hash')} is not standard datetime/pandas ({type(timestamp_val)}). Storing as string: {timestamp_val}")
                 timestamp_for_db = str(timestamp_val)
             else: # Skip if timestamp is None
-                logger.warning(f"Transaction {tx_dict.get('transaction_hash')} has a None timestamp. Skipping.")
+                self.logger.warning(f"Transaction {tx_dict.get('transaction_hash')} has a None timestamp. Skipping.")
                 continue
 
 
@@ -167,10 +166,10 @@ class DatabaseManager:
             ))
 
         if not data_to_insert:
-            logger.info("No valid transactions prepared for DB insert/update after type checks.")
+            self.logger.info("No valid transactions prepared for DB insert/update after type checks.")
             return 0
 
-        logger.info(f"Attempting to insert/update {len(data_to_insert)} transactions using ON CONFLICT DO UPDATE...")
+        self.logger.info(f"Attempting to insert/update {len(data_to_insert)} transactions using ON CONFLICT DO UPDATE...")
 
         try:
             with self._get_connection() as conn:
@@ -188,18 +187,18 @@ class DatabaseManager:
                     changes_cursor.execute("SELECT changes()")
                     changes_result = changes_cursor.fetchone()
                     rows_affected_fallback = changes_result[0] if changes_result else 0
-                    logger.info(f"DB: `executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes.")
+                    self.logger.info(f"DB: `executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes.")
                     return rows_affected_fallback
                 else:
-                    logger.info(f"DB: `executemany` reported {rows_affected} rows affected (inserted or updated).")
+                    self.logger.info(f"DB: `executemany` reported {rows_affected} rows affected (inserted or updated).")
                 return rows_affected
         except sqlite3.Error as e:
-            logger.error(f"Database error during bulk insert/update: {e}", exc_info=True)
+            self.logger.error(f"Database error during bulk insert/update: {e}", exc_info=True)
             if data_to_insert: # Log the first problematic item for easier debugging
-                logger.error(f"First data item in problematic batch: {data_to_insert[0]}")
+                self.logger.error(f"First data item in problematic batch: {data_to_insert[0]}")
             return 0 # Indicate 0 rows affected on error
         except Exception as e_generic: # Catch any other non-SQLite errors
-            logger.error(f"Generic error during bulk insert/update: {e_generic}", exc_info=True)
+            self.logger.error(f"Generic error during bulk insert/update: {e_generic}", exc_info=True)
             return 0
 
     def get_all_transactions(self) -> pd.DataFrame:
@@ -207,7 +206,7 @@ class DatabaseManager:
         query = "SELECT t.*, a.symbol FROM transactions t JOIN assets a ON t.asset_id = a.id ORDER BY t.timestamp;"
         try:
             with self._get_connection() as conn: return pd.read_sql_query(query, conn, parse_dates=['timestamp', 'created_at'])
-        except sqlite3.Error as e: logger.error(f"Error fetching all transactions: {e}"); return pd.DataFrame()
+        except sqlite3.Error as e: self.logger.error(f"Error fetching all transactions: {e}"); return pd.DataFrame()
 
     def update_holdings(self, holdings_data: pd.DataFrame):
         """Update or Insert holdings data."""
@@ -219,7 +218,7 @@ class DatabaseManager:
                  for _, row in holdings_data.iterrows():
                      asset_id = self.get_asset_id(row['symbol'], create_if_missing=False) # Don't create if missing for holdings
                      if asset_id:
-                         logger.debug(f"DB: Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}")
+                         self.logger.debug(f"DB: Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}")
                          data_to_update.append((
                              asset_id,
                              row['quantity'],
@@ -227,23 +226,23 @@ class DatabaseManager:
                              now
                          ))
                      else:
-                         logger.warning(f"DB: Could not find asset_id for {row['symbol']} during holdings update. Skipping.")
+                         self.logger.warning(f"DB: Could not find asset_id for {row['symbol']} during holdings update. Skipping.")
 
                  if data_to_update:
                      cursor.executemany(sql, data_to_update)
                      conn.commit()
-                     logger.info(f"DB: Holdings update executed. Cursor rowcount: {cursor.rowcount}. Attempted: {len(data_to_update)} records.")
+                     self.logger.info(f"DB: Holdings update executed. Cursor rowcount: {cursor.rowcount}. Attempted: {len(data_to_update)} records.")
                  else:
-                     logger.info("DB: No holdings data prepared for update.")
+                     self.logger.info("DB: No holdings data prepared for update.")
         except sqlite3.Error as e:
-            logger.error(f"Error updating holdings: {e}")
+            self.logger.error(f"Error updating holdings: {e}")
 
     def get_holdings(self) -> pd.DataFrame:
         """Fetch current holdings."""
         query = "SELECT h.*, a.symbol, a.name, a.coingecko_id FROM holdings h JOIN assets a ON h.asset_id = a.id WHERE h.quantity > 0.000000001;" # More robust zero check
         try:
             with self._get_connection() as conn: return pd.read_sql_query(query, conn, parse_dates=['last_updated'])
-        except sqlite3.Error as e: logger.error(f"Error fetching holdings: {e}"); return pd.DataFrame()
+        except sqlite3.Error as e: self.logger.error(f"Error fetching holdings: {e}"); return pd.DataFrame()
 
     def insert_historical_prices(self, prices_df: pd.DataFrame):
         """Insert historical prices, ignoring duplicates."""
@@ -257,15 +256,15 @@ class DatabaseManager:
                     date_str = pd.to_datetime(row['date']).strftime('%Y-%m-%d')
                     data_to_insert.append((asset_id, date_str, row['price_usd']))
                 except Exception as e:
-                    logger.warning(f"Could not process date for historical price for {row['symbol']} (Date: {row['date']}): {e}")
+                    self.logger.warning(f"Could not process date for historical price for {row['symbol']} (Date: {row['date']}): {e}")
             # else: Asset not in DB, skip.
 
         if not data_to_insert: return
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor(); cursor.executemany(sql, data_to_insert); conn.commit()
-                logger.debug(f"Inserted/Ignored {len(data_to_insert)} historical price records.")
-        except sqlite3.Error as e: logger.error(f"Error inserting historical prices: {e}")
+                self.logger.debug(f"Inserted/Ignored {len(data_to_insert)} historical price records.")
+        except sqlite3.Error as e: self.logger.error(f"Error inserting historical prices: {e}")
 
     def get_historical_prices(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """Fetch historical prices for a given asset and date range."""
@@ -274,22 +273,22 @@ class DatabaseManager:
         query = "SELECT date, price_usd FROM historical_prices WHERE asset_id = ? AND date BETWEEN ? AND ? ORDER BY date;"
         try:
             with self._get_connection() as conn: df = pd.read_sql_query(query, conn, params=(asset_id, start_date, end_date), parse_dates=['date']); df.set_index('date', inplace=True); return df
-        except sqlite3.Error as e: logger.error(f"Error fetching historical prices for {symbol}: {e}"); return pd.DataFrame()
+        except sqlite3.Error as e: self.logger.error(f"Error fetching historical prices for {symbol}: {e}"); return pd.DataFrame()
 
     def backup_database(self):
         """Create a backup of the database file."""
         # Assuming self.config is available from __init__; if not, it should be self.db_config
-        if not self.db_config.get("backup_enabled", False): logger.info("Database backup is disabled."); return
+        if not self.db_config.get("backup_enabled", False): self.logger.info("Database backup is disabled."); return
         backup_dir = self.db_path.parent / "backups"; backup_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = backup_dir / f"{self.db_path.stem}_backup_{timestamp}.db"
-        try: shutil.copy2(self.db_path, backup_path); logger.info(f"Database backup created successfully at: {backup_path}")
-        except Exception as e: logger.error(f"Failed to create database backup: {e}")
+        try: shutil.copy2(self.db_path, backup_path); self.logger.info(f"Database backup created successfully at: {backup_path}")
+        except Exception as e: self.logger.error(f"Failed to create database backup: {e}")
 
     def cleanup_old_data(self):
         """Clean up old data based on configuration."""
         cleanup_days = self.db_config.get("cleanup_days", 90) # Use self.db_config
-        if cleanup_days <= 0: logger.info("Data cleanup is disabled."); return
+        if cleanup_days <= 0: self.logger.info("Data cleanup is disabled."); return
         cutoff_date_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=cleanup_days)
         cutoff_date_str = cutoff_date_dt.isoformat(sep=' ', timespec='milliseconds') # Match inserted format
 
@@ -303,7 +302,7 @@ class DatabaseManager:
             with self._get_connection() as conn:
                 cursor = conn.cursor(); total_deleted = 0
                 for command in commands:
-                    logger.debug(f"Executing cleanup command: {command}")
+                    self.logger.debug(f"Executing cleanup command: {command}")
                     cursor.execute(command);
                     # SELECT changes() is more reliable for DELETE statements
                     changes_cursor = conn.cursor()
@@ -311,11 +310,11 @@ class DatabaseManager:
                     changes_result = changes_cursor.fetchone()
                     deleted_this_command = changes_result[0] if changes_result else 0
                     total_deleted += deleted_this_command
-                    logger.debug(f"Command affected {deleted_this_command} rows.")
+                    self.logger.debug(f"Command affected {deleted_this_command} rows.")
                 conn.commit()
-                if total_deleted > 0: logger.info(f"Cleaned up {total_deleted} old records.")
-                else: logger.info("No old data found to clean up.")
-        except sqlite3.Error as e: logger.error(f"Error cleaning up old data: {e}")
+                if total_deleted > 0: self.logger.info(f"Cleaned up {total_deleted} old records.")
+                else: self.logger.info("No old data found to clean up.")
+        except sqlite3.Error as e: self.logger.error(f"Error cleaning up old data: {e}")
 
     def get_latest_timestamp_for_source(self, source_name: str) -> Optional[datetime.datetime]:
         """Fetch the latest transaction timestamp for a given source."""
@@ -341,16 +340,16 @@ class DatabaseManager:
                     else:
                         dt_obj = dt_obj.astimezone(datetime.timezone.utc)
 
-                    logger.info(f"Latest timestamp found for source '{source_name}': {dt_obj}")
+                    self.logger.info(f"Latest timestamp found for source '{source_name}': {dt_obj}")
                     return dt_obj
                 else:
-                    logger.info(f"No previous transactions found for source '{source_name}'.")
+                    self.logger.info(f"No previous transactions found for source '{source_name}'.")
                     return None
         except sqlite3.Error as e:
-            logger.error(f"Error fetching latest timestamp for source {source_name}: {e}")
+            self.logger.error(f"Error fetching latest timestamp for source {source_name}: {e}")
             return None
         except Exception as ex: # Catch other potential errors like parsing
-            logger.error(f"Unexpected error processing latest timestamp for source {source_name}: {ex}", exc_info=True)
+            self.logger.error(f"Unexpected error processing latest timestamp for source {source_name}: {ex}", exc_info=True)
             return None
 
     def save_portfolio_snapshot(self, timestamp: datetime, total_value: float, total_cost_basis: float, unrealized_pl: float, unrealized_pl_percent: float):
@@ -390,3 +389,33 @@ class DatabaseManager:
         finally:
             if conn:
                 conn.close()
+
+    def calculate_total_invested_capital(self) -> float:
+        """
+        Calculates the NET invested capital by summing capital inflows (P2P Buys)
+        and subtracting capital outflows (Withdrawals).
+        """
+        # FIX: Use conditional aggregation to calculate Inflows - Outflows.
+        query = """
+            SELECT SUM(
+                CASE
+                    WHEN source = 'Binance P2P Buy' THEN quantity * price_usd
+                    WHEN type = 'WITHDRAWAL' THEN -1 * quantity * price_usd
+                    ELSE 0
+                END
+            ) as net_invested
+            FROM transactions
+            WHERE source = 'Binance P2P Buy' OR type = 'WITHDRAWAL';
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query)
+                result = cursor.fetchone()
+                net_invested = result[0] if result and result[0] is not None else 0.0
+                self.logger.info(f"Calculated NET invested capital: ${net_invested:,.2f}")
+                return float(net_invested)
+        except Exception as e:
+            self.logger.error(f"Error calculating net invested capital: {e}", exc_info=True)
+            return 0.0
+

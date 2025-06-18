@@ -3,11 +3,14 @@ import logging
 import datetime
 from typing import List, Dict, Any, Optional, Set, Tuple
 
+import pytz
 import httpx
+import pandas as pd
 import yfinance as yf
 from diskcache import Cache
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type, wait_exponential
 
-from . symbol_mapper import SymbolMapper
+from .symbol_mapper import SymbolMapper
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,13 @@ class PriceEnricher:
         self.target_assets_for_sync = set(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync.add("USDT")
         self.coingecko_semaphore = asyncio.Semaphore(5)
-        logger.info("PriceEnricher initialized with a concurrency limit of 5 for price fetching.")
+
+        # --- Log whether we are using an API key ---
+        if self.coingecko_config.get("api_key"):
+            logger.info("PriceEnricher initialized with a CoinGecko API Key.")
+        else:
+            logger.info("PriceEnricher initialized without a CoinGecko API Key (using public access).")
+        logger.info(f"Concurrency limit set to {self.coingecko_semaphore._value} for price fetching.")
 
     def _get_price_from_cache(self, symbol: str, date: datetime.datetime) -> float:
         if not symbol: return 0.0
@@ -38,7 +47,10 @@ class PriceEnricher:
         return price if price is not None else 0.0
 
     def _get_historical_fiat_exchange_rate(self, date: datetime.datetime, from_currency: str, to_currency: str) -> float:
-        """Fetches and caches historical fiat exchange rates using yfinance, now robust against Series objects."""
+        """
+        Fetches and caches historical fiat exchange rates using yfinance.
+        This version ensures timezone consistency and handles ambiguous Series truth values.
+        """
         if from_currency == to_currency: return 1.0
 
         date_str = date.strftime('%Y-%m-%d')
@@ -49,17 +61,28 @@ class PriceEnricher:
         ticker = f"{from_currency.upper()}{to_currency.upper()}=X"
         rate = None
         try:
-            # Fetch a small window around the target date for reliability
             start_date_fetch = (date - datetime.timedelta(days=3)).strftime('%Y-%m-%d')
             end_date_fetch = (date + datetime.timedelta(days=2)).strftime('%Y-%m-%d')
 
             data = yf.download(ticker, start=start_date_fetch, end=end_date_fetch, progress=False, auto_adjust=True)
 
             if not data.empty:
-                # Use .asof to find the last known value on or before the requested date
-                closest_price = data['Close'].asof(date)
+                if data.index.tz is None:
+                    data = data.tz_localize('UTC')
+
+                # The .asof() method can sometimes return a Series. We handle this explicitly.
+                price_or_series = data['Close'].asof(date)
+
+                closest_price = None
+                if isinstance(price_or_series, pd.Series):
+                    if not price_or_series.empty:
+                        closest_price = price_or_series.iloc[0] # Take the first element if it's a Series
+                else:
+                    closest_price = price_or_series # It was a single value as expected
+
                 if pd.notna(closest_price):
                     rate = float(closest_price)
+
         except Exception as e:
             logger.warning(f"Could not fetch yfinance rate for {ticker} on {date_str}: {e}")
 
@@ -67,50 +90,97 @@ class PriceEnricher:
         return rate or 0.0
 
     async def _fetch_price_for_date(self, client: httpx.AsyncClient, coin_id: str, date_str: str):
-        """Asynchronously fetches a single historical price, respecting the semaphore and all caches."""
+        """Asynchronously fetches a single historical price, optionally using an API key."""
         cache_key = f"{coin_id}_{date_str}"
-
-        #  Check the in-memory cache first
-        if cache_key in self.price_cache:
+        if self.price_cache.get(cache_key) is not None or self.disk_cache.get(cache_key) is not None:
+            if self.price_cache.get(cache_key) is None:
+                self.price_cache[cache_key] = self.disk_cache.get(cache_key)
             return
 
-        # Then check the disk cache
-        if self.disk_cache.get(cache_key) is not None:
-            self.price_cache[cache_key] = self.disk_cache.get(cache_key)
-            return
-
-        # If not in any cache, proceed to fetch from API
         async with self.coingecko_semaphore:
-            await asyncio.sleep(self.coingecko_config.get("request_delay_ms", 1500) / 1000.0)
+            await asyncio.sleep(self.coingecko_config.get("request_delay_ms", 1000) / 1000.0) # Reduced delay
             base_url = self.coingecko_config.get("base_url", "https://api.coingecko.com/api/v3")
-            url = f"{base_url}/coins/{coin_id}/history?date={date_str}&localization=false"
+            url = f"{base_url}/coins/{coin_id}/history"
+
+            # --- FIX: Add API key to params if it exists ---
+            params = {'date': date_str, 'localization': 'false'}
+            api_key = self.coingecko_config.get("api_key")
+            if api_key:
+                params['x_cg_demo_api_key'] = api_key
 
             try:
-                response = await client.get(url, timeout=30)
+                response = await client.get(url, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
                 price = data.get("market_data", {}).get("current_price", {}).get("usd")
-
                 if price is not None:
                     logger.info(f"API SUCCESS: Fetched price for {coin_id} on {date_str}: ${price}")
                     self.disk_cache.set(cache_key, price)
                     self.price_cache[cache_key] = float(price)
                 else:
                     self.price_cache[cache_key] = None
-            except Exception as e:
+            except httpx.HTTPStatusError as e:
                 logger.warning(f"API FAILED for {coin_id} on {date_str}: {e}")
                 self.price_cache[cache_key] = None
+            except Exception as e:
+                logger.error(f"An unexpected error in _fetch_price_for_date for {coin_id}: {e}")
+                self.price_cache[cache_key] = None
 
+    @retry(
+        retry=retry_if_exception_type(httpx.HTTPStatusError),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=4, max=60)
+    )
     async def _batch_fetch_prices(self, price_requests: Set[Tuple[str, str]]):
-        if not price_requests: return
-        logger.info(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
-        async with httpx.AsyncClient() as client:
-            tasks = [self._fetch_price_for_date(client, coin_id, date_str) for coin_id, date_str in price_requests]
-            await asyncio.gather(*tasks)
-        logger.info("Batch price fetch complete.")
+        """
+        Manages batch fetching with retries. This version checks for success *after* the
+        batch and raises an error to trigger a retry if any requests failed.
+        """
+        if not price_requests:
+            return
 
+        logger.info(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
+
+        # Only fetch what's missing.
+        missing_requests = {(coin_id, date_str) for coin_id, date_str in price_requests
+                            if self.price_cache.get(f"{coin_id}_{date_str}") is None and self.disk_cache.get(f"{coin_id}_{date_str}") is None}
+
+        if not missing_requests:
+            logger.info("All requested prices were already in the cache. Nothing to fetch.")
+            return
+
+        logger.info(f"Fetching {len(missing_requests)} missing prices...")
+
+        async with httpx.AsyncClient() as client:
+            tasks = [self._fetch_price_for_date(client, coin_id, date_str) for coin_id, date_str in missing_requests]
+            await asyncio.gather(*tasks)
+
+        # After the batch, check if all requests were successful.
+        all_successful = True
+        for coin_id, date_str in missing_requests:
+            cache_key = f"{coin_id}_{date_str}"
+            if self.price_cache.get(cache_key) is None and self.disk_cache.get(cache_key) is None:
+                all_successful = False
+                logger.warning(f"Verification failed: Price for {coin_id} on {date_str} is still missing after batch.")
+                break
+
+        if not all_successful:
+            logger.error("One or more price fetches failed in the batch. Raising error to trigger retry.")
+            raise httpx.HTTPStatusError(
+                "Batch fetch incomplete, triggering retry.",
+                request=None,
+                response=httpx.Response(status_code=429)
+            )
+
+        logger.info("Batch price fetch complete and all prices verified.")
+
+    @retry(
+        retry=retry_if_exception_type(httpx.HTTPStatusError),
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(10)
+    )
     async def get_current_prices(self, symbols: List[str]) -> Dict[str, float]:
-        """Asynchronously fetches current prices for a list of symbols, with retries."""
+        """Asynchronously fetches current prices for a list of symbols, with retries and optional API key."""
         if not symbols:
             return {}
 
@@ -121,32 +191,31 @@ class PriceEnricher:
 
         ids_string = ",".join(list(ids_to_fetch))
         url = f"{self.coingecko_config.get('base_url')}/simple/price"
+
+        # --- Add API key to params if it exists ---
         params = {'ids': ids_string, 'vs_currencies': 'usd'}
+        api_key = self.coingecko_config.get("api_key")
+        if api_key:
+            params['x_cg_demo_api_key'] = api_key
 
         async with httpx.AsyncClient() as client:
-            for attempt in range(3):
-                try:
-                    response = await client.get(url, params=params, timeout=self.coingecko_config.get("timeout", 30))
-                    response.raise_for_status()
-                    fetched_price_data = response.json()
+            try:
+                response = await client.get(url, params=params, timeout=self.coingecko_config.get("timeout", 30))
+                response.raise_for_status()
+                fetched_price_data = response.json()
 
-                    # Map prices back
-                    for symbol in symbols:
-                        coin_id = self.symbol_mappings.get(symbol.upper())
-                        if coin_id in fetched_price_data:
-                            prices[symbol] = fetched_price_data[coin_id].get("usd", 0.0)
-                    return prices # Return on success
+                for symbol in symbols:
+                    coin_id = self.symbol_mappings.get(symbol.upper())
+                    if coin_id in fetched_price_data:
+                        prices[symbol] = fetched_price_data[coin_id].get("usd", 0.0)
+                return prices
 
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 429 and attempt < 2:
-                        logger.warning("Rate limited fetching current prices. Waiting 10 seconds...")
-                        await asyncio.sleep(10)
-                    else:
-                        logger.error(f"Failed to fetch current prices: {e}")
-                        return prices # Return default prices on final failure
-                except Exception as e:
-                    logger.error(f"An unexpected error occurred while fetching current prices: {e}")
-                    return prices
+            except httpx.HTTPStatusError as e:
+                logger.warning(f"Rate limited fetching current prices: {e}. Retrying...")
+                raise
+            except Exception as e:
+                logger.error(f"An unexpected error occurred while fetching current prices: {e}")
+                return prices
         return prices
 
     async def enrich_transactions(self, raw_txs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

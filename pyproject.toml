@@ -26,7 +26,8 @@ dependencies = [
     "numpy",
     "pytz",
     "colorlog",
-    "tqdm"
+    "tqdm",
+    "tenacity"
 ]
 
 # Optional dependencies only needed for development and testing
@@ -35,7 +36,8 @@ dev = [
     "pytest",
     "pytest-mock",
     "pytest-asyncio",
-    "pip-tools"
+    "pip-tools",
+    "black"
 ]
 
 # The script to run your application

@@ -188,10 +188,8 @@ class CryptoPortfolioTracker:
         self.logger.info("Tracker and all components initialized.")
 
     def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
-        """Initialize and return Binance client with robust session and retries."""
+        """Initialize and return Binance client with robust session, retries, and time sync."""
 
-        # If API keys are not passed directly to the function (e.g., for a sub-account),
-        # get the correct keys from the ConfigManager based on the environment mode.
         if not api_key and not api_secret:
             keys = self.config_manager.get_binance_keys()
             api_key = keys.get('api_key')
@@ -202,10 +200,28 @@ class CryptoPortfolioTracker:
             return None
 
         try:
-            client_timeout = self.config.get("apis", {}).get("binance", {}).get("timeout", 180)
-            self.logger.info(f"Initializing Binance client with timeout: {client_timeout}s and retries.")
+            # --- Read all Binance settings from config ---
+            binance_config = self.config.get("apis", {}).get("binance", {})
+            client_timeout = binance_config.get("timeout", 60)
+            recv_window = binance_config.get("recv_window", 20000)
+
+            self.logger.info(f"Initializing Binance client with timeout: {client_timeout}s.")
 
             client = Client(api_key, api_secret, requests_params={'timeout': client_timeout})
+
+            client.RECV_WINDOW = recv_window
+            self.logger.info(f"Set Binance client recvWindow to {client.RECV_WINDOW}ms.")
+
+            # Actively sync time with the server to prevent all recvWindow errors.
+            try:
+                self.logger.info("Synchronizing time with Binance server...")
+                server_time = client.get_server_time()['serverTime']
+                local_time = int(time.time() * 1000)
+                time_offset = server_time - local_time
+                client._server_time_offset = time_offset
+                self.logger.info(f"Time synchronized. Server offset is {time_offset}ms.")
+            except Exception as e:
+                self.logger.error(f"Could not sync time with Binance server: {e}. Relying on increased recvWindow as a fallback.")
 
             retry_strategy = Retry(
                 total=5,
@@ -1391,6 +1407,71 @@ class CryptoPortfolioTracker:
         for trade in signals_to_execute:
             self._execute_directional_trade(trade, live_client)
 
+    async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
+        """
+        Calculates key portfolio metrics using a consolidated view of holdings,
+        correctly handling the relationship between Spot and Earn balances.
+        """
+        self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
+        cost_basis_df = self.db_manager.get_holdings()
+
+        # 1. Fetch balances and merge with cost basis and price data
+        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
+        earn_balances_df = pd.DataFrame(columns=['symbol', 'earn_quantity'])
+        if not self.config_manager.is_testnet_mode:
+            earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
+            if earn_dict:
+                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
+
+        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on='symbol', how='outer').fillna(0)
+        holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
+        holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
+        holdings_df = holdings_df[holdings_df['total_quantity'] > 1e-8].reset_index(drop=True)
+
+        if holdings_df.empty:
+            return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
+
+        if not cost_basis_df.empty:
+            holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
+        else:
+            holdings_df['average_cost_basis'] = 0.0
+        holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
+
+        prices = await self.enricher.get_current_prices(holdings_df['symbol'].tolist())
+        holdings_df['current_price'] = holdings_df['symbol'].map(prices).fillna(0.0)
+
+        # 2. Calculate existing metrics
+        holdings_df['value_usd'] = holdings_df['total_quantity'] * holdings_df['current_price']
+        holdings_df['cost_basis_total'] = holdings_df['total_quantity'] * holdings_df['average_cost_basis']
+        holdings_df['unrealized_pl_usd'] = holdings_df['value_usd'] - holdings_df['cost_basis_total']
+        holdings_df.loc[holdings_df['cost_basis_total'] > 0, 'unrealized_pl_percent'] = (holdings_df['unrealized_pl_usd'] / holdings_df['cost_basis_total']) * 100
+
+        total_value = holdings_df['value_usd'].sum()
+        if total_value > 0:
+            holdings_df['allocation'] = holdings_df['value_usd'] / total_value
+        else:
+            holdings_df['allocation'] = 0
+        total_cost_basis = holdings_df['cost_basis_total'].sum()
+        total_pl_usd = total_value - total_cost_basis
+        total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
+        total_invested = self.db_manager.calculate_total_invested_capital()
+        overall_pl_usd = total_value - total_invested
+        overall_pl_percent = (overall_pl_usd / total_invested * 100) if total_invested > 0 else 0.0
+
+        metrics = {
+            "total_value_usd": total_value,
+            "total_cost_basis_usd": total_cost_basis,
+            "unrealized_pl_usd": total_pl_usd,
+            "unrealized_pl_percent": total_pl_percent,
+            "total_invested_capital": total_invested,
+            "overall_pl_usd": overall_pl_usd,
+            "overall_pl_percent": overall_pl_percent,
+            "holdings_df": holdings_df,
+            "timestamp": datetime.datetime.now()
+        }
+        self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
+        return metrics
+
     def fetch_binance_balances(self) -> pd.DataFrame:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
         if not self.binance_client:
@@ -1507,72 +1588,6 @@ class CryptoPortfolioTracker:
         else:
             self.logger.warning("No holdings with valid cost basis to update in the database.")
 
-    async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
-        """
-        Calculates key portfolio metrics using a consolidated view of holdings,
-        correctly handling the relationship between Spot and Earn balances.
-        """
-        self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
-        cost_basis_df = self.db_manager.get_holdings()
-
-        # 1. Fetch total balances from the main account endpoint
-        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
-
-        # 2. Fetch Earn-only balances
-        earn_balances_df = pd.DataFrame(columns=['symbol', 'earn_quantity'])
-        if not self.config_manager.is_testnet_mode:
-            earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
-            if earn_dict:
-                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
-
-        # 3. Merge and correctly calculate quantities using your original, robust logic
-        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on='symbol', how='outer').fillna(0)
-
-        # The true total quantity is the *maximum* of the two API reports, handling any sync lag.
-        holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
-        holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
-
-        holdings_df = holdings_df[holdings_df['total_quantity'] > 1e-8].reset_index(drop=True)
-
-        if holdings_df.empty:
-            return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
-
-        # 4. Enrich with cost basis and current price data
-        if not cost_basis_df.empty:
-            holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
-        else:
-            holdings_df['average_cost_basis'] = 0.0
-        holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
-
-        prices = await self.enricher.get_current_prices(holdings_df['symbol'].tolist())
-        holdings_df['current_price'] = holdings_df['symbol'].map(prices).fillna(0.0)
-
-        # 5. Calculate final metrics
-        holdings_df['value_usd'] = holdings_df['total_quantity'] * holdings_df['current_price']
-        holdings_df['cost_basis_total'] = holdings_df['total_quantity'] * holdings_df['average_cost_basis']
-        holdings_df['unrealized_pl_usd'] = holdings_df['value_usd'] - holdings_df['cost_basis_total']
-        holdings_df.loc[holdings_df['cost_basis_total'] > 0, 'unrealized_pl_percent'] = (holdings_df['unrealized_pl_usd'] / holdings_df['cost_basis_total']) * 100
-
-        total_value = holdings_df['value_usd'].sum()
-        if total_value > 0:
-            holdings_df['allocation'] = holdings_df['value_usd'] / total_value
-        else:
-            holdings_df['allocation'] = 0
-        total_cost_basis = holdings_df['cost_basis_total'].sum()
-        total_pl_usd = total_value - total_cost_basis
-        total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
-
-        metrics = {
-            "total_value_usd": total_value,
-            "total_cost_basis_usd": total_cost_basis,
-            "unrealized_pl_usd": total_pl_usd,
-            "unrealized_pl_percent": total_pl_percent,
-            "holdings_df": holdings_df,
-            "timestamp": datetime.datetime.now()
-        }
-        self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
-        return metrics
-
     def create_portfolio_charts(self, metrics: Dict[str, Any]):
         """Generate portfolio charts."""
         holdings_df = metrics.get('holdings_df'); target_alloc = self.config.get("target_allocation", {})
@@ -1581,30 +1596,40 @@ class CryptoPortfolioTracker:
 
     def print_portfolio_summary(self, metrics: Dict[str, Any]):
         """Prints a consolidated summary of the portfolio, including Spot and Earn balances."""
-        # Increased the width for the new column
         LINE_WIDTH = 115
         print("\n" + "="*LINE_WIDTH)
         print("📊 CONSOLIDATED PORTFOLIO SUMMARY (Spot + Earn)")
         print("="*LINE_WIDTH)
+
         if "error" in metrics:
             print(f"❌ Could not generate summary: {metrics['error']}")
             print("="*LINE_WIDTH)
             return
 
-        timestamp = metrics.get('timestamp')
-        if isinstance(timestamp, datetime.datetime):
-            print(f"Timestamp:             {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-        else:
-            print(f"Timestamp:             N/A")
+        timestamp = metrics.get('timestamp', datetime.datetime.now())
+        print(f"Timestamp:                   {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+        print("-" * LINE_WIDTH)
+        print("PERFORMANCE VS. INVESTED CAPITAL:")
 
-        print(f"Total Portfolio Value: ${metrics.get('total_value_usd', 0):,.2f}")
-        print(f"Total Cost Basis:      ${metrics.get('total_cost_basis_usd', 0):,.2f}")
+        total_invested = metrics.get('total_invested_capital', 0)
+        overall_pl_usd = metrics.get('overall_pl_usd', 0)
+        overall_pl_pct = metrics.get('overall_pl_percent', 0)
+        color_overall = "\033[92m" if overall_pl_usd >= 0 else "\033[91m"
+        color_end = "\033[0m"
+
+        print(f"Total Invested Capital:      ${total_invested:,.2f}")
+        print(f"Overall P/L:                 {color_overall}${overall_pl_usd:,.2f} ({overall_pl_pct:.2f}%){color_end}")
+        print("-" * LINE_WIDTH)
+
+        print("PERFORMANCE VS. ROLLING COST BASIS:")
+        print(f"Total Portfolio Value:       ${metrics.get('total_value_usd', 0):,.2f}")
+        print(f"Total Cost Basis (FIFO):     ${metrics.get('total_cost_basis_usd', 0):,.2f}")
 
         pl_usd = metrics.get('unrealized_pl_usd', 0)
         pl_pct = metrics.get('unrealized_pl_percent', 0)
-        color_start = "\033[92m" if pl_usd >= 0 else "\033[91m"
-        color_end = "\033[0m"
-        print(f"Unrealized P/L:        {color_start}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
+        color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
+
+        print(f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
         print("-" * LINE_WIDTH)
 
         holdings_df = metrics.get('holdings_df')
@@ -1616,7 +1641,6 @@ class CryptoPortfolioTracker:
             for _, row in holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
                 row_pl_usd = row.get('unrealized_pl_usd', 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
-                row_color_end = "\033[0m"
 
                 print(
                     f"{row.get('symbol', 'N/A'):<8} "
@@ -1625,7 +1649,7 @@ class CryptoPortfolioTracker:
                     f"{row.get('earn_quantity', 0):<15,.8g} "
                     f"${row.get('value_usd', 0):<14,.2f} "
                     f"${row.get('cost_basis_total', 0):<14,.2f} "
-                    f"{row_color_start}${row_pl_usd:<14,.2f}{row_color_end} "
+                    f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
                     f"{row.get('allocation', 0) * 100:<9.2f}%"
                 )
             print("="*LINE_WIDTH)

@@ -29,6 +29,10 @@ class ConfigManager:
 
         self.config: Dict[str, Any] = self._load_json_config()
 
+        # --- Load the CoinGecko API key from .env ---
+        if "apis" in self.config and "coingecko" in self.config["apis"]:
+            self.config["apis"]["coingecko"]["api_key"] = os.getenv("COINGECKO_API_KEY")
+
         # Determine testnet status from environment *before* resolving paths
         self.is_testnet_mode: bool = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
 
@@ -111,7 +115,6 @@ class ConfigManager:
 
     def _resolve_paths(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Converts all relative paths in the config to absolute paths."""
-        # This function remains the same as before
         paths_to_resolve = {
             ("database", "path"),
             ("logging", "file_config", "path"),
@@ -136,7 +139,6 @@ class ConfigManager:
 
     def _create_directories(self):
         """Create necessary directories based on config."""
-        # This function remains the same as before
         paths_to_create = [
             Path(self.config["database"]["path"]).parent,
             Path(self.config["logging"]["file_config"]["path"]).parent,
