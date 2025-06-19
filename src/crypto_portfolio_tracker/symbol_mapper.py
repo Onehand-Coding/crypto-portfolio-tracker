@@ -5,7 +5,10 @@ import time
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+
 import requests
+from requests.exceptions import HTTPError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 
 class SymbolMapper:
@@ -34,11 +37,55 @@ class SymbolMapper:
         raise KeyError(f"Discovery failed for symbol '{symbol}' (normalized: '{normalized_symbol}')")
 
     def get(self, symbol: str, default: Any = None) -> Optional[str]:
-        try:
-            normalized_symbol = self.normalize_symbol(symbol)
+        """
+        Gets a CoinGecko ID for a symbol. If not found in the local cache,
+        it triggers the discovery process to find it from the API.
+        """
+        normalized_symbol = self.normalize_symbol(symbol)
+        # First, check the existing mappings
+        if normalized_symbol in self._mappings:
             return self._mappings[normalized_symbol]
-        except KeyError:
-            return default
+
+        # If not found, trigger the discovery process for just this symbol
+        self.logger.warning(f"Symbol '{symbol}' not found via .get(). Triggering API discovery.")
+        self.discover_mappings([normalized_symbol])
+
+        # Check again after discovery has run
+        if normalized_symbol in self._mappings:
+            return self._mappings[normalized_symbol]
+
+        # If it's still not found after discovery, return the default value
+        self.logger.error(f"Discovery failed for '{symbol}'. Returning default.")
+        return default
+
+    @retry(
+        retry=retry_if_exception_type(HTTPError),
+        stop=stop_after_attempt(5),  # Try up to 5 times
+        wait=wait_exponential(multiplier=1, min=4, max=60),  # Wait 4s, then 8s, 16s, etc.
+        reraise=True  # If all retries fail, raise the last exception
+    )
+    def _fetch_market_data_chunk_with_retry(self, chunk: List[str]) -> List[Dict[str, Any]]:
+        """
+        Fetches market data for a chunk of coin IDs with robust retry logic
+        to handle API rate limiting (429 errors).
+        """
+        url = f"{self.coingecko_api_config.get('base_url')}/coins/markets"
+        params = {'vs_currency': 'usd', 'ids': ",".join(chunk)}
+
+        api_key = self.coingecko_api_config.get("api_key")
+        if api_key:
+            params['x_cg_demo_api_key'] = api_key
+
+        response = requests.get(url, params=params, timeout=30)
+
+        # Specifically check for 429 and log it before tenacity handles the retry
+        if response.status_code == 429:
+            self.logger.warning(f"Rate limited (429) fetching market data. Tenacity will retry...")
+
+        # This will raise an HTTPError for any 4xx or 5xx status code,
+        # which will be caught by the @retry decorator.
+        response.raise_for_status()
+        return response.json()
 
     def get_all_mappings(self) -> Dict[str, str]:
         """Return a copy of all current mappings."""
@@ -124,15 +171,11 @@ class SymbolMapper:
                 chunk = all_ids_list[i:i + chunk_size]
                 self.logger.info(f"Fetching market data for chunk {i//chunk_size + 1}...")
                 try:
-                    url = f"{self.coingecko_api_config.get('base_url')}/coins/markets"
-                    params = {'vs_currency': 'usd', 'ids': ",".join(chunk)}
-                    response = requests.get(url, params=params, timeout=30)
-                    response.raise_for_status()
-                    for item in response.json():
+                    market_data_list = self._fetch_market_data_chunk_with_retry(chunk)
+                    for item in market_data_list:
                         market_data_map[item['id']] = item
-                    time.sleep(1.5) # Wait between chunks to be kind to the API
-                except requests.exceptions.RequestException as e:
-                    self.logger.error(f"AUTOMAP: API error on chunk {i//chunk_size + 1}: {e}.")
+                except Exception as e:
+                    self.logger.error(f"AUTOMAP: API error on chunk {i//chunk_size + 1} after all retries: {e}.")
 
             for symbol, candidates in ambiguous_symbols.items():
                 scored = [
