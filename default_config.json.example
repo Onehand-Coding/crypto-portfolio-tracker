@@ -8,7 +8,7 @@
     },
     "binance": {
       "timeout": 60,
-      "recv_window": 10000,
+      "recv_window": 20000,
       "request_delay_ms": 500
     },
     "yfinance": {
