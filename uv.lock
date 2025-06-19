@@ -412,11 +412,6 @@ dev = [
     { name = "ruff" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "colorlog", specifier = ">=6.8" },
@@ -445,9 +440,6 @@ requires-dist = [
     { name = "yfinance", specifier = ">=0.2" },
 ]
 provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.4.1" }]
 
 [[package]]
 name = "curl-cffi"

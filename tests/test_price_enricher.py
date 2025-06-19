@@ -8,6 +8,8 @@ from diskcache import Cache
 from crypto_portfolio_tracker.price_enricher import PriceEnricher
 from crypto_portfolio_tracker.symbol_mapper import SymbolMapper
 
+pytestmark = pytest.mark.usefixtures("mocker")
+
 
 @pytest.fixture
 def mock_symbol_mapper():
