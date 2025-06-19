@@ -108,15 +108,12 @@ cd crypto-portfolio-tracker
 
 2. **Create and Activate Virtual Environment (with `uv`):**
 ```bash
-uv venv
-source .venv/bin/activate  # Linux/macOS
-
-.venv\Scripts\activate     # Windows
+uv sync
 ```
 
 3. **Install Dependencies:**
 ```bash
-uv sync --dev
+uv sync --extra dev
 ```
 
 4. **Set Up Environment Variables:**
@@ -265,15 +262,16 @@ The application offers a comprehensive interactive menu and command-line options
 For day-to-day portfolio management:
 
 ```bash
-# Activate your virtual environment first
+# Using uv
+uv run track-portfolio
+# Or Activate your virtual environment first
 source .venv/bin/activate
-
 # Run the application
 track-portfolio
 # OR for development
 python main.py
-# OR using uv
-uv run track-portfolio
+
+
 ```
 
 **Interactive Menu Options:**
@@ -503,14 +501,14 @@ This project uses modern, high-performance Python tools for development:
 
 ```bash
 # Install all dependencies including dev tools
-uv sync --dev
+uv sync --extra dev
 
 # Add a new package
-# Edit pyproject.toml to add the package, then:
-uv sync --extra dev pyproject.toml
+# Edit pyproject.toml to add the package under [project.dependencies] or [project.optional-dependencies.dev], then:
+uv sync --extra dev
 
 # Update all packages
-uv sync --upgrade --dev
+uv sync --extra dev --upgrade
 ```
 
 ### Using `ruff` for Code Quality
@@ -530,7 +528,7 @@ ruff check --fix .
 
 ```bash
 # Run all tests
-uv run pytest tests/
+uv run pytest
 
 # Run with coverage
 uv run pytest tests/ --cov=src/crypto_portfolio_tracker
