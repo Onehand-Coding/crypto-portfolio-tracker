@@ -1,9 +1,71 @@
+# --- Byte-compiled / optimized / DLL files ---
 __pycache__/
-.pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Distribution / Packaging ---
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- PyInstaller ---
+*.manifest
+*.spec
+
+# --- Virtual Environments ---
 .venv/
+venv/
+env/
+
+# --- Test / Coverage Reports ---
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# --- IDE / Editor Files ---
+.vscode/
+.idea/
+*.sublime-*
+
+# --- OS-generated files ---
+.DS_Store
+Thumbs.db
+
+# --- Application Specific ---
+# Ignore cache directories
+.ruff_cache/
+.mypy_cache/
+
+# Ignore log files and user data
 logs/
 data/
-*.egg-info
-*.sublime-*
+
+# Ignore environment variables file (but not the example)
 .env
-default_config.json
+.env.*
+!.env.example
+
+/config/default_config.json
