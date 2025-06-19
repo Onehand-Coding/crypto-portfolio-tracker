@@ -1,6 +1,6 @@
 # Crypto Portfolio Tracker & Rebalancing Advisor
 
-A comprehensive, personal cryptocurrency portfolio tracking application that connects to Binance to provide detailed analysis of your holdings, accurate P/L calculations using FIFO cost basis, intelligent rebalancing suggestions based on technical analysis, and advanced backtesting capabilities with optional live trading execution.
+A comprehensive, personal cryptocurrency portfolio tracking application built on a modern, high-performance Python toolkit. It connects to Binance to provide detailed analysis of your holdings, accurate P/L calculations using dual accounting perspectives, intelligent rebalancing suggestions, and advanced backtesting capabilities.
 
 ## 🚀 Key Features
 
@@ -11,9 +11,11 @@ A comprehensive, personal cryptocurrency portfolio tracking application that con
   - Simple Earn (Subscriptions, Redemptions, and Rewards)
   - Staking History (Subscriptions, Redemptions, and Interest)
   - Dividends, Asset Conversions, Internal Transfers, and Copy Trading
-- **Consolidated Wallet View**: Aggregates balances from Spot and Simple Earn wallets with automatic LD (Locked/Staked) asset normalization
-- **Accurate P/L Calculation**: Implements First-In, First-Out (FIFO) accounting method for precise cost basis and unrealized profit/loss calculations
-- **Persistent Local Database**: All transactions stored in local SQLite database (`data/portfolio.db`) for fast queries and complete historical record
+- **Dual Accounting Perspectives**:
+  - **FIFO Cost Basis**: First-In, First-Out calculation for precise unrealized P/L on a per-asset basis, essential for tax-lot accounting
+  - **Net Invested Capital**: Tracks true cash-in vs. cash-out to provide an absolute "Overall P/L" on your entire portfolio
+- **Intelligent Data Processing**: Automatically de-duplicates P2P transaction records from the Binance API to ensure data integrity
+- **Persistent Local Database**: All transactions stored in local SQLite database (`data/portfolio.db` or `data/testnet_portfolio.db` for testnet) for fast queries and complete historical record
 
 ### ⚡ **Advanced Trading & Analysis**
 - **Dual Backtesting Engines**: Test and validate strategies with two specialized backtesters:
@@ -29,56 +31,70 @@ A comprehensive, personal cryptocurrency portfolio tracking application that con
 - **Pluggable Strategy Architecture**: Easily develop custom trading strategies by extending the base `Strategy` class
 
 ### 🔧 **Robust & Performance Optimized**
+- **Modern Python Toolchain**: Uses `uv` for lightning-fast dependency management and `ruff` for high-performance formatting and linting
 - **Intelligent API Management**:
-  - Resilient error handling with automatic retries
-  - Fallback mechanism from yfinance to Binance API for reliable data
-  - Smart rate limiting and request batching
+  - **Resilient Error Handling**: Automatically retries failed API calls with exponential backoff using `tenacity`
+  - **Timestamp Synchronization**: Eliminates `recvWindow` errors by actively synchronizing client clock with Binance server
+  - **Testnet Support**: Full testnet integration for safe testing without real funds
+  - **CoinGecko API Integration**: Supports both free and premium CoinGecko API tiers
 - **Performance Optimized**:
-  - Asynchronous concurrent API calls for 5x faster syncing
+  - Asynchronous concurrent API calls for significantly faster data syncing
   - Persistent disk caching reduces API calls by 90% after initial sync
   - Incremental updates process only new transactions
 - **Professional Reporting**: Generate reports in multiple formats:
   - Excel (`.xlsx`) with embedded charts and password protection options
   - Mobile-optimized HTML (`.html`) with interactive elements
   - Complete CSV backups with separate files for different data types
-- **Advanced Visualization**: Create professional charts showing portfolio allocation, performance trends, and technical analysis
 
 ## 📁 Project Structure
 
+The project follows a standard `src` layout for clean, maintainable, and distributable packaging:
+
 ```
 crypto-portfolio-tracker/
-├── src/
-│   ├── templates/                  # HTML report templates
-│   │   └── report_template.html
-│   ├── __init__.py
-│   ├── portfolio_tracker.py       # Main tracker & orchestration
-│   ├── config.py                  # Configuration management
-│   ├── database.py                # SQLite database operations
-│   ├── exporters.py               # Export functionality (Excel/HTML/CSV)
-│   ├── visualizations.py          # Chart and graph generation
-│   ├── crypto_trend_analyzer.py   # Multi-timeframe technical analysis
-│   ├── trading_strategies.py      # Pluggable trading strategies
-│   ├── strategy_backtester.py     # Backtester for directional strategies
-│   └── rebalancing_backtester.py  # Backtester for rebalancing strategies
 ├── config/
-│   ├── .env.example               # Environment variables template
 │   └── default_config.json        # Default configuration settings
-├── data/                          # Local data storage
-│   ├── portfolio.db               # SQLite database
+├── data/
+│   ├── portfolio.db               # SQLite database (production)
+│   ├── testnet_portfolio.db       # SQLite database (testnet)
 │   ├── cache/                     # API response cache
-│   ├── exports/                   # Generated reports
+│   │   ├── backtest_data/         # Cached backtesting data
+│   │   └── coingecko_historical/  # CoinGecko price cache
+│   ├── exports/                   # Generated reports and backups
 │   └── trend_reports/             # Technical analysis reports
-├── logs/                          # Application logs with rotation
-├── requirements.txt               # Python dependencies
-├── main.py                        # Application entry point
-├── README.md                      # This documentation
-└── setup.py                       # Installation script
+├── logs/
+│   └── portfolio_tracker.log      # Application logs with rotation
+├── src/
+│   └── crypto_portfolio_tracker/
+│       ├── templates/
+│       │   └── report_template.html
+│       ├── __init__.py
+│       ├── __main__.py            # Main application entry point
+│       ├── portfolio_tracker.py   # Core orchestration logic
+│       ├── binance_fetcher.py     # Binance API data fetching
+│       ├── price_enricher.py      # Price data enrichment
+│       ├── database.py            # SQLite database operations
+│       ├── config.py              # Configuration management
+│       ├── exporters.py           # Export functionality (Excel/HTML/CSV)
+│       ├── visualizations.py      # Chart and graph generation
+│       ├── crypto_trend_analyzer.py # Multi-timeframe technical analysis
+│       ├── trading_strategies.py  # Pluggable trading strategies
+│       ├── strategy_backtester.py # Backtester for directional strategies
+│       ├── rebalancing_backtester.py # Backtester for rebalancing strategies
+│       ├── rebalancing_logic.py   # Rebalancing calculation logic
+│       └── symbol_mapper.py       # Symbol mapping utilities
+├── tests/                         # Unit tests
+├── main.py                        # Developer convenience entry point
+├── pyproject.toml                 # Project definition and dependencies
+├── default_config.json.example    # Configuration template
+└── README.md                      # This documentation
 ```
 
 ## 🛠 Installation & Setup
 
 ### Prerequisites
-- Python 3.8 or higher
+- Python 3.10 or higher
+- [uv](https://github.com/astral-sh/uv) installed (`pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Binance account with API access
 - Git (optional but recommended)
 
@@ -90,46 +106,54 @@ git clone https://github.com/Onehand-Coding/crypto-portfolio-tracker.git
 cd crypto-portfolio-tracker
 ```
 
-2. **Create and Activate Virtual Environment:**
+2. **Create and Activate Virtual Environment (with `uv`):**
 ```bash
-# Linux/macOS
-python3 -m venv .venv
-source .venv/bin/activate
+uv venv
+source .venv/bin/activate  # Linux/macOS
 
-# Windows
-python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate     # Windows
 ```
 
 3. **Install Dependencies:**
 ```bash
-pip install -r requirements.txt
+uv sync --dev
 ```
 
-4. **Set Up Environment Variables (Recommended):**
+4. **Set Up Environment Variables:**
 ```bash
 cp config/.env.example .env
 ```
 
-Edit `.env` with your API credentials:
+Edit the `.env` file with your API credentials:
 ```env
-# .env - Most secure way to handle credentials
-BINANCE_API_KEY="YOUR_BINANCE_API_KEY"
-BINANCE_API_SECRET="YOUR_BINANCE_API_SECRET"
-COINGECKO_API_KEY="your_coingecko_api_key_optional"
-LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
+# Main Production API Keys
+MAIN_API_KEY=your_binance_api_key_here
+MAIN_API_SECRET=your_binance_api_secret_here
+
+# Optional: Testnet API Keys (recommended for testing)
+TESTNET_API_KEY=testnet_api_key_here
+TESTNET_API_SECRET=testnet_api_secret_here
+
+# Master Testnet Switch - Set to "true" for safe testing
+BINANCE_TESTNET=true
+
+# CoinGecko API (recommended for higher rate limits)
+COINGECKO_API_KEY=your_coingecko_api_key_here
+
+# Logging Level
+LOG_LEVEL=INFO
 ```
 
 5. **Configure Your Portfolio Targets:**
 ```bash
-cp config/default_config.json config/config.json
+cp default_config.json.example config/default_config.json
 ```
 
-Edit `config/config.json` with your target allocation and preferences.
-
-**Note**: Settings in `.env` file will override settings in `config.json`.
+Edit `config/default_config.json` with your target allocation and preferences.
 
 ## 🔐 Binance API Setup
+
+### Production API Setup
 
 **CRITICAL SECURITY STEPS:**
 
@@ -138,14 +162,28 @@ Edit `config/config.json` with your target allocation and preferences.
 3. **For Portfolio Tracking Only**: Enable ONLY "Enable Reading" permission
 4. **For Live Trading**: Enable "Enable Reading" + "Enable Spot & Margin Trading" (use with extreme caution)
 5. **Add your IP address to whitelist** for enhanced security
-6. Copy API Key and Secret to your `.env` file
-7. **NEVER share your API secret**
+6. Copy API Key and Secret to your `.env` file as `MAIN_API_KEY` and `MAIN_API_SECRET`
+
+### Testnet API Setup (Recommended for Testing)
+
+1. Visit [Binance Testnet](https://testnet.binance.vision/)
+2. Create testnet account and generate API keys
+3. Add testnet keys to `.env` file as `TESTNET_API_KEY` and `TESTNET_API_SECRET`
+4. Set `BINANCE_TESTNET=true` in `.env` to use testnet
+5. **Note**: Testnet uses a separate database (`testnet_portfolio.db`) to avoid mixing test and real data
+
+### CoinGecko API Setup (Recommended)
+
+1. Visit [CoinGecko API](https://www.coingecko.com/en/api) (optional but recommended)
+2. Sign up for free or premium API access
+3. Add your API key to `.env` file as `COINGECKO_API_KEY`
+4. Higher rate limits prevent API throttling issues
 
 ## ⚙️ Configuration
 
 ### Target Portfolio Allocation
 
-Define your desired allocation in `config/config.json` (percentages must sum to 1.0):
+Define your desired allocation in `config/default_config.json` (percentages must sum to 1.0):
 
 ```json
 {
@@ -218,19 +256,6 @@ Configure multi-timeframe analysis parameters:
 }
 ```
 
-### Portfolio & Trading Settings
-
-```json
-{
-  "portfolio": {
-    "minimum_trade_usd": 5.0,
-    "live_trading_enabled": false,
-    "p2p_fiat_currency": "PHP",
-    "stablecoin_symbols": ["USDT"]
-  }
-}
-```
-
 ## 🎯 Usage
 
 The application offers a comprehensive interactive menu and command-line options for automation.
@@ -240,13 +265,21 @@ The application offers a comprehensive interactive menu and command-line options
 For day-to-day portfolio management:
 
 ```bash
+# Activate your virtual environment first
+source .venv/bin/activate
+
+# Run the application
+track-portfolio
+# OR for development
 python main.py
+# OR using uv
+uv run track-portfolio
 ```
 
 **Interactive Menu Options:**
 ```
 ==================================================
-🚀 Crypto Portfolio Tracker v2.1
+🚀 Crypto Portfolio Tracker v2.1.0
 ==================================================
 1. 🔄 Full Sync & Analysis (Recommended for first run)
 2. 📊 Quick Portfolio Summary (Fast daily updates)
@@ -272,282 +305,282 @@ For automation, scripting, and advanced usage:
 
 ```bash
 # General format
-python main.py [command] [options]
+track-portfolio [options]
 
 # Available options
---sync-only              # Run data synchronization only
---export-only            # Export existing data without syncing
---charts-only            # Generate charts from existing data
---format [excel|html|csv|all]  # Specify export format
---config <path>          # Use custom configuration file
--v, --verbose            # Enable detailed debug logging
+-v, --verbose            # Enable detailed DEBUG logging
 -q, --quiet              # Suppress console output except errors
---version                # Show application version
 ```
 
 **Command-Line Examples:**
 ```bash
 # Silent background sync for automation
-python main.py --sync-only --quiet
+track-portfolio --quiet
 
-# Export only Excel report
-python main.py --export-only --format excel
+# Verbose logging for troubleshooting
+track-portfolio --verbose
 
-# Use separate config for different portfolio
-python main.py --config /path/to/my_other_config.json
-
-# Generate charts with verbose logging
-python main.py --charts-only --verbose
+# View live logs
+tail -f logs/portfolio_tracker.log
 ```
 
 ### Recommended Workflow
 
-1. **First Run**: Choose option 1 (Full Sync & Analysis) for complete transaction history sync
-2. **Daily Monitoring**: Option 2 (Quick Portfolio Summary) for fast portfolio updates
-3. **Technical Analysis**: Option 3 (View Crypto Trends) for multi-timeframe market analysis
-4. **Strategic Planning**: Option 4 (Rebalance Suggestions) for allocation-based recommendations
-5. **Strategy Testing**: Options 7-8 for backtesting before live trading
-6. **Live Execution**: Options 5-6 for automated rebalancing or strategy trading (use with caution)
+1. **First Setup**: Set `BINANCE_TESTNET=true` and run option 1 (Full Sync & Analysis) to test safely
+2. **Production Setup**: Set `BINANCE_TESTNET=false` for real portfolio tracking
+3. **Daily Monitoring**: Option 2 (Quick Portfolio Summary) for fast portfolio updates
+4. **Technical Analysis**: Option 3 (View Crypto Trends) for multi-timeframe market analysis
+5. **Strategic Planning**: Option 4 (Rebalance Suggestions) for allocation-based recommendations
+6. **Strategy Testing**: Options 7-8 for backtesting before live trading
+7. **Live Execution**: Options 5-6 for automated rebalancing or strategy trading (use with extreme caution)
 
 ## 📊 Understanding the Output
 
-### Consolidated Portfolio Summary
+### Dual Accounting Perspective
+
+The portfolio summary provides two distinct views of your performance:
+
 ```
 ===================================================================================================================
 📊 CONSOLIDATED PORTFOLIO SUMMARY (Spot + Earn)
 ===================================================================================================================
-Timestamp:             2025-06-12 17:42:28
-Total Portfolio Value: $134.65
-Total Cost Basis:      $129.70
-Unrealized P/L:        $4.95 (3.81%)
+Timestamp:                   2025-06-19 12:09:35
+Database:                    testnet_portfolio.db (TESTNET MODE)
+-------------------------------------------------------------------------------------------------------------------
+PERFORMANCE VS. INVESTED CAPITAL:
+Total Invested Capital:      $121.22
+Overall P/L:                 $4.28 (3.53%)
+-------------------------------------------------------------------------------------------------------------------
+PERFORMANCE VS. ROLLING COST BASIS:
+Total Portfolio Value:       $125.50
+Total Cost Basis (FIFO):     $129.57
+Unrealized P/L (FIFO):       $-4.07 (-3.14%)
 -------------------------------------------------------------------------------------------------------------------
 Asset    Total Qty          Spot Qty        Earn Qty        Value (USD)     Cost Basis      P/L (USD)       Allocation
 -------------------------------------------------------------------------------------------------------------------
-BTC      0.00046944         0               0.00046944      $50.54          $42.77          $7.77           37.53%
+BTC      0.00046944         0               0.00046944      $49.28          $42.73          $6.55           39.26%
 ETH      0.01190199         0               0.01190199      $32.83          $31.49          $1.34           24.38%
 SOL      0.08608167         0               0.08608167      $13.74          $14.91          $-1.17          10.20%
-TAO      0.02378306         0               0.02378306      $9.43           $10.67          $-1.24          7.00%
-RENDER   2.02797            2.02797         0               $7.60           $9.99           $-2.38          5.65%
-LINK     0.49950165         0               0.49950165      $7.22           $6.99           $0.23           5.36%
-AVAX     0.33968686         0               0.33968686      $7.16           $6.90           $0.26           5.32%
-ONDO     7.1930891          0               7.1930891       $6.08           $5.95           $0.13           4.51%
+...
 ===================================================================================================================
 ```
 
+**Key Metrics Explained:**
+- **Invested Capital Performance**: Your true performance against actual cash invested
+- **FIFO Cost Basis Performance**: Tax-relevant unrealized P/L based on First-In, First-Out accounting
+- **Database Indicator**: Shows whether you're using testnet or production data
+
 ### Multi-Timeframe Technical Analysis
 ```
-========================================================================================================================
-📈 CRYPTO TREND ANALYSIS REPORT
-========================================================================================================================
-Generated: 2025-06-12 18:30:45
-Analyzing: BTC, ETH, SOL, RENDER, TAO, AVAX, LINK, ONDO
-========================================================================================================================
-
-🟢 BTC (Bitcoin) - BULLISH CONFIDENCE: 82%
-------------------------------------------------------------------------
-Long-Term (4y):  ✅ Golden Cross | Price: $107,632 (+18.2% vs SMA200)
-Swing (3mo):     ✅ Above MA30   | RSI: 58.3 (Neutral)
-Day (60d):       ⚠️  Near MA15   | MACD: Bullish Crossover
-Recommendation:  STRONG BUY - Multiple timeframes confirm bullish trend
-
-🔴 RENDER (Render Token) - BEARISH CONFIDENCE: 71%
-------------------------------------------------------------------------
-Long-Term (4y):  ❌ Death Cross  | Price: $3.75 (-35.8% vs SMA200)
-Swing (3mo):     ❌ Below MA30   | RSI: 28.1 (Oversold)
-Day (60d):       ⚠️  Testing MA15| MACD: Bearish Divergence
-Recommendation:  HOLD/ACCUMULATE - Oversold conditions, potential reversal
-========================================================================================================================
-```
-
-### Technical Rebalancing Suggestions
-```
-========================================================================================================================
-⚖️ REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)
-========================================================================================================================
-🔴 BTC     | Signal: SELL
-   Allocation: 37.53% (Target: 35.0%) | Drift: +2.53 pts | Value: $50.54
-   Technical: Golden Cross, RSI: 58.3, Price > SMA200 (+18.2%)
-   Action: Sell ~25% of excess (~$0.85), which is 0.0000079 BTC
-   Reason: Above target allocation, strong technical position allows partial profit-taking
-----------------------------------------------------------------------
-🟢 AVAX    | Signal: BUY
-   Allocation: 5.32% (Target: 6.0%) | Drift: -0.68 pts | Value: $7.16
-   Technical: Death Cross, RSI: 42.1, Price vs SMA200 (-12.3%)
-   Action: Buy ~$0.92 worth, which is 0.044 AVAX
-   Reason: Below target allocation, oversold conditions present buying opportunity
-----------------------------------------------------------------------
-🟡 ETH     | Signal: HOLD
-   Allocation: 24.38% (Target: 20.0%) | Drift: +4.38 pts | Value: $32.83
-   Technical: Golden Cross, RSI: 64.2, Price > SMA200 (+8.1%)
-   Action: Hold: Drift within major asset tolerance (3.0%), strong technical setup
 ================================================================================
-🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡🟡🟡
+📈 TREND ANALYSIS REPORT (LONG_TERM)
+Timestamp: 2025-06-19T13:28:29.097339
+================================================================================
+
+--- 🌍 Market Summary ---
+Coins Analyzed: 8
+Most Common Condition: Neutral RSI (40-60)
+Bullish Coins: 5 | Bearish Coins: 3
+
+--- 🎯 Benchmark Analysis: BTC-USD ---
+  Price: $105,150.34 (+194.55%) | RSI: 62.64
+  Support: $74,436.68 | Resistance: $111,970.17
+  Active Conditions: Golden Cross, Price > SMA200
+
+--- 🪙 Coin-by-Coin Analysis ---
+
+➡️ ETH-USD
+  Price: $2,530.84 (+12.66%) | RSI: 51.93
+  Support: $1,386.80 | Resistance: $4,106.96
+  Active Conditions: Golden Cross, Price > SMA200, Neutral RSI (40-60)
+
+➡️ SOL-USD
+  Price: $146.99 (+316.14%) | RSI: 45.84
+  Support: $96.59 | Resistance: $294.33
+  Active Conditions: Golden Cross, Price > SMA200, Neutral RSI (40-60)
+
+➡️ RENDER-USD
+  Price: $3.30 (+471.01%) | RSI: 40.46
+  Support: $2.53 | Resistance: $11.62
+  Active Conditions: Golden Cross, Price < SMA200, Neutral RSI (40-60)
+
+➡️ TAO-USD
+  Price: $0.00 (+0.00%) | RSI: 50.00
+  Support: $0.00 | Resistance: $0.00
+  Active Conditions: Insufficient Historical Data
+
+➡️ AVAX-USD
+  Price: $18.04 (+29.12%) | RSI: 40.43
+  Support: $14.70 | Resistance: $55.70
+  Active Conditions: Death Cross, Price < SMA200, Neutral RSI (40-60)
+
+➡️ LINK-USD
+  Price: $13.26 (-38.98%) | RSI: 44.30
+  Support: $10.20 | Resistance: $30.81
+  Active Conditions: Golden Cross, Price < SMA200, Neutral RSI (40-60)
+
+➡️ ONDO-USD
+  Price: $0.78 (+178.48%) | RSI: 43.05
+  Support: $0.67 | Resistance: $2.14
+  Active Conditions: Neutral RSI (40-60)
+
+================================================================================
+
+```
+
+### Rebalancing Suggestion
+```
+========================================================================================
+⚖️ REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)
+========================================================================================
+🔴 ETH    | Signal: SELL
+   Allocation: 23.70% (Target: 20.0%) | Drift: 3.70 pts | Value: $29.49
+   Price: $2,526.74    | Support: $2,387.61 | Resistance: $2,877.63
+   Long-Term Trend: Golden Cross, Price > SMA200, Neutral RSI (40-60)
+   Action: Sell ~$2.30 worth, which is 0.00091149451 ETH
+------------------------------------------------------
+🔴 BTC    | Signal: SELL
+   Allocation: 39.53% (Target: 35.0%) | Drift: 4.53 pts | Value: $49.18
+   Price: $105,022.07  | Support: $100,436.88 | Resistance: $111,970.17
+   Long-Term Trend: Golden Cross, Price > SMA200
+   Action: Sell ~$4.22 worth, which is 4.0213452e-05 BTC
+------------------------------------------------------
+🟡 RENDER | Signal: HOLD
+   Allocation: 5.35% (Target: 8.0%) | Drift: -2.65 pts | Value: $6.65
+   Price: $3.28        | Support: $3.16 | Resistance: $5.34
+   Long-Term Trend: Golden Cross, Price < SMA200, Neutral RSI (40-60)
+   Action: Hold: Allocation is within tolerance.
+------------------------------------------------------
+🟡 SOL    | Signal: HOLD
+   Allocation: 9.89% (Target: 12.0%) | Drift: -2.11 pts | Value: $12.31
+   Price: $146.70      | Support: $141.44 | Resistance: $187.28
+   Long-Term Trend: Golden Cross, Price > SMA200, Neutral RSI (40-60)
+   Action: Hold: Allocation is within tolerance.
+------------------------------------------------------
+🟡 AVAX   | Signal: HOLD
+   Allocation: 4.83% (Target: 6.0%) | Drift: -1.17 pts | Value: $6.01
+   Price: $17.98       | Support: $17.84 | Resistance: $25.95
+   Long-Term Trend: Death Cross, Price < SMA200, Neutral RSI (40-60)
+   Action: Hold: Allocation is within tolerance.
+------------------------------------------------------
+🟡 TAO    | Signal: HOLD
+   Allocation: 6.85% (Target: 8.0%) | Drift: -1.15 pts | Value: $8.52
+   Price: $360.20      | Support: $334.30 | Resistance: $500.00
+   Long-Term Trend: Insufficient Historical Data
+   Action: Hold: Allocation is within tolerance.
+------------------------------------------------------
+🟡 LINK   | Signal: HOLD
+   Allocation: 5.29% (Target: 6.0%) | Drift: -0.71 pts | Value: $6.58
+   Price: $13.26       | Support: $12.68 | Resistance: $17.14
+   Long-Term Trend: Golden Cross, Price < SMA200, Neutral RSI (40-60)
+   Action: Hold: Allocation is within tolerance.
+------------------------------------------------------
+🟡 ONDO   | Signal: HOLD
+   Allocation: 4.53% (Target: 5.0%) | Drift: -0.47 pts | Value: $5.63
+   Price: $0.78        | Support: $0.73 | Resistance: $1.05
+   Long-Term Trend: Neutral RSI (40-60)
+   Action: Hold: Allocation is within tolerance.
+========================================================================================
+Verifying balances in Spot and Earn wallets...
+
+================================================================================
+🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴
 ================================================================================
 🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨
 ================================================================================
-
-Symbol  Signal   Suggested Action Detail
-  BTC    SELL    Sell ~$0.85 worth, which is 0.0000079 BTC
- AVAX     BUY    Buy ~$0.92 worth, which is 0.044 AVAX
+Symbol Signal                       Suggested Action Detail
+   ETH   SELL Sell ~$2.30 worth, which is 0.00091149451 ETH
+   BTC   SELL Sell ~$4.22 worth, which is 4.0213452e-05 BTC
 ================================================================================
-Type 'EXECUTE' to proceed with dry-run simulation:
+Type 'EXECUTE' to proceed with the trades listed above:
 ```
 
-### Strategy Backtesting Results
-```
-================================================================================
-📈 BACKTEST PERFORMANCE REPORT: BTC-USD (2022 - 2025)
-Strategy: Golden Cross (50/200)
-================================================================================
-Initial Capital:         $10,000.00
-Final Portfolio Value:   $21,205.03
-----------------------------------------
-Strategy Total Return:   112.05%
-Buy & Hold Return:       300.79%
-Strategy Outperformance: -188.74%
-----------------------------------------
-Total Trades Executed:   7
-================================================================================
+## 🔧 Development & Tooling
 
---- Trade Log (First 15) ---
-2023-02-07 00:00: BUY 0.4294 of BTC-USD @ $23,264.29 (Golden Cross: 50d > 200d)
-2023-09-12 00:00: SELL 0.4294 of BTC-USD @ $25,833.34 (Death Cross: 50d < 200d)
-2023-10-30 00:00: BUY 0.3209 of BTC-USD @ $34,502.36 (Golden Cross: 50d > 200d)
-2024-08-10 00:00: SELL 0.3209 of BTC-USD @ $60,945.81 (Death Cross: 50d < 200d)
-2024-10-28 00:00: BUY 0.2792 of BTC-USD @ $69,907.76 (Golden Cross: 50d > 200d)
-2025-04-07 00:00: SELL 0.2792 of BTC-USD @ $79,235.34 (Death Cross: 50d < 200d)
-2025-05-22 00:00: BUY 0.1977 of BTC-USD @ $111,673.28 (Golden Cross: 50d > 200d)
-================================================================================
+This project uses modern, high-performance Python tools for development:
 
-✅ Press Enter to continue...
+### Using `uv` for Dependencies
 
+```bash
+# Install all dependencies including dev tools
+uv sync --dev
+
+# Add a new package
+# Edit pyproject.toml to add the package, then:
+uv sync --extra dev pyproject.toml
+
+# Update all packages
+uv sync --upgrade --dev
 ```
 
-## 📁 Output Files
+### Using `ruff` for Code Quality
 
-All files are organized in the `data/` directory:
+```bash
+# Format all files
+ruff format .
 
-- **Database**: `data/portfolio.db` (SQLite with complete transaction history)
-- **Cache**: `data/cache/` (API response caching for performance)
-- **Reports**:
-  - `data/exports/portfolio_report_YYYYMMDD_HHMMSS.xlsx` (Excel with charts)
-  - `data/exports/portfolio_report_YYYYMMDD_HHMMSS.html` (Mobile-optimized)
-- **Backups**: `data/exports/transactions_backup_YYYYMMDD_HHMMSS.csv`
-- **Charts**: `data/exports/portfolio_allocation_pie_YYYYMMDD_HHMMSS.png`
-- **Technical Analysis**: `data/trend_reports/` (Detailed market analysis)
-- **Logs**: `logs/portfolio_tracker.log` (Rotating logs with 5 backup files)
+# Check for linting issues
+ruff check .
 
-## 🔧 Advanced Features
+# Fix auto-fixable issues
+ruff check --fix .
+```
 
-### FIFO Cost Basis Calculation
-- Accurately tracks cost basis using First-In, First-Out methodology
-- Handles complex scenarios: staking rewards, conversions, internal transfers
-- Properly accounts for fees in cost basis calculations
-- Supports different fiat currencies for P2P trades
+### Running Tests
 
-### Multi-Timeframe Technical Analysis
-- **Long-term (4-year)**: 50/200 SMA for major trend identification
-- **Swing (3-month)**: 10/30 SMA for medium-term momentum
-- **Day (60-day)**: 5/15 SMA for short-term entry/exit timing
-- **Confidence Scoring**: Weighted recommendations based on timeframe alignment
+```bash
+# Run all tests
+uv run pytest tests/
 
-### Advanced Rebalancing Logic
-- **Asset Classification**: Different thresholds for majors (BTC/ETH) vs altcoins
-- **Technical Integration**: RSI and moving average filters for timing
-- **Safety Mechanisms**: Minimum trade amounts, never-sell lists, drift thresholds
-- **Smart Execution**: Batch trades, dry-run mode, confirmation steps
+# Run with coverage
+uv run pytest tests/ --cov=src/crypto_portfolio_tracker
 
-### Performance Optimizations
-- **Concurrent Processing**: Async API calls for 5x faster data fetching
-- **Intelligent Caching**: 90% reduction in API calls after initial sync
-- **Incremental Updates**: Only process new transactions after first run
-- **Database Optimization**: Indexed queries, automatic cleanup, backup rotation
+# Run specific test file
+uv run pytest tests/test_portfolio_tracker.py
+```
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
-#### API Connection Failed
-Test your API connections and verify configuration:
+#### Testnet vs Production Confusion
+- **Check Database**: Look for "TESTNET MODE" indicator in portfolio summary
+- **Verify Settings**: Ensure `BINANCE_TESTNET` is set correctly in `.env`
+- **Separate Databases**: Testnet uses `testnet_portfolio.db`, production uses `portfolio.db`
 
+#### API Connection Failed
 ```bash
-# Test API connections
-python main.py  # Choose option 14 (Test API Connections)
+# Test API connections through menu
+track-portfolio  # Choose option 14 (Test API Connections)
 
 # Check configuration
-python main.py  # Choose option 12 (View Configuration)
+track-portfolio  # Choose option 12 (View Configuration)
 
 # Verify environment variables
 cat .env
 ```
 
-#### Permission Denied or Invalid API Key
-- Ensure API key has correct permissions (Read-only for tracking, Spot Trading for live trades)
-- Verify IP whitelist settings in Binance
-- Check if API key is expired or suspended
-- Confirm recv_window setting (default: 60000ms)
+#### Rate Limiting Issues
+- **Use CoinGecko API Key**: Add `COINGECKO_API_KEY` to `.env` for higher rate limits
+- **Check Rate Limits**: Monitor API usage in your exchange account
+- **Increase Delays**: Adjust request timing in configuration
 
-#### No Data Found or Empty Portfolio
-- Run full sync first: Choose option 1
-- Verify you have holdings in your Binance account (Spot or Earn wallets)
-- Check minimum value threshold in config (`minimum_value_usd`)
-- Review logs: `tail -f logs/portfolio_tracker.log`
-
-#### Symbol Not Found in CoinGecko
-- Update `symbol_mappings.coingecko_ids` in config
-- Check if token is listed on CoinGecko API
-- Add custom mapping for new tokens
-- Use symbol normalization for ticker variations (RNDR → RENDER)
-
-#### Rate Limit Exceeded
-- Increase `request_delay_ms` in API configuration
-- Reduce `batch_days` for smaller batches
-- Check rate limits in Binance account
-- Consider upgrading CoinGecko API plan
-
-#### pandas_ta NaN Import Error
-To avoid the "cannot import name 'NaN' from 'numpy'" error on fresh installations:
-
-1. **Activate the virtual environment:**
-   ```bash
-   source .venv/bin/activate
-   ```
-
-2. **Install compatible versions:**
-   ```bash
-   pip install --upgrade numpy pandas-ta
-   # OR use specific versions:
-   pip install numpy==1.26.4 pandas-ta==0.3.90b0
-   ```
-
-3. **If the error persists, apply manual fix:**
-   Edit `venv/lib/python3.12/site-packages/pandas_ta/momentum/squeeze_pro.py`
-
-   Change:
-   ```python
-   from numpy import NaN as npNaN
-   ```
-
-   To:
-   ```python
-   from numpy import nan as npNaN
-   ```
-
-4. **Verify the fix:**
-   ```bash
-   python main.py
-   ```
+#### Empty Portfolio or No Data
+- **Run Full Sync**: Choose option 1 from the interactive menu
+- **Check API Permissions**: Ensure "Enable Reading" is enabled on your API key
+- **Verify Holdings**: Confirm you have assets in Spot or Earn wallets
+- **Review Logs**: Check `logs/portfolio_tracker.log` for detailed error information
 
 ### Debug Mode
 
 Enable comprehensive logging:
 ```bash
-# Via command line
-python main.py --verbose
+# Enable verbose logging
+track-portfolio --verbose
 
-# Via environment variable
+# Set environment variable
 export LOG_LEVEL=DEBUG
-python main.py
+track-portfolio
 
 # View live logs
 tail -f logs/portfolio_tracker.log
@@ -559,71 +592,98 @@ tail -f logs/portfolio_tracker.log
 # Check database integrity
 sqlite3 data/portfolio.db ".schema"
 
+# For testnet database
+sqlite3 data/testnet_portfolio.db ".schema"
+
 # Manual cleanup (use with caution)
-python main.py  # Choose option 13 (Clean Old Data)
+track-portfolio  # Choose option 13 (Clean Old Data)
 
 # Complete reset (will require full re-sync)
-rm data/portfolio.db
+rm data/portfolio.db data/testnet_portfolio.db
 ```
 
 ## 🔒 Security Best Practices
 
 ### API Security
-1. **Use read-only API keys** unless live trading is absolutely necessary
-2. **Enable IP whitelisting** on all API keys
-3. **Rotate API keys regularly** (monthly recommended)
-4. **Monitor API usage** in Binance account settings
-5. **Use testnet** for strategy development when available
+1. **Start with Testnet**: Always test with `BINANCE_TESTNET=true` first
+2. **Use Read-Only Keys**: Enable only "Enable Reading" permission unless live trading is necessary
+3. **Enable IP Whitelisting**: Restrict API access to your IP address
+4. **Rotate API Keys Regularly**: Monthly rotation recommended
+5. **Monitor API Usage**: Check usage in your exchange account settings
 
 ### Local Security
-1. **Never commit `.env` file** to version control (added to .gitignore)
-2. **Set restrictive file permissions** on configuration files (chmod 600)
-3. **Use encrypted storage** for sensitive data when possible
-4. **Regular backups** of database and configuration
-5. **Keep software updated** with latest security patches
+1. **Never Commit `.env`**: File is in `.gitignore` but double-check
+2. **Restrict File Permissions**: `chmod 600 .env` on Linux/macOS
+3. **Use Encrypted Storage**: Encrypt sensitive configuration files
+4. **Regular Backups**: Backup database and configuration regularly
+5. **Keep Software Updated**: Update dependencies regularly with `uv pip sync --upgrade`
 
 ### Trading Security
-1. **Start with dry-run mode** always (`live_trading_enabled: false`)
-2. **Use minimum trade amounts** to limit exposure
-3. **Set up stop-losses** and position limits
-4. **Monitor trades actively** when live trading is enabled
-5. **Have emergency procedures** for stopping automated trading
+1. **Always Start with Testnet**: Test all strategies on testnet first
+2. **Use Dry-Run Mode**: Keep `live_trading_enabled: false` initially
+3. **Set Position Limits**: Configure maximum trade amounts
+4. **Monitor Actively**: Watch automated trades closely
+5. **Have Kill Switch**: Know how to stop automated trading immediately
 
-## 🚀 Performance Metrics
+## 📈 Performance Metrics
 
-After optimization improvements:
-- **Initial sync**: ~2-3 minutes (depending on transaction history)
-- **Daily updates**: ~10-15 seconds with caching
-- **Report generation**: ~5-10 seconds including charts
-- **API calls reduced**: 90% fewer requests after first run
-- **Database queries**: Sub-second response times with indexing
-- **Memory usage**: ~50-100MB typical operation
+Optimized performance characteristics:
+- **Initial Sync**: ~2-3 minutes (depending on transaction history)
+- **Daily Updates**: ~10-15 seconds with caching
+- **Report Generation**: ~5-10 seconds including charts
+- **API Efficiency**: 90% fewer requests after initial sync
+- **Database Performance**: Sub-second queries with proper indexing
+- **Memory Usage**: ~50-100MB during typical operation
 
 ## ⚠️ Important Disclaimers
 
 ### Financial Risk Warning
 This software is for **educational and informational purposes only** and does **NOT** constitute financial advice. Cryptocurrency investments carry significant risk and can result in substantial losses.
 
+### Testnet vs Production
+- **Always test on testnet first** before using real funds
+- **Testnet data is separate** from production data
+- **Set `BINANCE_TESTNET=false`** only when ready for real trading
+- **Double-check database indicator** in portfolio summaries
+
 ### Strategy Performance Warning
-- **Default strategies are for demonstration** and educational purposes only
-- **Backtesting results show strategies may underperform** simple buy-and-hold approaches
-- **Past performance does not guarantee future results**
-- **You must perform your own research and strategy optimization**
+- **Default strategies are educational**: Not optimized for profit
+- **Backtesting may show underperformance**: Many strategies underperform buy-and-hold
+- **Past performance ≠ future results**: Historical data doesn't guarantee future success
+- **Do your own research**: Optimize strategies for your risk tolerance
 
 ### Live Trading Risks
-- **Live trading is disabled by default** for safety
-- **Bugs, API issues, or flawed logic can lead to financial loss**
-- **Use extensive backtesting and dry-run mode** before enabling live trading
-- **Start with small amounts** to test functionality
-- **Monitor automated trades actively**
+- **Disabled by default**: Live trading requires explicit enablement
+- **Potential for losses**: Bugs or market conditions can cause financial loss
+- **Start small**: Test with minimal amounts first
+- **Active monitoring required**: Don't leave automated systems unattended
 
-### Data Accuracy
-- **Tool relies on third-party APIs** (Binance, CoinGecko, yfinance)
-- **Data is not guaranteed to be 100% accurate or available**
-- **Always verify critical data** independently
-- **Network issues can cause incomplete synchronization**
+## 📁 Output Files
 
-## 📈 Roadmap
+All files are organized in the `data/` directory:
+
+### Database Files
+- **Production**: `data/portfolio.db` (SQLite with complete transaction history)
+- **Testnet**: `data/testnet_portfolio.db` (Separate testnet database)
+
+### Cache and Performance
+- **API Cache**: `data/cache/coingecko_historical/` (Price data caching)
+- **Backtest Cache**: `data/cache/backtest_data/` (Strategy backtesting cache)
+- **Symbol Mappings**: `data/coingecko_mappings.json` (CoinGecko ID mappings)
+
+### Reports and Exports
+- **Excel Reports**: `data/exports/portfolio_report_YYYYMMDD_HHMMSS.xlsx`
+- **HTML Reports**: `data/exports/portfolio_report_YYYYMMDD_HHMMSS.html`
+- **Data Backups**: `data/exports/transactions_backup_YYYYMMDD_HHMMSS.csv`
+- **Holdings Backups**: `data/exports/holdings_backup_YYYYMMDD_HHMMSS.csv`
+- **Charts**: `data/exports/*.png` and `data/exports/*.svg`
+
+### Analysis and Logs
+- **Technical Analysis**: `data/trend_reports/` (Detailed market analysis JSON files)
+- **Strategy State**: `data/strategy_state.json` (Trading strategy persistence)
+- **Application Logs**: `logs/portfolio_tracker.log` (Rotating logs with 5 backup files)
+
+## 🚀 Roadmap
 
 ### Immediate Improvements (v2.2)
 - [ ] Enhanced error recovery for network interruptions
@@ -650,28 +710,44 @@ This software is for **educational and informational purposes only** and does **
 
 We welcome contributions from the community! Here's how to get started:
 
-1. **Fork the repository** on GitHub
-2. **Create a feature branch**: `git checkout -b feature-amazing-feature`
-3. **Make your changes** with clear, commented code
-4. **Add tests** for new functionality
-5. **Update documentation** as needed
-6. **Submit a pull request** with detailed description of changes
+1. **Fork the Repository** on GitHub
+2. **Create a Feature Branch**: `git checkout -b feature-amazing-feature`
+3. **Set Up Development Environment**:
+   ```bash
+   uv venv
+   source .venv/bin/activate
+   uv sync --dev
+   ```
+4. **Make Your Changes** with clear, commented code
+5. **Run Tests**: `pytest tests/`
+6. **Format Code**: `ruff format .` and `ruff check --fix .`
+7. **Add Tests** for new functionality
+8. **Update Documentation** as needed
+9. **Submit a Pull Request** with detailed description of changes
+
+### Development Guidelines
+- Follow PEP 8 style guidelines (enforced by `ruff`)
+- Write comprehensive docstrings for new functions
+- Add unit tests for new features
+- Update configuration examples when adding new options
+- Test both testnet and production modes when applicable
 
 ## 🆘 Support & Community
 
 - **Issues & Bug Reports**: [GitHub Issues](https://github.com/Onehand-Coding/crypto-portfolio-tracker/issues)
 - **Feature Requests**: [GitHub Discussions](https://github.com/Onehand-Coding/crypto-portfolio-tracker/discussions)
 - **Documentation**: [Project Wiki](https://github.com/Onehand-Coding/crypto-portfolio-tracker/wiki)
-- **Community Chat**: [Discord Server](https://discord.gg/crypto-portfolio-tracker)
 
 ### Getting Help
 1. **Check the troubleshooting section** above
 2. **Search existing issues** on GitHub
 3. **Provide detailed information** when reporting bugs:
    - Operating system and Python version
+   - Whether using testnet or production mode
    - Complete error messages and stack traces
    - Steps to reproduce the issue
    - Relevant configuration (without API keys)
+   - Log files (`logs/portfolio_tracker.log`)
 
 ## 📄 License
 
@@ -680,12 +756,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### Third-Party Licenses
 - Binance API: Subject to Binance Terms of Service
 - CoinGecko API: Subject to CoinGecko Terms of Service
-- All Python dependencies: See individual package licenses
+- All Python dependencies: See individual package licenses in `pyproject.toml`
 
 ## 🙏 Acknowledgments
 
-- **Binance** for providing comprehensive API access
-- **CoinGecko** for reliable cryptocurrency data
+- **Binance** for providing comprehensive API access and testnet environment
+- **CoinGecko** for reliable cryptocurrency data and generous free tier
+- **uv team** for revolutionary Python dependency management
+- **Ruff team** for high-performance Python tooling
 - **Python community** for excellent libraries and tools
 - **Contributors** who help improve the project
 - **Users** who provide feedback and bug reports
@@ -694,4 +772,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Built with ❤️ for the crypto community**
 
-*Remember: This tool is designed to help you make informed decisions, but always do your own research and never invest more than you can afford to lose.*
+*Remember: This tool is designed to help you make informed decisions, but always do your own research and never invest more than you can afford to lose. Start with testnet mode to safely explore all features.*

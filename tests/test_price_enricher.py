@@ -5,8 +5,8 @@ import pytest
 import pandas as pd
 from diskcache import Cache
 
-from src.price_enricher import PriceEnricher
-from src.symbol_mapper import SymbolMapper
+from crypto_portfolio_tracker.price_enricher import PriceEnricher
+from crypto_portfolio_tracker.symbol_mapper import SymbolMapper
 
 
 @pytest.fixture

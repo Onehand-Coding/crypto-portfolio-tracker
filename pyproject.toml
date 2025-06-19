@@ -1,52 +1,90 @@
+# Build system configuration
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+# Tell Hatch where to find the package code. The "src" part is the directory,
+# and "crypto_portfolio_tracker" is the name of the package inside it.
+packages = ["src/crypto_portfolio_tracker"]
+
+# Project metadata and dependencies
 [project]
 name = "crypto-portfolio-tracker"
 version = "2.1.0"
 requires-python = ">=3.10"
-
-# Core dependencies needed for the application to run
 dependencies = [
-    "httpx",
-    "pandas",
-    "requests",
-    "yfinance",
-    "pandas-ta",
-    "diskcache",
-    "python-binance",
-    "python-dotenv",
-    "matplotlib",
-    "seaborn",
-    "plotly",
-    "openpyxl",
-    "xlsxwriter",
-    "jinja2",
-    "numpy",
-    "pytz",
-    "colorlog",
-    "tqdm",
-    "tenacity"
+    # HTTP clients
+    "httpx>=0.27",
+    "requests>=2.31",
+
+    # Data processing
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "pandas-ta>=0.3",  # Technical analysis
+
+    # Financial data
+    "yfinance>=0.2",
+    "python-binance>=1.0",
+
+    # Visualization
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "plotly>=5.18",
+
+    # File handling
+    "openpyxl>=3.1",
+    "xlsxwriter>=3.2",
+
+    # Utilities
+    "diskcache>=5.6",      # Caching
+    "python-dotenv>=1.0",  # Environment variables
+    "jinja2>=3.1",         # Templating
+    "pytz>=2024.1",        # Timezone handling
+    "colorlog>=6.8",       # Colored logging
+    "tqdm>=4.66",          # Progress bars
+    "tenacity>=8.2",       # Retry logic
+    "setuptools<81",       # Build compatibility
 ]
 
-# Optional dependencies only needed for development and testing
+# Development dependencies
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-mock",
-    "pytest-asyncio",
-    "pip-tools",
-    "black"
+    "pytest>=8.4",
+    "pytest-mock>=3.14",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",        # Linting and formatting
 ]
 
-# The script to run your application
+# CLI entry point
 [project.scripts]
-track-portfolio = "main:main"
+track-portfolio = "crypto_portfolio_tracker.__main__:main"
 
-# Pytest configuration
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = [
-    "tests",
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
 ]
+
+# Test configuration
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "asyncio: mark test as async",
+]
+
+# Code formatting and linting
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]  # Error, pyflakes, warning, import sorting
+ignore = ["E501"]              # Ignore line too long (handled by formatter)
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false

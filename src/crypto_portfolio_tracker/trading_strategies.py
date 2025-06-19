@@ -2,7 +2,7 @@ import pandas as pd
 import pandas_ta as ta
 from typing import Tuple, Optional, List, Dict, Any
 
-from src.crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
+from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 
 class Strategy:

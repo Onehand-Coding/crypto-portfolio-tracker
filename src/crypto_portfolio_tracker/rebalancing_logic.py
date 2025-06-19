@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 import pandas as pd
 
-from src.crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition, get_market_regime
+from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition, get_market_regime
 
 
 async def get_live_rebalance_suggestions(

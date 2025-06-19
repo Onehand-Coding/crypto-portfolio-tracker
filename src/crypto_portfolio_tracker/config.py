@@ -21,7 +21,12 @@ class ConfigManager:
 
     def __init__(self, config_path: Optional[str] = None):
         """Initialize and load all configurations."""
-        self.project_root = Path(__file__).parent.parent
+        current_dir = Path(__file__).parent
+        while not (current_dir / "pyproject.toml").exists():
+            if current_dir == current_dir.parent:
+                raise FileNotFoundError("Could not find project root containing 'pyproject.toml'.")
+            current_dir = current_dir.parent
+        self.project_root = current_dir
         self.config_file_path = config_path or self.project_root / "config" / "default_config.json"
         self.env_path = self.project_root / ".env"
 

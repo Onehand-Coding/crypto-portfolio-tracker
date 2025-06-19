@@ -3,8 +3,8 @@ import datetime
 import pytest
 import pandas as pd
 
-from src.config import ConfigManager
-from src.portfolio_tracker import CryptoPortfolioTracker, calculate_fifo_cost_basis
+from crypto_portfolio_tracker.config import ConfigManager
+from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker, calculate_fifo_cost_basis
 
 
 def test_calculate_fifo_cost_basis():

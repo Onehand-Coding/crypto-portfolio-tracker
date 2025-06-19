@@ -2,8 +2,8 @@ import pytest
 import pandas as pd
 from unittest.mock import MagicMock
 
-from src.binance_fetcher import BinanceFetcher
-from src.symbol_mapper import SymbolMapper
+from crypto_portfolio_tracker.binance_fetcher import BinanceFetcher
+from crypto_portfolio_tracker.symbol_mapper import SymbolMapper
 
 
 @pytest.fixture
