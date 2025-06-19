@@ -40,11 +40,26 @@ class PriceEnricher:
     def _get_price_from_cache(self, symbol: str, date: datetime.datetime) -> float:
         if not symbol: return 0.0
         if symbol in self.stablecoin_symbols: return 1.0
+
         coin_id = self.symbol_mappings.get(symbol)
         if not coin_id: return 0.0
+
         date_str = date.strftime('%d-%m-%Y')
-        price = self.price_cache.get(f"{coin_id}_{date_str}")
-        return price if price is not None else 0.0
+        cache_key = f"{coin_id}_{date_str}"
+
+        # 1. Check in-memory cache first for performance
+        price = self.price_cache.get(cache_key)
+        if price is not None:
+            return price
+
+        # 2. If not in memory, check the disk cache
+        price = self.disk_cache.get(cache_key)
+        if price is not None:
+            self.price_cache[cache_key] = price # Add to memory cache for next time
+            return price
+
+        # 3. If not in any cache, return 0.0
+        return 0.0
 
     def _get_historical_fiat_exchange_rate(self, date: datetime.datetime, from_currency: str, to_currency: str) -> float:
         """
