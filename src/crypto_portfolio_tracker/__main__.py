@@ -8,16 +8,13 @@ import colorlog
 import argparse
 from pathlib import Path
 from typing import Optional
-import logging.config
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 
-# Use relative imports because this file is now part of the package
 from .portfolio_tracker import CryptoPortfolioTracker
 from .config import ConfigManager
 
-# We can keep the logger setup as is
 logger = logging.getLogger(__name__)
 
 
@@ -80,16 +77,17 @@ def print_main_menu():
     print("3. 📈 View Crypto Trends")
     print("4. ⚖️  View Rebalance Suggestions")
     print("5. 🤖 Execute Rebalancing Trades")
-    print("6. 💰 Live Trading (Directional Strategy)")
-    print("7. 🧪 Run Strategy Backtest")
-    print("8. ⚖️  Run Rebalancing Backtest")
-    print("9. 📋 Export Reports Only")
-    print("10. 📈 Generate Charts Only")
-    print("11. 💾 Export Data Backup")
-    print("12. 🧹 Clean Old Data")
-    print("13. ⚙️  View Configuration")
-    print("14. 🔧 Test API Connections")
-    print("15. ❌ Exit")
+    print("6. 🔀 TRADE Manual Trade (Buy/Sell)")
+    print("7. 💰 Live Trading (Directional Strategy)")
+    print("8. 🧪 Run Strategy Backtest")
+    print("9. ⚖️  Run Rebalancing Backtest")
+    print("10. 📋 Export Reports Only")
+    print("11. 📈 Generate Charts Only")
+    print("12. 💾 Export Data Backup")
+    print("13. 🧹 Clean Old Data")
+    print("14. ⚙️  View Configuration")
+    print("15. 🔧 Test API Connections")
+    print("16. ❌ Exit")
     print("="*50)
 
 
@@ -99,10 +97,9 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
     while True:
         print_main_menu()
         try:
-            choice_str = await loop.run_in_executor(None, input, "Select option (1-15): ")
+            choice_str = await loop.run_in_executor(None, input, "Select option (1-16): ")
             choice = int(choice_str) if choice_str.isdigit() else -1
 
-            # This match-case block now uses 'await' for all async functions
             match choice:
                 case 1:
                     print("\n🔄 Running full sync and analysis...")
@@ -122,31 +119,33 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 case 5:
                     await tracker.run_rebalance_and_execute()
                 case 6:
-                    await tracker.run_live_strategy()
+                    await tracker.run_manual_trade_session()
                 case 7:
-                    await tracker.run_backtest()
+                    await tracker.run_live_strategy()
                 case 8:
-                    await tracker.run_rebalancing_backtest()
+                    await tracker.run_trading_strategy_backtest()
                 case 9:
+                    await tracker.run_rebalancing_backtest()
+                case 10:
                     print("\n📋 Exporting reports...")
                     metrics = await tracker.calculate_portfolio_metrics()
                     tracker.export_to_excel(metrics)
                     tracker.export_to_html(metrics)
-                case 10:
+                case 11:
                     print("\n📈 Generating charts...")
                     metrics = await tracker.calculate_portfolio_metrics()
                     tracker.create_portfolio_charts(metrics)
-                case 11:
+                case 12:
                     print("\n💾 Exporting data backup...")
                     tracker.export_csv_backup()
-                case 12:
+                case 13:
                     print("\n🧹 Cleaning old data...")
                     tracker.cleanup_old_data()
-                case 13:
-                    tracker.print_configuration()
                 case 14:
-                    tracker.test_connections()
+                    tracker.print_configuration()
                 case 15:
+                    tracker.test_connections()
+                case 16:
                     print("👋 Exiting. Goodbye!")
                     break
                 case _:
@@ -159,8 +158,6 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
         await loop.run_in_executor(None, input, "\n✅ Press Enter to continue...")
 
 
-# --- THE FIX: PART 1 ---
-# Keep all the async logic in an `amain` function.
 async def amain():
     """The main asynchronous entry point for the application."""
     parser = argparse.ArgumentParser(description="Crypto Portfolio Tracker")
@@ -181,8 +178,7 @@ async def amain():
     finally:
         logger.info("Application finished.")
 
-# --- THE FIX: PART 2 ---
-# Create a synchronous `main` function that pyproject.toml can call.
+
 def main():
     """Synchronous entry point that starts the asyncio event loop."""
     try:
@@ -190,6 +186,6 @@ def main():
     except KeyboardInterrupt:
         print("\n👋 Exiting due to user interruption.")
 
-# This allows running the script directly, e.g., `python -m crypto_portfolio_tracker.cli`
+
 if __name__ == "__main__":
     main()

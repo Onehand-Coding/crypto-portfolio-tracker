@@ -170,6 +170,8 @@ class CryptoPortfolioTracker:
         self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.coingecko_price_cache = Cache(str(self.cache_dir / "coingecko_historical"))
+        self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_historical"))
+        self.fiat_exchange_rate_cache = Cache(str(self.cache_dir / "fiat_exchange_rates"))
 
         # --- Instantiate our new specialist classes ---
         self.fetcher = BinanceFetcher(self.binance_client, self.symbol_mappings, self.config)
@@ -648,18 +650,17 @@ class CryptoPortfolioTracker:
             self.logger.error(f"An unexpected error occurred executing directional trade for {symbol}: {e}", exc_info=True)
             print(f"❌ Unexpected Error for {symbol}: {e}")
 
-    def _execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float]):
+    async def _execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float], interactive: bool):
         """
         Executes rebalancing trades, enforcing minimum trade size and updating
         simulated balances after each trade to enable sequential funding.
+        Can run in bulk or interactive (one-by-one) mode.
         """
         if suggestions_df.empty or 'Signal' not in suggestions_df.columns:
             print("No rebalancing suggestions to execute.")
             return
 
-        # --- NEW: Sort trades to perform all SELLs first ---
         trades_to_execute = suggestions_df[suggestions_df['Signal'].isin(['BUY', 'SELL'])]
-        # Sort by SELL then BUY, and for BUYs, prioritize the most underweight (largest negative drift)
         trades_to_execute = trades_to_execute.sort_values(by=['Signal', 'Drift (pts)'], ascending=[False, True])
 
         if trades_to_execute.empty:
@@ -688,21 +689,42 @@ class CryptoPortfolioTracker:
         else:
             print("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡🟡🟡")
         print("="*80)
-        print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-        print("="*80)
-        print(trades_to_execute[['Symbol', 'Signal', 'Suggested Action Detail']].to_string(index=False))
-        print("="*80)
 
-        try:
-            confirm = input("Type 'EXECUTE' to proceed with the trades listed above: ")
-            if confirm != 'EXECUTE':
-                print("🛑 Trade execution cancelled by user."); return
-        except KeyboardInterrupt:
-            print("\n🛑 Trade execution cancelled by user."); return
+        items_to_process = []
+        if not interactive:
+            print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
+            print(trades_to_execute[['Symbol', 'Signal', 'Suggested Action Detail']].to_string(index=False))
+            print("="*80)
+            try:
+                confirm = input("Type 'EXECUTE ALL' to proceed with all trades listed above: ")
+                if confirm == 'EXECUTE ALL':
+                    self.logger.info("User confirmed bulk trade execution.")
+                    items_to_process = list(trades_to_execute.iterrows())
+                else:
+                    print("🛑 Bulk trade execution cancelled by user."); return
+            except KeyboardInterrupt:
+                print("\n🛑 Trade execution cancelled by user."); return
+        else:
+            print("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
+            for index, row in trades_to_execute.iterrows():
+                print("\n" + "-"*80)
+                print("🚨 PROPOSED TRADE - PLEASE REVIEW CAREFULLY 🚨")
+                print(pd.DataFrame([row])[['Symbol', 'Signal', 'Suggested Action Detail']].to_string(index=False))
+                try:
+                    confirm_one = input(f"Approve this trade for {row['Symbol']}? Type 'YES' to confirm: ").upper().strip()
+                    if confirm_one == 'YES':
+                        self.logger.info(f"User approved trade for {row['Symbol']}.")
+                        items_to_process.append((index, row))
+                    else:
+                        self.logger.info(f"User skipped trade for {row['Symbol']}.")
+                        print(f"Skipping trade for {row['Symbol']}.")
+                except KeyboardInterrupt:
+                    print("\n🛑 Trade execution cancelled by user."); return
+            print("="*80)
+            print(f"Executing {len(items_to_process)} approved trade(s)...")
 
-        self.logger.info("User confirmed trade execution. Proceeding...")
-
-        for _, row in trades_to_execute.iterrows():
+        trades_executed_count = 0
+        for _, row in items_to_process:
             symbol = row['Symbol']
             signal = row['Signal']
             trade_ticker = f"{symbol}USDT"
@@ -729,21 +751,16 @@ class CryptoPortfolioTracker:
                         continue
 
                     print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8g} {symbol}...")
-
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8g}")
                             print(f"✅ LIVE SELL ORDER PLACED.")
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
-
-                            # --- START OF FIX ---
-                            # Update simulated balances after a successful trade
                             simulated_balances[symbol] -= adjusted_quantity
                             simulated_balances['USDT'] += float(order.get('cummulativeQuoteQty', 0.0))
                             self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}")
-                            # --- END OF FIX ---
-
+                            trades_executed_count += 1
                         except BinanceAPIException as e:
                             print(f"❌ LIVE SELL FAILED for {symbol}: {e}")
                             self.logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
@@ -760,21 +777,16 @@ class CryptoPortfolioTracker:
                         continue
 
                     print(f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}...")
-
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}")
                             print(f"✅ LIVE BUY ORDER PLACED.")
                             self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
-
-                            # --- START OF FIX ---
-                            # Update simulated balances after a successful trade
                             simulated_balances['USDT'] -= float(order.get('cummulativeQuoteQty', 0.0))
                             simulated_balances[symbol] = simulated_balances.get(symbol, 0.0) + float(order.get('executedQty', 0.0))
                             self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}")
-                            # --- END OF FIX ---
-
+                            trades_executed_count += 1
                         except BinanceAPIException as e:
                             print(f"❌ LIVE BUY FAILED for {symbol}: {e}")
                             self.logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
@@ -784,6 +796,73 @@ class CryptoPortfolioTracker:
             except Exception as e:
                 self.logger.error(f"An unexpected error occurred executing trade for {symbol}: {e}", exc_info=True)
                 print(f"❌ Unexpected Error for {symbol}: {e}")
+
+        if trades_executed_count > 0:
+            print(f"\n🎉 Rebalancing execution complete. {trades_executed_count} trade(s) processed.")
+        else:
+            print("\nNo trades were executed.")
+
+    async def _execute_manual_trade(self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live):
+        """Internal method to execute a validated manual trade."""
+        min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
+
+        try:
+            if trade_type == 'BUY':
+                usdt_to_spend = amount if is_quote_qty else 0
+                if not is_quote_qty:
+                    # If buying a coin quantity, we need to estimate the USDT value
+                    prices = self._get_current_prices([symbol])
+                    if not prices.get(symbol):
+                        print(f"❌ Could not fetch price for {symbol} to calculate trade value.")
+                        return
+                    usdt_to_spend = amount * prices[symbol]
+
+                if usdt_to_spend < min_trade_usd:
+                    print(f"⚠️ SKIPPING BUY for {symbol}: Required value (~${usdt_to_spend:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                    return
+
+                print(f"\nPreparing MARKET BUY for {symbol}...")
+                if is_live:
+                    print("🚀 PLACING LIVE ORDER...")
+                    order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usdt_to_spend:.2f}")
+                    print(f"✅ LIVE BUY ORDER PLACED.")
+                    self.logger.info(f"LIVE MANUAL BUY ORDER PLACED: {order}")
+                else:
+                    print("✅ (Dry Run) BUY Trade was not placed.")
+
+            elif trade_type == 'SELL':
+                coin_quantity_to_sell = amount if not is_quote_qty else 0
+                if is_quote_qty:
+                    # If selling for a USDT amount, we need to estimate the coin quantity
+                    prices = self._get_current_prices([symbol])
+                    if not prices.get(symbol) or prices[symbol] == 0:
+                        print(f"❌ Could not fetch price for {symbol} to calculate quantity.")
+                        return
+                    coin_quantity_to_sell = amount / prices[symbol]
+
+                # We must adjust the final coin quantity to match exchange rules (LOT_SIZE)
+                adjusted_quantity = self._adjust_quantity_to_lot_size(trade_ticker, coin_quantity_to_sell)
+                if adjusted_quantity is None or adjusted_quantity <= 0:
+                    print(f"⚠️ SKIPPING SELL for {symbol}: Quantity is zero or invalid after applying exchange lot size rules.")
+                    return
+
+                print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8g} {symbol}...")
+                if is_live:
+                    print("🚀 PLACING LIVE ORDER...")
+                    order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8g}")
+                    print(f"✅ LIVE SELL ORDER PLACED.")
+                    self.logger.info(f"LIVE MANUAL SELL ORDER PLACED: {order}")
+                else:
+                    print("✅ (Dry Run) SELL Trade was not placed.")
+
+            print("\n💡 Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade.")
+
+        except BinanceAPIException as e:
+            print(f"❌ LIVE TRADE FAILED for {symbol}: {e}")
+            self.logger.error(f"LIVE MANUAL TRADE FAILED for {symbol}: {e}")
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred during manual trade for {symbol}: {e}", exc_info=True)
+            print(f"❌ Unexpected Error for {symbol}: {e}")
 
     async def _fetch_historical_data_async(self, symbol: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
         """
@@ -915,91 +994,26 @@ class CryptoPortfolioTracker:
         prices = self._get_current_prices(list(live_balances_df['symbol'].unique()))
         live_balances_df['value_usd'] = live_balances_df['symbol'].map(prices).fillna(0.0) * live_balances_df['quantity']
 
+        # Get the list of coins we actually want to rebalance from the config
+        target_symbols = list(self.config.get("target_allocation", {}).keys())
+
+        # Filter the DataFrame to create a "core" portfolio
+        core_portfolio_df = live_balances_df[live_balances_df['symbol'].isin(target_symbols)].copy()
+
+        if core_portfolio_df.empty:
+            self.logger.warning("No assets from target_allocation found in live balances. Cannot generate rebalancing suggestions.")
+            return pd.DataFrame() # Return an empty DataFrame
+
+        self.logger.info(f"Rebalancing logic will be based on {len(core_portfolio_df)} core assets.")
+
         # 2. Call the new central orchestrator with the live data
         suggestions_df = await get_live_rebalance_suggestions(
             analyzer=analyzer,
-            portfolio_df=live_balances_df,
+            portfolio_df=core_portfolio_df,
             config=self.config
         )
 
         return suggestions_df
-
-    async def sync_data(self):
-        """Orchestrates the Gather, Enrich, and Process pipeline with improved logging."""
-        self.logger.info("Starting data synchronization pipeline...")
-        lookback_config = self.config.get("history_lookback_days", {})
-
-        # Define all simple data sources and their configurations
-        data_sources = {
-            "Binance Trade": {"fetcher": self.fetcher.fetch_binance_transactions, "days": lookback_config.get("trades", 90)},
-            "Binance Deposit": {"fetcher": self.fetcher.fetch_deposit_history, "days": lookback_config.get("deposits", 90)},
-            "Binance Withdrawal": {"fetcher": self.fetcher.fetch_withdrawal_history, "days": lookback_config.get("withdrawals", 90)},
-            "Binance P2P Buy": {"fetcher": self.fetcher.fetch_p2p_usdt_buys, "days": lookback_config.get("p2p_buys", 90)},
-            "Binance Convert": {"fetcher": self.fetcher.fetch_spot_convert_history, "days": lookback_config.get("spot_convert_history", 90)},
-            "Binance Dividend": {"fetcher": self.fetcher.fetch_dividend_history, "days": lookback_config.get("dividend_history", 90)},
-            "Binance Simple Earn Reward": {"fetcher": self.fetcher.fetch_simple_earn_rewards, "days": lookback_config.get("simple_earn_rewards", 90)},
-            "Binance Simple Earn Subscription": {"fetcher": self.fetcher.fetch_simple_earn_subscriptions, "days": lookback_config.get("simple_earn_subscriptions", 90)},
-            "Binance Simple Earn Redemption": {"fetcher": self.fetcher.fetch_simple_earn_redemptions, "days": lookback_config.get("simple_earn_redemptions", 90)},
-        }
-
-        fetcher_tasks = []
-        for source, config in data_sources.items():
-            latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source)
-            if latest_known_ts:
-                self.logger.info(f"✅ History found for '{source}'. Initiating selective sync from {latest_known_ts.strftime('%Y-%m-%d %H:%M')}.")
-            else:
-                self.logger.info(f"ℹ️ No history found for '{source}'. Initiating full sync for the last {config['days']} days.")
-
-            fetcher_tasks.append(
-                asyncio.to_thread(config["fetcher"], days_back=config['days'], latest_known_ts=latest_known_ts)
-            )
-
-        # Special handling for Staking History, which needs a map of timestamps
-        staking_ts_map = {
-            "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source("Binance Staking Subscription"),
-            "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source("Binance Staking Redemption"),
-            "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source("Binance Staking Interest"),
-        }
-        self.logger.info("ℹ️ Checking for Staking history (Subscriptions, Redemptions, Interest)...")
-        fetcher_tasks.append(
-            asyncio.to_thread(self.fetcher.fetch_staking_history, days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
-        )
-
-        # 1. GATHER
-        self.logger.info(f"Launching {len(fetcher_tasks)} data fetching tasks concurrently...")
-        results = await asyncio.gather(*fetcher_tasks, return_exceptions=True)
-
-        all_raw_transactions = []
-        for res in results:
-            if isinstance(res, list):
-                all_raw_transactions.extend(res)
-            elif isinstance(res, Exception):
-                self.logger.error(f"An error occurred during a fetching task: {res}", exc_info=False)
-
-        if not all_raw_transactions:
-            self.logger.info("No new raw transactions were fetched. Sync complete.")
-            return
-
-        # 2. ENRICH
-        self.logger.info(f"Passing {len(all_raw_transactions)} raw transactions to the PriceEnricher.")
-        enriched_transactions = await self.enricher.enrich_transactions(all_raw_transactions)
-
-        # 3. PROCESS
-        if enriched_transactions:
-            enriched_transactions.sort(key=lambda x: x['timestamp'])
-            self.logger.info(f"Saving {len(enriched_transactions)} enriched transactions to the database...")
-            num_inserted = self.db_manager.bulk_insert_transactions(enriched_transactions)
-            self.logger.info(f"Database update complete. {num_inserted} new transactions were saved.")
-        else:
-            self.logger.warning("Enrichment process returned no transactions. Nothing to save.")
-
-        self.update_holdings_from_transactions()
-        self.logger.info("Data synchronization pipeline finished successfully.")
-
-    async def run_full_sync(self) -> Dict[str, Any]:
-        """Runs the full async data sync and then calculates metrics."""
-        await self.sync_data()
-        return await self.calculate_portfolio_metrics()
 
     async def view_trends(self):
         """
@@ -1056,6 +1070,83 @@ class CryptoPortfolioTracker:
 
                 input("\n✅ Press Enter to continue...")
 
+    async def sync_data(self):
+        """Orchestrates the Gather, Enrich, and Process pipeline with improved logging."""
+        self.logger.info("Starting data synchronization pipeline...")
+        lookback_config = self.config.get("history_lookback_days", {})
+
+        # Define all simple data sources and their configurations
+        data_sources = {
+            "Binance Trade": {"fetcher": self.fetcher.fetch_binance_transactions, "days": lookback_config.get("trades", 90)},
+            "Binance Deposit": {"fetcher": self.fetcher.fetch_deposit_history, "days": lookback_config.get("deposits", 90)},
+            "Binance Withdrawal": {"fetcher": self.fetcher.fetch_withdrawal_history, "days": lookback_config.get("withdrawals", 90)},
+            "Binance P2P Buy": {"fetcher": self.fetcher.fetch_p2p_usdt_buys, "days": lookback_config.get("p2p_buys", 90)},
+            "Binance Convert": {"fetcher": self.fetcher.fetch_spot_convert_history, "days": lookback_config.get("spot_convert_history", 90)},
+            "Binance Dividend": {"fetcher": self.fetcher.fetch_dividend_history, "days": lookback_config.get("dividend_history", 90)},
+            "Binance Simple Earn Reward": {"fetcher": self.fetcher.fetch_simple_earn_rewards, "days": lookback_config.get("simple_earn_rewards", 90)},
+            "Binance Simple Earn Subscription": {"fetcher": self.fetcher.fetch_simple_earn_subscriptions, "days": lookback_config.get("simple_earn_subscriptions", 90)},
+            "Binance Simple Earn Redemption": {"fetcher": self.fetcher.fetch_simple_earn_redemptions, "days": lookback_config.get("simple_earn_redemptions", 90)},
+        }
+
+        fetcher_tasks = []
+        for source, config in data_sources.items():
+            latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source)
+            if latest_known_ts:
+                self.logger.info(f"History found for '{source}'. Initiating selective sync from {latest_known_ts.strftime('%Y-%m-%d %H:%M')}.")
+            else:
+                self.logger.info(f"No history found for '{source}'. Initiating full sync for the last {config['days']} days.")
+
+            fetcher_tasks.append(
+                asyncio.to_thread(config["fetcher"], days_back=config['days'], latest_known_ts=latest_known_ts)
+            )
+
+        # Special handling for Staking History, which needs a map of timestamps
+        staking_ts_map = {
+            "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source("Binance Staking Subscription"),
+            "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source("Binance Staking Redemption"),
+            "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source("Binance Staking Interest"),
+        }
+        self.logger.info("Checking for Staking history (Subscriptions, Redemptions, Interest)...")
+        fetcher_tasks.append(
+            asyncio.to_thread(self.fetcher.fetch_staking_history, days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
+        )
+
+        # 1. GATHER
+        self.logger.info(f"Launching {len(fetcher_tasks)} data fetching tasks concurrently...")
+        results = await asyncio.gather(*fetcher_tasks, return_exceptions=True)
+
+        all_raw_transactions = []
+        for res in results:
+            if isinstance(res, list):
+                all_raw_transactions.extend(res)
+            elif isinstance(res, Exception):
+                self.logger.error(f"An error occurred during a fetching task: {res}", exc_info=False)
+
+        if not all_raw_transactions:
+            self.logger.info("No new raw transactions were fetched. Sync complete.")
+            return
+
+        # 2. ENRICH
+        self.logger.info(f"Passing {len(all_raw_transactions)} raw transactions to the PriceEnricher.")
+        enriched_transactions = await self.enricher.enrich_transactions(all_raw_transactions)
+
+        # 3. PROCESS
+        if enriched_transactions:
+            enriched_transactions.sort(key=lambda x: x['timestamp'])
+            self.logger.info(f"Saving {len(enriched_transactions)} enriched transactions to the database...")
+            num_inserted = self.db_manager.bulk_insert_transactions(enriched_transactions)
+            self.logger.info(f"Database update complete. {num_inserted} new transactions were saved.")
+        else:
+            self.logger.warning("Enrichment process returned no transactions. Nothing to save.")
+
+        self.update_holdings_from_transactions()
+        self.logger.info("Data synchronization pipeline finished successfully.")
+
+    async def run_full_sync(self) -> Dict[str, Any]:
+        """Runs the full async data sync and then calculates metrics."""
+        await self.sync_data()
+        return await self.calculate_portfolio_metrics()
+
     async def run_rebalancing_backtest(self):
         """
         Handles the user flow for running the rebalancing backtest.
@@ -1086,10 +1177,67 @@ class CryptoPortfolioTracker:
             self.logger.error(f"An error occurred during rebalancing backtest: {e}", exc_info=True)
             print(f"❌ An unexpected error occurred: {e}")
 
+    async def run_manual_trade_session(self):
+        """Runs an interactive session for placing a manual trade."""
+        print("\n--- TRADE Manual Trading ---")
+        is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
+        if not is_live:
+            print("🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run).")
+        else:
+            print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
+
+        # 1. Get Trade Type
+        trade_type = ""
+        while trade_type not in ["BUY", "SELL"]:
+            trade_type = input("Choose action [BUY / SELL]: ").upper().strip()
+            if not trade_type:
+                print("Returning to main menu...")
+                return
+
+        # 2. Get Asset
+        symbol = input("Enter asset symbol (e.g., BTC): ").upper().strip()
+        if not symbol:
+            print("Returning to main menu...")
+            return
+        trade_ticker = f"{symbol}USDT"
+
+        # 3. Get Amount
+        amount_str_input = input(f"Enter amount to {trade_type} (e.g., '0.1 {symbol}'): ").upper().strip()
+        if not amount_str_input:
+            print("Returning to main menu...")
+            return
+
+        is_quote_qty = "USDT" in amount_str_input
+        try:
+            # Extract numbers from the string
+            numeric_part = re.search(r'[\d\.]+', amount_str_input).group(0)
+            amount = float(numeric_part)
+        except (AttributeError, ValueError):
+            print("❌ Invalid amount format. Could not parse number.")
+            return
+
+        # 4. Confirmation
+        print("\n" + "="*50)
+        print("🚨 PLEASE CONFIRM THE FOLLOWING MARKET ORDER 🚨")
+        print(f"   Action: {trade_type}")
+        print(f"   Asset:  {symbol}")
+        if is_quote_qty:
+            print(f"   Amount: {amount:,.2f} USDT")
+        else:
+            print(f"   Amount: {amount:,.8g} {symbol}")
+        print("="*50)
+
+        confirm = input("Type 'EXECUTE' to confirm: ").strip()
+
+        if confirm == 'EXECUTE':
+            await self._execute_manual_trade(trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live)
+        else:
+            print("🛑 Trade cancelled by user.")
+
     async def run_rebalance_and_execute(self):
         """
-        Orchestrates the process of getting rebalancing suggestions and executing them.
-        This version now fetches Earn balances to pass to the executor.
+        Orchestrates the process of getting rebalancing suggestions and allows users
+        to execute them all at once or one-by-one.
         """
         self.logger.info("Starting automated rebalancing process...")
         print("\n--- ⚖️ Automated Rebalancing ---")
@@ -1103,22 +1251,56 @@ class CryptoPortfolioTracker:
             self.logger.info("No rebalancing suggestions generated. Exiting process.")
             return
 
-        # 2. Print Suggestions for Review
-        self.print_rebalance_suggestions(suggestions_df)
+        # 2. Calculate TOTAL available USDT (Spot + Earn)
+        total_usdt_balance = 0
+        try:
+            # Fetch Spot Balance
+            spot_balance = float(self.binance_client.get_asset_balance(asset='USDT').get('free', 0.0))
+            total_usdt_balance += spot_balance
 
-        # 3. Fetch Earn balances ONLY if not in testnet mode
-        earn_balances = {}
-        if not self.config_manager.is_testnet_mode:
-            print("Verifying balances in Spot and Earn wallets...")
-            spot_balances_df = self.fetch_binance_balances()
-            earn_balances = self.fetcher.fetch_simple_earn_balances(spot_balances_df)
-        else:
-            print("🟡 TESTNET MODE: Skipping Earn wallet check.")
+            # Fetch Earn Balance (if not in testnet mode)
+            if not self.config_manager.is_testnet_mode:
+                earn_positions = self.fetcher.fetch_simple_earn_balances(pd.DataFrame([{'symbol': 'USDT'}]))
+                earn_balance = earn_positions.get('USDT', 0.0)
+                total_usdt_balance += earn_balance
 
-        # 4. Pass everything to the Executor for Confirmation and Trading
-        self._execute_rebalancing_trades(suggestions_df, earn_balances)
+        except Exception as e:
+            self.logger.error(f"Could not fetch total USDT balance for display: {e}")
 
-    async def run_backtest(self):
+        # 3. Print Suggestions for Review (passing the USDT balance to the printer)
+        self.print_rebalance_suggestions(suggestions_df, available_usdt=total_usdt_balance)
+
+        # 4. Add interactive execution choice
+        while True:
+            action = input(
+                "Type 'EXECUTE ALL', 'EXECUTE' for one-by-one confirmation: "
+            ).upper().strip()
+
+            if not action:
+                print("Returning to main menu...")
+                return
+
+            elif action in ['EXECUTE ALL', 'EXECUTE']:
+                # Determine mode and proceed to fetch balances and execute
+                interactive_mode = (action == 'EXECUTE')
+
+                # Fetch Earn balances ONLY if not in testnet mode
+                earn_balances = {}
+                if not self.config_manager.is_testnet_mode:
+                    print("Verifying balances in Spot and Earn wallets...")
+                    spot_balances_df = self.fetch_binance_balances()
+                    earn_balances = self.fetcher.fetch_simple_earn_balances(spot_balances_df)
+                else:
+                    print("🟡 TESTNET MODE: Skipping Earn wallet check.")
+
+                # Pass everything to the Executor with the chosen mode
+                await self._execute_rebalancing_trades(suggestions_df, earn_balances, interactive=interactive_mode)
+                return # Exit after execution attempt
+
+            else:
+                print("Invalid command. Please choose from 'EXECUTE ALL', 'EXECUTE', or 'BACK'.")
+
+    async def run_trading_strategy_backtest(self):
         """
         Handles the user flow for running a directional strategy backtest,
         dynamically discovering and allowing strategies to configure themselves.
@@ -1149,7 +1331,7 @@ class CryptoPortfolioTracker:
         while strategy_to_run is None:
             try:
                 choice_str = input(f"Select the strategy to backtest (1-{len(strategy_list)}): ").strip()
-                if not choice_str: continue
+                if not choice_str: return
                 choice = int(choice_str) - 1
                 if 0 <= choice < len(strategy_list):
                     strategy_name = strategy_list[choice]
@@ -1423,7 +1605,9 @@ class CryptoPortfolioTracker:
             if earn_dict:
                  earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
 
-        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on='symbol', how='outer').fillna(0)
+        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on='symbol', how='outer')
+        holdings_df['total_quantity_api'] = pd.to_numeric(holdings_df['total_quantity_api'], errors='coerce').fillna(0)
+        holdings_df['earn_quantity'] = pd.to_numeric(holdings_df['earn_quantity'], errors='coerce').fillna(0)
         holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
         holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
         holdings_df = holdings_df[holdings_df['total_quantity'] > 1e-8].reset_index(drop=True)
@@ -1692,7 +1876,7 @@ class CryptoPortfolioTracker:
 
         print("\n" + "="*80)
 
-    def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame]):
+    def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame], available_usdt: Optional[float] = None):
         """Prints the rebalancing suggestions in a formatted way."""
         if suggestions_df is None or suggestions_df.empty:
             print("No rebalancing suggestions available.")
@@ -1705,8 +1889,13 @@ class CryptoPortfolioTracker:
         suggestions_df = suggestions_df.drop(columns=['signal_order'])
 
         print("\n" + "="*88)
-        print("⚖️ REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)")
+        print("⚖️  REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)")
         print("="*88)
+
+        # Display the USDT balance inside the header if it was provided
+        if available_usdt is not None:
+            print(f"💰 Available USDT (Spot + Earn): ${available_usdt:,.2f}")
+            print("-" * 88)
 
         for _, row in suggestions_df.iterrows():
             signal = row['Signal']
