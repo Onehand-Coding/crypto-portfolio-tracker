@@ -1270,10 +1270,16 @@ class CryptoPortfolioTracker:
         # 3. Print Suggestions for Review (passing the USDT balance to the printer)
         self.print_rebalance_suggestions(suggestions_df, available_usdt=total_usdt_balance)
 
+        # 4. Check for actionable signals before showing execution prompts
+        actionable_trades = suggestions_df[suggestions_df['Signal'].isin(['BUY', 'SELL'])]
+        if actionable_trades.empty:
+            print("\n✅ Your portfolio is balanced. No rebalancing needed at this time.")
+            return
+
         # 4. Add interactive execution choice
         while True:
             action = input(
-                "Type 'EXECUTE ALL', 'EXECUTE' for one-by-one confirmation: "
+                "Type 'EXECUTE ALL' or 'EXECUTE' for one-by-one confirmation: "
             ).upper().strip()
 
             if not action:
@@ -1635,6 +1641,20 @@ class CryptoPortfolioTracker:
             holdings_df['allocation'] = holdings_df['value_usd'] / total_value
         else:
             holdings_df['allocation'] = 0
+
+        # 3. Separate Core vs. Other assets and calculate core-specific allocation
+        target_symbols = list(self.config.get("target_allocation", {}).keys())
+        holdings_df['is_core'] = holdings_df['symbol'].isin(target_symbols)
+
+        core_holdings_df = holdings_df[holdings_df['is_core']].copy()
+        other_holdings_df = holdings_df[~holdings_df['is_core']].copy()
+
+        total_core_value = core_holdings_df['value_usd'].sum()
+        if total_core_value > 0:
+            core_holdings_df['core_allocation'] = core_holdings_df['value_usd'] / total_core_value
+        else:
+            core_holdings_df['core_allocation'] = 0
+
         total_cost_basis = holdings_df['cost_basis_total'].sum()
         total_pl_usd = total_value - total_cost_basis
         total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
@@ -1651,6 +1671,8 @@ class CryptoPortfolioTracker:
             "overall_pl_usd": overall_pl_usd,
             "overall_pl_percent": overall_pl_percent,
             "holdings_df": holdings_df,
+            "core_holdings_df": core_holdings_df,
+            "other_holdings_df": other_holdings_df,
             "timestamp": datetime.datetime.now()
         }
         self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
@@ -1792,6 +1814,13 @@ class CryptoPortfolioTracker:
 
         timestamp = metrics.get('timestamp', datetime.datetime.now())
         print(f"Timestamp:                   {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+        db_path = self.config.get("database", {}).get("path", "N/A")
+        db_name = Path(db_path).name
+        if self.config_manager.is_testnet_mode:
+            print(f"Database:                    {db_name} (TESTNET MODE)")
+        else:
+            print(f"Database:                    {db_name}")
+
         print("-" * LINE_WIDTH)
         print("PERFORMANCE VS. INVESTED CAPITAL:")
 
@@ -1814,18 +1843,39 @@ class CryptoPortfolioTracker:
         color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
 
         print(f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
-        print("-" * LINE_WIDTH)
 
-        holdings_df = metrics.get('holdings_df')
-        if holdings_df is not None and not holdings_df.empty:
-            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Allocation':<10}"
+        # Print Core Holdings Table
+        core_holdings_df = metrics.get('core_holdings_df')
+        if core_holdings_df is not None and not core_holdings_df.empty:
+            print("\n" + "--- 🎯 Core Portfolio Holdings (Used for Rebalancing) ---".center(LINE_WIDTH))
+            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Core Alloc.':<15} {'Total Alloc.':<10}"
             print(header)
             print("-" * LINE_WIDTH)
-
-            for _, row in holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
+            for _, row in core_holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
                 row_pl_usd = row.get('unrealized_pl_usd', 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
+                print(
+                    f"{row.get('symbol', 'N/A'):<8} "
+                    f"{row.get('total_quantity', 0):<18,.8g} "
+                    f"{row.get('spot_quantity', 0):<15,.8g} "
+                    f"{row.get('earn_quantity', 0):<15,.8g} "
+                    f"${row.get('value_usd', 0):<14,.2f} "
+                    f"${row.get('cost_basis_total', 0):<14,.2f} "
+                    f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
+                    f"{row.get('core_allocation', 0) * 100:<14.2f}% "
+                    f"{row.get('allocation', 0) * 100:<9.2f}%"
+                )
 
+        # Print Other Holdings Table
+        other_holdings_df = metrics.get('other_holdings_df')
+        if other_holdings_df is not None and not other_holdings_df.empty:
+            print("\n" + "--- 📈 Other Holdings ---".center(LINE_WIDTH))
+            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Total Alloc.':<10}"
+            print(header)
+            print("-" * LINE_WIDTH)
+            for _, row in other_holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
+                row_pl_usd = row.get('unrealized_pl_usd', 0)
+                row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
                 print(
                     f"{row.get('symbol', 'N/A'):<8} "
                     f"{row.get('total_quantity', 0):<18,.8g} "
@@ -1836,10 +1886,7 @@ class CryptoPortfolioTracker:
                     f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
                     f"{row.get('allocation', 0) * 100:<9.2f}%"
                 )
-            print("="*LINE_WIDTH)
-        else:
-            print("No holdings data to display.")
-            print("="*LINE_WIDTH)
+        print("="*LINE_WIDTH)
 
     def print_trend_report(self, report: Dict[str, Any]):
         """Prints a formatted trend analysis report to the console."""
@@ -1891,6 +1938,11 @@ class CryptoPortfolioTracker:
         print("\n" + "="*88)
         print("⚖️  REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)")
         print("="*88)
+
+        # Calculate and display the total value of the core portfolio being rebalanced
+        total_core_value = suggestions_df['Current Value (USD)'].sum()
+        print("-" * 88)
+        print(f"💰 Core Portfolio Value: ${total_core_value:,.2f}")
 
         # Display the USDT balance inside the header if it was provided
         if available_usdt is not None:

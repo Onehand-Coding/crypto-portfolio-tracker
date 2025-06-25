@@ -14,16 +14,23 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
 - **Dual Accounting Perspectives**:
   - **FIFO Cost Basis**: First-In, First-Out calculation for precise unrealized P/L on a per-asset basis, essential for tax-lot accounting
   - **Net Invested Capital**: Tracks true cash-in vs. cash-out to provide an absolute "Overall P/L" on your entire portfolio
+- **Context-Aware Portfolio Summary**: The main summary view is now split into two clear sections:
+  - **Core Portfolio Holdings**: Lists only the assets you are actively rebalancing (defined in your `target_allocation`). It includes a dedicated "Core Alloc. %" column to show you the exact numbers used by the rebalancing engine
+  - **Other Holdings**: Lists all other assets in your wallet, giving you a complete financial overview without cluttering your strategic view
 - **Intelligent Data Processing**: Automatically de-duplicates P2P transaction records from the Binance API to ensure data integrity
 - **Persistent Local Database**: All transactions stored in local SQLite database (`data/portfolio.db` or `data/testnet_portfolio.db` for testnet) for fast queries and complete historical record
 
 ### ⚡ **Advanced Trading & Analysis**
+- **Intelligent Rebalancing Engine**:
+  - **Accurate Calculations**: Rebalancing logic is now correctly calculated based only on the value of your core portfolio assets, not the entire wallet, leading to much more accurate and logical trade suggestions
+  - **Enhanced Context**: The suggestions view now displays the total value of your core portfolio and your total available USDT (from both Spot and Earn wallets) so you can immediately assess the feasibility of trades
+- **Live Trading & Rebalancing Execution**: Execute trades based on analysis (optional, disabled by default):
+  - **Granular Control**: Use `EXECUTE` for an interactive, one-by-one confirmation of each trade, or `EXECUTE ALL` to approve all suggested trades at once. The prompt is smartly hidden if there are no trades to make
+  - **Manual Trading**: A new dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
+  - **Directional Strategy Trading**: Run technical strategies live with safety checks
 - **Dual Backtesting Engines**: Test and validate strategies with two specialized backtesters:
   - **Directional Strategy Backtester**: Evaluate entry/exit signals from technical trading strategies
   - **Rebalancing Strategy Backtester**: Simulate long-term performance of allocation-based rebalancing
-- **Live Trading & Rebalancing Execution**: Execute trades based on analysis (optional, disabled by default):
-  - **Automated Rebalancing**: Execute trades to align portfolio with target allocations
-  - **Directional Strategy Trading**: Run technical strategies live with safety checks
 - **Multi-Timeframe Technical Analysis**: Advanced `CryptoTrendAnalyzer` generates comprehensive reports:
   - Long-term (4-year), Swing (3-month), and Day (60-day) analysis
   - RSI, MACD, SMA crossovers, and momentum indicators
@@ -45,6 +52,39 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
   - Excel (`.xlsx`) with embedded charts and password protection options
   - Mobile-optimized HTML (`.html`) with interactive elements
   - Complete CSV backups with separate files for different data types
+
+### 🔀 **Manual Trading (Buy/Sell)**
+Beyond automated strategies, the tracker includes a manual trading interface for executing ad-hoc orders directly from the command line. This feature is perfect for acting on unique opportunities, news events, or simply adding a new asset to your portfolio without changing your rebalancing targets.
+
+**How to Use:**
+1. Select "TRADE Manual Trade (Buy/Sell)" from the main menu
+2. Follow the interactive prompts to build your order
+3. Confirm the trade details to execute the market order on Binance
+4. You can specify the trade amount in either the coin's quantity or its USDT value
+
+**Example Workflow:**
+```
+--- 🔀 TRADE Manual Trading ---
+🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.
+
+Choose action [BUY / SELL] or press Enter to return: BUY
+Enter asset symbol (e.g., BTC) or press Enter to return: RENDER
+Enter amount to BUY (e.g., '0.1 RENDER' or '100 USDT') or press Enter to return: 50 USDT
+
+==================================================
+🚨 PLEASE CONFIRM THE FOLLOWING MARKET ORDER 🚨
+   Action: BUY
+   Asset:  RENDER
+   Amount: 50.00 USDT
+==================================================
+Type 'EXECUTE' to confirm or press Enter to cancel: EXECUTE
+
+Preparing MARKET BUY for RENDER...
+🚀 PLACING LIVE ORDER...
+✅ LIVE BUY ORDER PLACED.
+
+💡 Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade.
+```
 
 ## 📁 Project Structure
 
@@ -136,9 +176,6 @@ BINANCE_TESTNET=true
 
 # CoinGecko API (recommended for higher rate limits)
 COINGECKO_API_KEY=your_coingecko_api_key_here
-
-# Logging Level
-LOG_LEVEL=INFO
 ```
 
 5. **Configure Your Portfolio Targets:**
@@ -270,8 +307,6 @@ source .venv/bin/activate
 track-portfolio
 # OR for development
 python main.py
-
-
 ```
 
 **Interactive Menu Options:**
@@ -279,22 +314,24 @@ python main.py
 ==================================================
 🚀 Crypto Portfolio Tracker v2.1.0
 ==================================================
-1. 🔄 Full Sync & Analysis (Recommended for first run)
-2. 📊 Quick Portfolio Summary (Fast daily updates)
-3. 📈 View Crypto Trends (Multi-timeframe analysis)
-4. ⚖️  View Rebalance Suggestions (Technical analysis)
-5. 🤖 Execute Rebalancing Trades (Live trading)
-6. 💰 Live Trading (Directional strategies)
-7. 🧪 Run Strategy Backtest (Test strategies)
-8. ⚖️  Run Rebalancing Backtest (Test allocations)
-9. 📋 Export Reports Only
-10. 📈 Generate Charts Only
-11. 💾 Export Data Backup
-12. ⚙️  View Configuration
+1. 🔄 Full Sync & Analysis (Recommended)
+2. 📊 Quick Portfolio Summary
+3. 📈 View Crypto Trends
+4. ⚖️  View Rebalance Suggestions
+5. 🤖 Execute Rebalancing Trades
+6. 🔀 TRADE Manual Trade (Buy/Sell)
+7. 💰 Live Trading (Directional Strategy)
+8. 🧪 Run Strategy Backtest
+9. ⚖️  Run Rebalancing Backtest
+10. 📋 Export Reports Only
+11. 📈 Generate Charts Only
+12. 💾 Export Data Backup
 13. 🧹 Clean Old Data
-14. 🔧 Test API Connections
-15. ❌ Exit
+14. ⚙️  View Configuration
+15. 🔧 Test API Connections
+16. ❌ Exit
 ==================================================
+Select option (1-16):
 ```
 
 ### Command-Line Mode
@@ -329,44 +366,115 @@ tail -f logs/portfolio_tracker.log
 3. **Daily Monitoring**: Option 2 (Quick Portfolio Summary) for fast portfolio updates
 4. **Technical Analysis**: Option 3 (View Crypto Trends) for multi-timeframe market analysis
 5. **Strategic Planning**: Option 4 (Rebalance Suggestions) for allocation-based recommendations
-6. **Strategy Testing**: Options 7-8 for backtesting before live trading
-7. **Live Execution**: Options 5-6 for automated rebalancing or strategy trading (use with extreme caution)
+6. **Strategy Testing**: Options 8-9 for backtesting before live trading
+7. **Live Execution**: Options 5-6 for automated rebalancing or manual trading (use with extreme caution)
 
 ## 📊 Understanding the Output
 
-### Dual Accounting Perspective
+### Context-Aware Portfolio Summary
 
-The portfolio summary provides two distinct views of your performance:
+The portfolio summary provides two distinct views of your performance with enhanced clarity:
 
 ```
 ===================================================================================================================
 📊 CONSOLIDATED PORTFOLIO SUMMARY (Spot + Earn)
 ===================================================================================================================
-Timestamp:                   2025-06-19 12:09:35
+Timestamp:                   2025-06-25 18:55:24
 Database:                    testnet_portfolio.db (TESTNET MODE)
+
 -------------------------------------------------------------------------------------------------------------------
 PERFORMANCE VS. INVESTED CAPITAL:
-Total Invested Capital:      $121.22
-Overall P/L:                 $4.28 (3.53%)
+Total Invested Capital:      $0.00
+Overall P/L:                 $428,941.15 (0.00%)
 -------------------------------------------------------------------------------------------------------------------
 PERFORMANCE VS. ROLLING COST BASIS:
-Total Portfolio Value:       $125.50
-Total Cost Basis (FIFO):     $129.57
-Unrealized P/L (FIFO):       $-4.07 (-3.14%)
+Total Portfolio Value:       $428,941.15
+Total Cost Basis (FIFO):     $111,921.27
+Unrealized P/L (FIFO):     $317,019.87 (283.25%)
+
+                              --- 🎯 Core Portfolio Holdings (Used for Rebalancing) ---
+Asset    Total Qty          Spot Qty        Earn Qty        Value (USD)     Cost Basis      P/L (USD)       Core Alloc.     Total Alloc.
 -------------------------------------------------------------------------------------------------------------------
-Asset    Total Qty          Spot Qty        Earn Qty        Value (USD)     Cost Basis      P/L (USD)       Allocation
+BTC      0.6269             0.6269          0               $66,902.77      $0.00           $66,902.77      37.83         % 15.60    %
+ETH      16.3996            16.3996         0               $39,688.51      $40,099.98      $-411.47        22.44         % 9.25     %
+SOL      123.315            123.315         0               $17,925.07      $17,825.97      $99.10          10.14         % 4.18     %
+AVAX     665.56             665.56          0               $11,840.31      $11,933.49      $-93.18         6.70          % 2.76     %
+LINK     890.59             890.59          0               $11,818.13      $11,933.91      $-115.78        6.68          % 2.76     %
+RENDER   3,475.14           3,475.14        0               $11,120.45      $11,848.33      $-727.88        6.29          % 2.59     %
+TAO      26.3721            26.3721         0               $8,847.05       $9,523.45       $-676.41        5.00          % 2.06     %
+ONDO     11,251.8           11,251.8        0               $8,702.22       $8,756.15       $-53.93         4.92          % 2.03     %
+
+                                              --- 📈 Other Holdings ---
+Asset    Total Qty          Spot Qty        Earn Qty        Value (USD)     Cost Basis      P/L (USD)       Total Alloc.
 -------------------------------------------------------------------------------------------------------------------
-BTC      0.00046944         0               0.00046944      $49.28          $42.73          $6.55           39.26%
-ETH      0.01190199         0               0.01190199      $32.83          $31.49          $1.34           24.38%
-SOL      0.08608167         0               0.08608167      $13.74          $14.91          $-1.17          10.20%
+USDT     85,611.264         85,611.264      0               $85,611.26      $0.00           $85,611.26      19.96    %
+DAI      10,000             10,000          0               $9,996.46       $0.00           $9,996.46       2.33     %
+RON      18,466             18,466          0               $8,103.43       $0.00           $8,103.43       1.89     %
+PAXG     1                  1               0               $3,341.70       $0.00           $3,341.70       0.78     %
+MKR      1                  1               0               $1,943.08       $0.00           $1,943.08       0.45     %
+REI      18,446             18,446          0               $1,614.43       $0.00           $1,614.43       0.38     %
+TUT      17,423             17,423          0               $1,030.22       $0.00           $1,030.22       0.24     %
 ...
 ===================================================================================================================
 ```
 
 **Key Metrics Explained:**
+- **Core Alloc. %**: An asset's percentage of the core portfolio's value. This is the number used for rebalancing calculations
+- **Total Alloc. %**: An asset's percentage of your total wallet value
 - **Invested Capital Performance**: Your true performance against actual cash invested
 - **FIFO Cost Basis Performance**: Tax-relevant unrealized P/L based on First-In, First-Out accounting
 - **Database Indicator**: Shows whether you're using testnet or production data
+
+### Enhanced Rebalancing Suggestions
+
+The rebalancing view now provides full context for your decisions:
+
+```
+========================================================================================
+⚖️ REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)
+========================================================================================
+----------------------------------------------------------------------------------------
+💰 Core Portfolio Value: $177,000.40
+💰 Available USDT (Spot + Earn): $85,611.26
+----------------------------------------------------------------------------------------
+🔴 ETH    | Signal: SELL
+   Allocation: 23.70% (Target: 20.0%) | Drift: 3.70 pts | Value: $29.49
+   Price: $2,526.74    | Support: $2,387.61 | Resistance: $2,877.63
+   Long-Term Trend: Golden Cross, Price > SMA200, Neutral RSI (40-60)
+   Action: Sell ~$2.30 worth, which is 0.00091149451 ETH
+------------------------------------------------------
+🔴 BTC    | Signal: SELL
+   Allocation: 39.53% (Target: 35.0%) | Drift: 4.53 pts | Value: $49.18
+   Price: $105,022.07  | Support: $100,436.88 | Resistance: $111,970.17
+   Long-Term Trend: Golden Cross, Price > SMA200
+   Action: Sell ~$4.22 worth, which is 4.0213452e-05 BTC
+------------------------------------------------------
+🟡 RENDER | Signal: HOLD
+   Allocation: 5.35% (Target: 8.0%) | Drift: -2.65 pts | Value: $6.65
+   Price: $3.28        | Support: $3.16 | Resistance: $5.34
+   Long-Term Trend: Golden Cross, Price < SMA200, Neutral RSI (40-60)
+   Action: Hold: Allocation is within tolerance.
+------------------------------------------------------
+========================================================================================
+Verifying balances in Spot and Earn wallets...
+
+================================================================================
+🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴
+================================================================================
+🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨
+================================================================================
+Symbol Signal                       Suggested Action Detail
+   ETH   SELL Sell ~$2.30 worth, which is 0.00091149451 ETH
+   BTC   SELL Sell ~$4.22 worth, which is 4.0213452e-05 BTC
+================================================================================
+Type 'EXECUTE ALL' or 'EXECUTE' for one-by-one confirmation:
+```
+
+**Enhanced Features:**
+- **Core Portfolio Value**: The total value of only the assets being considered for rebalancing
+- **Available USDT**: Your total buying power from both Spot and Earn wallets
+- **Granular Control**: Choose `EXECUTE ALL` for batch confirmation or `EXECUTE` for one-by-one approval
+- **Smart Prompts**: Execution prompt is hidden if all signals are HOLD
 
 ### Multi-Timeframe Technical Analysis
 ```
@@ -397,100 +505,7 @@ Bullish Coins: 5 | Bearish Coins: 3
   Support: $96.59 | Resistance: $294.33
   Active Conditions: Golden Cross, Price > SMA200, Neutral RSI (40-60)
 
-➡️ RENDER-USD
-  Price: $3.30 (+471.01%) | RSI: 40.46
-  Support: $2.53 | Resistance: $11.62
-  Active Conditions: Golden Cross, Price < SMA200, Neutral RSI (40-60)
-
-➡️ TAO-USD
-  Price: $0.00 (+0.00%) | RSI: 50.00
-  Support: $0.00 | Resistance: $0.00
-  Active Conditions: Insufficient Historical Data
-
-➡️ AVAX-USD
-  Price: $18.04 (+29.12%) | RSI: 40.43
-  Support: $14.70 | Resistance: $55.70
-  Active Conditions: Death Cross, Price < SMA200, Neutral RSI (40-60)
-
-➡️ LINK-USD
-  Price: $13.26 (-38.98%) | RSI: 44.30
-  Support: $10.20 | Resistance: $30.81
-  Active Conditions: Golden Cross, Price < SMA200, Neutral RSI (40-60)
-
-➡️ ONDO-USD
-  Price: $0.78 (+178.48%) | RSI: 43.05
-  Support: $0.67 | Resistance: $2.14
-  Active Conditions: Neutral RSI (40-60)
-
 ================================================================================
-
-```
-
-### Rebalancing Suggestion
-```
-========================================================================================
-⚖️ REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)
-========================================================================================
-🔴 ETH    | Signal: SELL
-   Allocation: 23.70% (Target: 20.0%) | Drift: 3.70 pts | Value: $29.49
-   Price: $2,526.74    | Support: $2,387.61 | Resistance: $2,877.63
-   Long-Term Trend: Golden Cross, Price > SMA200, Neutral RSI (40-60)
-   Action: Sell ~$2.30 worth, which is 0.00091149451 ETH
-------------------------------------------------------
-🔴 BTC    | Signal: SELL
-   Allocation: 39.53% (Target: 35.0%) | Drift: 4.53 pts | Value: $49.18
-   Price: $105,022.07  | Support: $100,436.88 | Resistance: $111,970.17
-   Long-Term Trend: Golden Cross, Price > SMA200
-   Action: Sell ~$4.22 worth, which is 4.0213452e-05 BTC
-------------------------------------------------------
-🟡 RENDER | Signal: HOLD
-   Allocation: 5.35% (Target: 8.0%) | Drift: -2.65 pts | Value: $6.65
-   Price: $3.28        | Support: $3.16 | Resistance: $5.34
-   Long-Term Trend: Golden Cross, Price < SMA200, Neutral RSI (40-60)
-   Action: Hold: Allocation is within tolerance.
-------------------------------------------------------
-🟡 SOL    | Signal: HOLD
-   Allocation: 9.89% (Target: 12.0%) | Drift: -2.11 pts | Value: $12.31
-   Price: $146.70      | Support: $141.44 | Resistance: $187.28
-   Long-Term Trend: Golden Cross, Price > SMA200, Neutral RSI (40-60)
-   Action: Hold: Allocation is within tolerance.
-------------------------------------------------------
-🟡 AVAX   | Signal: HOLD
-   Allocation: 4.83% (Target: 6.0%) | Drift: -1.17 pts | Value: $6.01
-   Price: $17.98       | Support: $17.84 | Resistance: $25.95
-   Long-Term Trend: Death Cross, Price < SMA200, Neutral RSI (40-60)
-   Action: Hold: Allocation is within tolerance.
-------------------------------------------------------
-🟡 TAO    | Signal: HOLD
-   Allocation: 6.85% (Target: 8.0%) | Drift: -1.15 pts | Value: $8.52
-   Price: $360.20      | Support: $334.30 | Resistance: $500.00
-   Long-Term Trend: Insufficient Historical Data
-   Action: Hold: Allocation is within tolerance.
-------------------------------------------------------
-🟡 LINK   | Signal: HOLD
-   Allocation: 5.29% (Target: 6.0%) | Drift: -0.71 pts | Value: $6.58
-   Price: $13.26       | Support: $12.68 | Resistance: $17.14
-   Long-Term Trend: Golden Cross, Price < SMA200, Neutral RSI (40-60)
-   Action: Hold: Allocation is within tolerance.
-------------------------------------------------------
-🟡 ONDO   | Signal: HOLD
-   Allocation: 4.53% (Target: 5.0%) | Drift: -0.47 pts | Value: $5.63
-   Price: $0.78        | Support: $0.73 | Resistance: $1.05
-   Long-Term Trend: Neutral RSI (40-60)
-   Action: Hold: Allocation is within tolerance.
-========================================================================================
-Verifying balances in Spot and Earn wallets...
-
-================================================================================
-🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴
-================================================================================
-🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨
-================================================================================
-Symbol Signal                       Suggested Action Detail
-   ETH   SELL Sell ~$2.30 worth, which is 0.00091149451 ETH
-   BTC   SELL Sell ~$4.22 worth, which is 4.0213452e-05 BTC
-================================================================================
-Type 'EXECUTE' to proceed with the trades listed above:
 ```
 
 ## 🔧 Development & Tooling
@@ -549,10 +564,10 @@ uv run pytest tests/test_portfolio_tracker.py
 #### API Connection Failed
 ```bash
 # Test API connections through menu
-track-portfolio  # Choose option 14 (Test API Connections)
+track-portfolio  # Choose option 15 (Test API Connections)
 
 # Check configuration
-track-portfolio  # Choose option 12 (View Configuration)
+track-portfolio  # Choose option 14 (View Configuration)
 
 # Verify environment variables
 cat .env
@@ -614,7 +629,7 @@ rm data/portfolio.db data/testnet_portfolio.db
 2. **Restrict File Permissions**: `chmod 600 .env` on Linux/macOS
 3. **Use Encrypted Storage**: Encrypt sensitive configuration files
 4. **Regular Backups**: Backup database and configuration regularly
-5. **Keep Software Updated**: Update dependencies regularly with `uv pip sync --upgrade`
+5. **Keep Software Updated**: Update dependencies regularly with `uv sync --upgrade`
 
 ### Trading Security
 1. **Always Start with Testnet**: Test all strategies on testnet first
