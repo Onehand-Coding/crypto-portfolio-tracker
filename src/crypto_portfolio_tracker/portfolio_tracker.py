@@ -1037,6 +1037,8 @@ class CryptoPortfolioTracker:
 
             try:
                 choice_str = input("Select option (1-4): ").strip()
+                if not choice_str:
+                    return
                 if not choice_str.isdigit() or int(choice_str) not in range(1, 5):
                     print("❌ Invalid input. Please enter a number between 1 and 4.")
                     continue
