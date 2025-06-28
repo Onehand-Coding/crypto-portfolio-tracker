@@ -1432,8 +1432,13 @@ class CryptoPortfolioTracker:
 
         selected_account = None
         while selected_account is None:
+            choice_str = input(f"Select account (1-{len(accounts)}) or press Enter to return: ").strip()
+            if not choice_str:
+                print("Returning to main menu...")
+                return
+
             try:
-                choice = int(input(f"Select account (1-{len(accounts)}): ").strip()) - 1
+                choice = int(choice_str) - 1
                 if 0 <= choice < len(accounts):
                     selected_account = accounts[choice]
                 else:
@@ -1475,13 +1480,18 @@ class CryptoPortfolioTracker:
         user_params = {}
         strategy_name = ""
         while strategy_class is None:
+            choice_str = input(f"Select strategy to run (1-{len(strategy_list)}) or press Enter to return: ").strip()
+            if not choice_str:
+                print("Returning to main menu...")
+                return
+
             try:
-                choice = int(input(f"Select strategy to run (1-{len(strategy_list)}): ").strip()) - 1
+                choice = int(choice_str) - 1
                 if 0 <= choice < len(strategy_list):
                     strategy_name = strategy_list[choice]
                     strategy_class = available_strategies[strategy_name]
                     print(f"\nConfiguring strategy: {strategy_name}")
-                    if hasattr(strategy_class, "get_user_params"):
+                    if hasattr(strategy_class, 'get_user_params'):
                         user_params = strategy_class.get_user_params()
                 else:
                     print("❌ Invalid selection.")
