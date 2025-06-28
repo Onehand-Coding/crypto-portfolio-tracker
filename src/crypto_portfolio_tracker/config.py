@@ -63,6 +63,10 @@ class ConfigManager:
         }
         self.sub_accounts: List[Dict[str, Any]] = self._load_sub_accounts()
 
+        # --- Add API keys and sub accounts to config ---
+        self.config["main_api_keys"] = self.main_api_keys
+        self.config["sub_accounts"] = self.sub_accounts
+
         self.symbol_mapper = SymbolMapper(self.config)
 
         self._create_directories()

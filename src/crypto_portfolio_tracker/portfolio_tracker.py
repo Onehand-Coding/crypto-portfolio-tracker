@@ -12,7 +12,6 @@ import asyncio
 import logging
 import datetime
 import functools
-import diskcache
 from pathlib import Path
 from diskcache import Cache
 from collections import deque
@@ -26,12 +25,11 @@ import yfinance as yf
 import pandas_ta as ta
 from binance.client import Client
 from requests.adapters import HTTPAdapter
-from binance.exceptions import BinanceAPIException, BinanceRequestException
+from binance.exceptions import BinanceAPIException
 
 from . config import ConfigManager
 from . database import DatabaseManager
 from . visualizations import Visualizer
-from . symbol_mapper import SymbolMapper
 from . price_enricher import PriceEnricher
 from . binance_fetcher import BinanceFetcher
 from . import trading_strategies
@@ -39,7 +37,7 @@ from . strategy_backtester import StrategyBacktester
 from . rebalancing_backtester import RebalancingBacktester
 from . exporters import ExcelExporter, HtmlExporter, CsvExporter
 from . rebalancing_logic import get_live_rebalance_suggestions
-from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
+from . crypto_trend_analyzer import CryptoTrendAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -50,61 +48,61 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
     Assumes transactions_df is for a single asset, sorted by timestamp.
     Incorporates fee_usd into the cost of BUY/DEPOSIT transactions.
     """
-    buy_lots = deque()  # Queue to store {'qty': quantity, 'price': effective_price_usd_per_unit}
+    buy_lots = deque()  # Queue to store {"qty": quantity, "price": effective_price_usd_per_unit}
     current_quantity = 0.0
     total_cost_basis = 0.0 # This will track the cost basis of *remaining* lots
 
     if transactions_df.empty:
-        symbol = transactions_df['symbol'].iloc[0] if not transactions_df.empty and 'symbol' in transactions_df.columns else 'Unknown'
+        symbol = transactions_df["symbol"].iloc[0] if not transactions_df.empty and "symbol" in transactions_df.columns else "Unknown"
         logger.debug(f"No transactions provided to calculate_fifo_cost_basis for symbol {symbol}. Returning 0, 0.")
         return 0.0, 0.0
 
     # Ensure correct dtypes and sorting
     transactions_df = transactions_df.copy()
-    transactions_df['timestamp'] = pd.to_datetime(transactions_df['timestamp'], errors='coerce')
-    transactions_df = transactions_df.sort_values(by='timestamp').reset_index(drop=True)
+    transactions_df["timestamp"] = pd.to_datetime(transactions_df["timestamp"], errors="coerce")
+    transactions_df = transactions_df.sort_values(by="timestamp").reset_index(drop=True)
 
-    if transactions_df['timestamp'].isna().any():
-        logger.warning(f"Found NaT timestamps for symbol {transactions_df['symbol'].iloc[0] if not transactions_df.empty else 'Unknown'} after coercion. Dropping these rows for FIFO.")
-        transactions_df.dropna(subset=['timestamp'], inplace=True)
+    if transactions_df["timestamp"].isna().any():
+        logger.warning(f"Found NaT timestamps for symbol {transactions_df["symbol"].iloc[0] if not transactions_df.empty else "Unknown"} after coercion. Dropping these rows for FIFO.")
+        transactions_df.dropna(subset=["timestamp"], inplace=True)
         if transactions_df.empty:
             logger.warning(f"All transactions dropped for symbol due to NaT timestamps. Returning 0, 0.")
             return 0.0,0.0
 
     for _, row in transactions_df.iterrows():
-        tx_type = row.get('type')
+        tx_type = row.get("type")
 
         try:
-            quantity = float(row.get('quantity', 0.0))
+            quantity = float(row.get("quantity", 0.0))
         except (ValueError, TypeError):
-            logger.warning(f"Invalid quantity '{row.get('quantity')}' for tx {row.get('transaction_hash')}. Using 0.0.")
+            logger.warning(f"Invalid quantity '{row.get("quantity")}' for tx {row.get("transaction_hash")}. Using 0.0.")
             quantity = 0.0
 
-        if quantity == 0.0 and tx_type in ['BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL']:
-            logger.debug(f"Skipping zero quantity {tx_type} transaction: {row.get('transaction_hash')}")
+        if quantity == 0.0 and tx_type in ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL"]:
+            logger.debug(f"Skipping zero quantity {tx_type} transaction: {row.get("transaction_hash")}")
             continue
 
-        price = row.get('price_usd')
+        price = row.get("price_usd")
 
-        fee_usd = row.get('fee_usd', 0.0)
+        fee_usd = row.get("fee_usd", 0.0)
         if pd.isna(fee_usd) or not isinstance(fee_usd, (int, float)):
-            logger.debug(f"Invalid or missing fee_usd ('{row.get('fee_usd')}') for tx {row.get('transaction_hash')}. Using 0.0 for fee_usd.")
+            logger.debug(f"Invalid or missing fee_usd ('{row.get("fee_usd")}') for tx {row.get("transaction_hash")}. Using 0.0 for fee_usd.")
             fee_usd = 0.0
         else:
             try:
                 fee_usd = float(fee_usd)
             except (ValueError, TypeError):
-                logger.warning(f"Could not convert fee_usd '{row.get('fee_usd')}' to float for tx {row.get('transaction_hash')}. Using 0.0 for fee_usd.")
+                logger.warning(f"Could not convert fee_usd '{row.get("fee_usd")}' to float for tx {row.get("transaction_hash")}. Using 0.0 for fee_usd.")
                 fee_usd = 0.0
 
-        if tx_type == 'BUY' or tx_type == 'DEPOSIT':
+        if tx_type == "BUY" or tx_type == "DEPOSIT":
             actual_tx_price_usd = 0.0
             if price is not None and isinstance(price, (int, float)) and price > 0:
                 actual_tx_price_usd = float(price)
-            elif price == 0.0 and tx_type == 'DEPOSIT':
+            elif price == 0.0 and tx_type == "DEPOSIT":
                 actual_tx_price_usd = 0.0
             elif price is None or not isinstance(price, (int, float)) or price <=0 :
-                logger.warning(f"{tx_type} tx for {row.get('symbol', 'N/A')} (ID: {row.get('transaction_hash', 'N/A')}) "
+                logger.warning(f"{tx_type} tx for {row.get("symbol", "N/A")} (ID: {row.get("transaction_hash", "N/A")}) "
                                f"has invalid/missing price ({price}). Using $0 price component for this lot.")
                 actual_tx_price_usd = 0.0
 
@@ -112,39 +110,39 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
             cost_for_this_transaction_lot = (quantity * actual_tx_price_usd) + fee_usd
             effective_price_per_unit = cost_for_this_transaction_lot / quantity if quantity > 0 else 0.0 # Price per unit *including* fee
 
-            buy_lots.append({'qty': quantity, 'price': effective_price_per_unit})
+            buy_lots.append({"qty": quantity, "price": effective_price_per_unit})
             current_quantity += quantity
             total_cost_basis += cost_for_this_transaction_lot # Add full cost (value + fee)
 
-        elif tx_type == 'SELL' or tx_type == 'WITHDRAWAL':
+        elif tx_type == "SELL" or tx_type == "WITHDRAWAL":
             sell_qty = quantity
             current_quantity -= sell_qty
 
             while sell_qty > 0 and buy_lots:
                 oldest_buy = buy_lots[0]
-                # oldest_buy['price'] is the effective_price_per_unit from its acquisition (already includes its buy fee)
+                # oldest_buy["price"] is the effective_price_per_unit from its acquisition (already includes its buy fee)
 
-                if oldest_buy['qty'] <= sell_qty:
-                    qty_removed_from_lot = oldest_buy['qty']
-                    cost_basis_removed = qty_removed_from_lot * oldest_buy['price']
+                if oldest_buy["qty"] <= sell_qty:
+                    qty_removed_from_lot = oldest_buy["qty"]
+                    cost_basis_removed = qty_removed_from_lot * oldest_buy["price"]
                     total_cost_basis -= cost_basis_removed
                     sell_qty -= qty_removed_from_lot
                     buy_lots.popleft()
                 else:
-                    cost_basis_removed = sell_qty * oldest_buy['price']
+                    cost_basis_removed = sell_qty * oldest_buy["price"]
                     total_cost_basis -= cost_basis_removed
-                    oldest_buy['qty'] -= sell_qty
+                    oldest_buy["qty"] -= sell_qty
                     sell_qty = 0
 
             if sell_qty > 0:
-                logger.warning(f"{tx_type} of {sell_qty} {row.get('symbol', 'N/A')} more than available from history. Cost basis may be affected.")
+                logger.warning(f"{tx_type} of {sell_qty} {row.get("symbol", "N/A")} more than available from history. Cost basis may be affected.")
 
         total_cost_basis = max(0, total_cost_basis)
 
     average_cost_basis = total_cost_basis / current_quantity if current_quantity > 0 else 0.0
     current_quantity = max(0, current_quantity)
 
-    logger.debug(f"FIFO Result for {transactions_df['symbol'].iloc[0] if not transactions_df.empty else 'Unknown'}: Qty={current_quantity:.8f}, AvgCost={average_cost_basis:.8f}, TotalCostBasisForAsset={total_cost_basis:.8f}")
+    logger.debug(f"FIFO Result for {transactions_df["symbol"].iloc[0] if not transactions_df.empty else "Unknown"}: Qty={current_quantity:.8f}, AvgCost={average_cost_basis:.8f}, TotalCostBasisForAsset={total_cost_basis:.8f}")
     return current_quantity, average_cost_basis
 
 
@@ -156,10 +154,6 @@ class CryptoPortfolioTracker:
         self.config_manager = config_manager
         self.config = self.config_manager.config
         self.logger = logging.getLogger(__name__)
-
-        # --- Set up API keys and sub accounts ---
-        self.config['api_keys'] = self.config_manager.main_api_keys
-        self.config['sub_accounts'] = self.config_manager.sub_accounts
 
         # --- Initialize Core Components ---
         self.db_manager = DatabaseManager(self.config)
@@ -189,13 +183,30 @@ class CryptoPortfolioTracker:
 
         self.logger.info("Tracker and all components initialized.")
 
+    def _sync_binance_client_time(self, client: Client, context: str = "general"):
+        """
+        Reusable utility to synchronize the given Binance client's clock with the server.
+        """
+        if not client:
+            self.logger.warning(f"Cannot sync time: Binance client for '{context}' is not available.")
+            return
+        try:
+            self.logger.info(f"Synchronizing time for {context}...")
+            server_time = client.get_server_time()['serverTime']
+            local_time = int(time.time() * 1000)
+            time_offset = server_time - local_time
+            client._server_time_offset = time_offset
+            self.logger.info(f"Time synchronized for {context}. New offset: {time_offset}ms.")
+        except Exception as e:
+            self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
+
     def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
         """Initialize and return Binance client with robust session, retries, and time sync."""
 
         if not api_key and not api_secret:
             keys = self.config_manager.get_binance_keys()
-            api_key = keys.get('api_key')
-            api_secret = keys.get('api_secret')
+            api_key = keys.get("api_key")
+            api_secret = keys.get("api_secret")
 
         if not api_key or not api_secret:
             self.logger.warning("Binance API key/secret not found. Binance client disabled.")
@@ -209,21 +220,13 @@ class CryptoPortfolioTracker:
 
             self.logger.info(f"Initializing Binance client with timeout: {client_timeout}s.")
 
-            client = Client(api_key, api_secret, requests_params={'timeout': client_timeout})
+            client = Client(api_key, api_secret, requests_params={"timeout": client_timeout})
 
             client.RECV_WINDOW = recv_window
             self.logger.info(f"Set Binance client recvWindow to {client.RECV_WINDOW}ms.")
 
             # Actively sync time with the server to prevent all recvWindow errors.
-            try:
-                self.logger.info("Synchronizing time with Binance server...")
-                server_time = client.get_server_time()['serverTime']
-                local_time = int(time.time() * 1000)
-                time_offset = server_time - local_time
-                client._server_time_offset = time_offset
-                self.logger.info(f"Time synchronized. Server offset is {time_offset}ms.")
-            except Exception as e:
-                self.logger.error(f"Could not sync time with Binance server: {e}. Relying on increased recvWindow as a fallback.")
+            self._sync_binance_client_time(client, context="initialization")
 
             retry_strategy = Retry(
                 total=5,
@@ -236,7 +239,7 @@ class CryptoPortfolioTracker:
 
             if self.config_manager.is_testnet_mode:
                 self.logger.info("Connecting to Binance Testnet endpoint.")
-                client.API_URL = 'https://testnet.binance.vision/api'
+                client.API_URL = "https://testnet.binance.vision/api"
 
             client.ping()
             self.logger.info("Binance client initialized successfully.")
@@ -260,8 +263,8 @@ class CryptoPortfolioTracker:
             return prices
 
         ids_string = ",".join(list(ids_to_fetch))
-        url = f"{coingecko_config.get('base_url')}/simple/price"
-        params = {'ids': ids_string, 'vs_currencies': 'usd'}
+        url = f"{coingecko_config.get("base_url")}/simple/price"
+        params = {"ids": ids_string, "vs_currencies": "usd"}
 
         for attempt in range(3): # Try up to 3 times
             try:
@@ -309,14 +312,14 @@ class CryptoPortfolioTracker:
         timeout = self.coingecko_api.get("timeout", 30)
 
         try:
-            parsed_date = pd.to_datetime(date_str, errors='coerce', dayfirst=True).date()
+            parsed_date = pd.to_datetime(date_str, errors="coerce", dayfirst=True).date()
             today = datetime.datetime.now(timezone.utc).date()
 
             if parsed_date >= today:
                 self.logger.warning(f"Requested date {date_str} is today or in the future. Fetching previous day's data instead.")
                 parsed_date = today - timedelta(days=1)
 
-            api_date_str = parsed_date.strftime('%d-%m-%Y')
+            api_date_str = parsed_date.strftime("%d-%m-%Y")
 
         except (ValueError, TypeError):
             self.logger.error(f"Could not parse date '{date_str}' for CoinGecko API.")
@@ -377,8 +380,8 @@ class CryptoPortfolioTracker:
     def _get_historical_fiat_exchange_rate(self, date_str_orig: str, from_currency: str, to_currency: str) -> Optional[float]:
         """
         Fetches the historical exchange rate using yfinance.
-        date_str_orig should be in 'YYYY-MM-DD' or 'DD-MM-YYYY'.
-        Returns how many 'to_currency' 1 unit of 'from_currency' is worth.
+        date_str_orig should be in "YYYY-MM-DD" or "DD-MM-YYYY".
+        Returns how many "to_currency" 1 unit of "from_currency" is worth.
         """
         if not date_str_orig or not from_currency or not to_currency:
             self.logger.error("Date, from_currency, or to_currency missing for fiat exchange rate lookup.")
@@ -389,7 +392,7 @@ class CryptoPortfolioTracker:
 
         try:
             target_dt = pd.to_datetime(date_str_orig)
-            api_date_str = target_dt.strftime('%Y-%m-%d')
+            api_date_str = target_dt.strftime("%Y-%m-%d")
         except ValueError:
             self.logger.error(f"Invalid date format '{date_str_orig}'. Could not parse for yfinance.")
             return None
@@ -404,8 +407,8 @@ class CryptoPortfolioTracker:
         ticker_symbol = f"{from_currency.upper()}{to_currency.upper()}=X"
         rate = None
 
-        start_date_fetch = (target_dt - pd.Timedelta(days=3)).strftime('%Y-%m-%d')
-        end_date_fetch = (target_dt + pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+        start_date_fetch = (target_dt - pd.Timedelta(days=3)).strftime("%Y-%m-%d")
+        end_date_fetch = (target_dt + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
 
         try:
             self.logger.debug(f"yfinance download: Ticker='{ticker_symbol}', Start='{start_date_fetch}', End='{end_date_fetch}'")
@@ -415,7 +418,7 @@ class CryptoPortfolioTracker:
                 self.logger.warning(f"No data returned by yfinance for {ticker_symbol} in window {start_date_fetch} to {end_date_fetch}.")
             else:
                 data_window = data_window.sort_index()
-                closest_price_intermediate = data_window['Close'].asof(target_dt)
+                closest_price_intermediate = data_window["Close"].asof(target_dt)
 
                 self.logger.debug(f"yfinance .asof() result type: {type(closest_price_intermediate)}, value: {closest_price_intermediate}")
 
@@ -429,11 +432,11 @@ class CryptoPortfolioTracker:
                     closest_price_scalar = closest_price_intermediate
 
                 if pd.notna(closest_price_scalar):
-                    actual_price_date_idx = data_window.index.get_indexer([target_dt], method='ffill')
+                    actual_price_date_idx = data_window.index.get_indexer([target_dt], method="ffill")
                     if actual_price_date_idx[0] != -1 :
                         actual_price_date = data_window.index[actual_price_date_idx[0]]
                         rate = float(closest_price_scalar)
-                        self.logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using data from {actual_price_date.strftime('%Y-%m-%d')}): {rate}")
+                        self.logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using data from {actual_price_date.strftime("%Y-%m-%d")}): {rate}")
                     else:
                         self.logger.warning(f"Could not determine actual date for 'asof' price for {ticker_symbol} on {api_date_str}, but got a value. Using asof value directly.")
                         rate = float(closest_price_scalar)
@@ -473,7 +476,7 @@ class CryptoPortfolioTracker:
         if not self.strategy_state_path.exists():
             return {}
         try:
-            with open(self.strategy_state_path, 'r') as f:
+            with open(self.strategy_state_path, "r") as f:
                 states = json.load(f)
                 self.logger.info(f"Loaded strategy states from {self.strategy_state_path}")
                 return states
@@ -484,7 +487,7 @@ class CryptoPortfolioTracker:
     def _save_strategy_state(self):
         """Saves the current state of all strategies to a JSON file."""
         try:
-            with open(self.strategy_state_path, 'w') as f:
+            with open(self.strategy_state_path, "w") as f:
                 json.dump(self.strategy_states, f, indent=4)
                 self.logger.info(f"Saved strategy states to {self.strategy_state_path}")
         except IOError as e:
@@ -503,27 +506,78 @@ class CryptoPortfolioTracker:
             if not symbol_info:
                 return None
 
-            filters = {f['filterType']: f for f in symbol_info['filters']}
+            filters = {f["filterType"]: f for f in symbol_info["filters"]}
             self.yfinance_disk_cache.set(cache_key, filters, expire=3600 * 24) # Cache for 24 hours
             return filters
         except Exception as e:
             self.logger.error(f"Could not fetch symbol info for {symbol}: {e}")
             return None
 
+    def _restore_database_interactive(self):
+        """Handles the interactive process of restoring a database."""
+        print("\n--- Restoring Database from Backup ---")
+        backups = self.db_manager.list_backups()
+
+        if not backups:
+            print("❌ No backup files found in the 'data/db_backups/' directory.")
+            return
+
+        print("Available backups (newest first):")
+        for i, backup_file in enumerate(backups):
+            # Show relative path for cleaner output
+            try:
+                relative_path = backup_file.relative_to(self.config_manager.project_root)
+            except ValueError:
+                relative_path = backup_file # Fallback to absolute path if not relative
+            print(f"  {i + 1}. {relative_path}")
+
+        try:
+            selection_str = input(f"\nEnter the number of the backup to restore (or press Enter to cancel): ").strip()
+            if not selection_str:
+                print("Restore cancelled.")
+                return
+
+            selection_idx = int(selection_str) - 1
+            if not 0 <= selection_idx < len(backups):
+                print("❌ Invalid selection.")
+                return
+
+            selected_backup = backups[selection_idx]
+            print("\n" + "="*50)
+            print("🚨 WARNING: THIS IS A DESTRUCTIVE ACTION 🚨")
+            print("The current database will be permanently overwritten.")
+            print(f"You are about to restore from:\n  -> {selected_backup.name}")
+            print("="*50)
+
+            confirm = input("Type 'RESTORE' to proceed: ")
+            if confirm == "RESTORE":
+                print("Restoring database...")
+                success = self.db_manager.restore_from_backup(selected_backup)
+                if success:
+                    print("\n✅ Restore successful.")
+                    print("‼️ PLEASE RESTART THE APPLICATION to load the restored database.")
+                else:
+                    print("❌ Restore failed. The original database was not modified. Check logs.")
+            else:
+                print("🛑 Restore cancelled. No changes were made.")
+
+        except (ValueError, IndexError):
+            print("❌ Invalid input.")
+
     def _adjust_quantity_to_lot_size(self, symbol: str, quantity: float) -> Optional[float]:
         """Rounds the quantity down to the nearest valid step size for the LOT_SIZE filter."""
         filters = self._get_symbol_filters(symbol)
-        if not filters or 'LOT_SIZE' not in filters:
+        if not filters or "LOT_SIZE" not in filters:
             self.logger.warning(f"Could not get LOT_SIZE filter for {symbol}. Cannot adjust quantity.")
             return None
 
-        step_size_str = filters['LOT_SIZE'].get('stepSize')
+        step_size_str = filters["LOT_SIZE"].get("stepSize")
         if not step_size_str:
             return None
 
-        # Calculate the number of decimal places from the stepSize (e.g., '0.0001' -> 4)
-        if '.' in step_size_str:
-            precision = len(step_size_str.split('.')[1].rstrip('0'))
+        # Calculate the number of decimal places from the stepSize (e.g., "0.0001" -> 4)
+        if "." in step_size_str:
+            precision = len(step_size_str.split(".")[1].rstrip("0"))
         else:
             precision = 0
 
@@ -542,7 +596,7 @@ class CryptoPortfolioTracker:
         """
         try:
             spot_balance_info = self.binance_client.get_asset_balance(asset=asset)
-            free_spot_balance = float(spot_balance_info.get('free', 0.0))
+            free_spot_balance = float(spot_balance_info.get("free", 0.0))
 
             if free_spot_balance >= required_amount:
                 self.logger.info(f"Sufficient {asset} balance in Spot wallet. No action needed.")
@@ -552,13 +606,13 @@ class CryptoPortfolioTracker:
             self.logger.warning(f"Shortfall of {shortfall:.8f} {asset}. Checking Simple Earn.")
 
             positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset)
-            if not positions or not positions.get('rows'):
+            if not positions or not positions.get("rows"):
                 print(f"❌ No active Simple Earn Flexible positions found for {asset} to redeem from.")
                 return False
 
-            product_to_redeem_from = positions['rows'][0]
-            product_id = product_to_redeem_from.get('productId')
-            available_to_redeem = float(product_to_redeem_from.get('totalAmount', 0.0))
+            product_to_redeem_from = positions["rows"][0]
+            product_id = product_to_redeem_from.get("productId")
+            available_to_redeem = float(product_to_redeem_from.get("totalAmount", 0.0))
 
             if shortfall > available_to_redeem:
                 print(f"❌ Cannot redeem required amount. Need {shortfall:.8f} {asset}, but only {available_to_redeem:.8f} is available in Simple Earn.")
@@ -571,7 +625,7 @@ class CryptoPortfolioTracker:
                     productId=product_id,
                     amount=f"{shortfall:.8f}"
                 )
-                if redemption_result and redemption_result.get('success'):
+                if redemption_result and redemption_result.get("success"):
                     self.logger.info(f"Successfully initiated LIVE redemption. Waiting 5 seconds...")
                     print(f"✅ Redemption initiated for {shortfall:.8f} {asset}. Waiting 5 seconds...")
                     time.sleep(5)
@@ -596,9 +650,9 @@ class CryptoPortfolioTracker:
 
     def _execute_directional_trade(self, trade: Dict[str, Any], client: Client):
         """Helper function to execute a single directional BUY or SELL trade."""
-        symbol = trade['Symbol']
-        signal = trade['Signal']
-        size = trade.get('Size', 1.0) # Default to 100% if not provided
+        symbol = trade["Symbol"]
+        signal = trade["Signal"]
+        size = trade.get("Size", 1.0) # Default to 100% if not provided
         trade_ticker = f"{symbol}USDT"
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
         is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
@@ -607,7 +661,7 @@ class CryptoPortfolioTracker:
 
         try:
             if signal == "BUY":
-                usdt_balance = float(client.get_asset_balance(asset='USDT').get('free', 0.0))
+                usdt_balance = float(client.get_asset_balance(asset="USDT").get("free", 0.0))
                 trade_amount_usd = usdt_balance * size
 
                 if trade_amount_usd < min_trade_usd:
@@ -625,7 +679,7 @@ class CryptoPortfolioTracker:
                     self.logger.info(f"[DRY RUN] Market BUY order for {trade_ticker} was not placed.")
 
             elif signal == "SELL":
-                asset_balance = float(client.get_asset_balance(asset=symbol).get('free', 0.0))
+                asset_balance = float(client.get_asset_balance(asset=symbol).get("free", 0.0))
                 trade_quantity = asset_balance * size
                 current_price = self._get_current_prices([symbol]).get(symbol, 0)
 
@@ -644,8 +698,8 @@ class CryptoPortfolioTracker:
                     self.logger.info(f"[DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed.")
 
         except BinanceAPIException as e:
-            print(f"❌ {('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}")
-            self.logger.error(f"{('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}")
+            print(f"❌ {("LIVE" if is_live else "DRY RUN")} {signal} FAILED for {symbol}: {e}")
+            self.logger.error(f"{("LIVE" if is_live else "DRY RUN")} {signal} FAILED for {symbol}: {e}")
         except Exception as e:
             self.logger.error(f"An unexpected error occurred executing directional trade for {symbol}: {e}", exc_info=True)
             print(f"❌ Unexpected Error for {symbol}: {e}")
@@ -656,12 +710,12 @@ class CryptoPortfolioTracker:
         simulated balances after each trade to enable sequential funding.
         Can run in bulk or interactive (one-by-one) mode.
         """
-        if suggestions_df.empty or 'Signal' not in suggestions_df.columns:
+        if suggestions_df.empty or "Signal" not in suggestions_df.columns:
             print("No rebalancing suggestions to execute.")
             return
 
-        trades_to_execute = suggestions_df[suggestions_df['Signal'].isin(['BUY', 'SELL'])]
-        trades_to_execute = trades_to_execute.sort_values(by=['Signal', 'Drift (pts)'], ascending=[False, True])
+        trades_to_execute = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])]
+        trades_to_execute = trades_to_execute.sort_values(by=["Signal", "Drift (pts)"], ascending=[False, True])
 
         if trades_to_execute.empty:
             print("\n✅ No BUY or SELL actions suggested. Nothing to execute.")
@@ -672,10 +726,10 @@ class CryptoPortfolioTracker:
         is_live = portfolio_config.get("live_trading_enabled", False)
 
         simulated_balances = {}
-        all_trade_symbols = set(trades_to_execute['Symbol'].unique()) | {'USDT'}
+        all_trade_symbols = set(trades_to_execute["Symbol"].unique()) | {"USDT"}
         for symbol in all_trade_symbols:
             try:
-                spot_bal = float(self.binance_client.get_asset_balance(asset=symbol).get('free', 0.0))
+                spot_bal = float(self.binance_client.get_asset_balance(asset=symbol).get("free", 0.0))
                 earn_bal = earn_balances.get(symbol, 0.0)
                 simulated_balances[symbol] = spot_bal + earn_bal
                 self.logger.info(f"Initialized simulated balance for {symbol}: {simulated_balances[symbol]:.8f}")
@@ -693,11 +747,11 @@ class CryptoPortfolioTracker:
         items_to_process = []
         if not interactive:
             print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-            print(trades_to_execute[['Symbol', 'Signal', 'Suggested Action Detail']].to_string(index=False))
+            print(trades_to_execute[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
             print("="*80)
             try:
-                confirm = input("Type 'EXECUTE ALL' to proceed with all trades listed above: ")
-                if confirm == 'EXECUTE ALL':
+                confirm = input("Type EXECUTE ALL to proceed with all trades listed above: ")
+                if confirm == "EXECUTE ALL":
                     self.logger.info("User confirmed bulk trade execution.")
                     items_to_process = list(trades_to_execute.iterrows())
                 else:
@@ -709,15 +763,15 @@ class CryptoPortfolioTracker:
             for index, row in trades_to_execute.iterrows():
                 print("\n" + "-"*80)
                 print("🚨 PROPOSED TRADE - PLEASE REVIEW CAREFULLY 🚨")
-                print(pd.DataFrame([row])[['Symbol', 'Signal', 'Suggested Action Detail']].to_string(index=False))
+                print(pd.DataFrame([row])[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
                 try:
-                    confirm_one = input(f"Approve this trade for {row['Symbol']}? Type 'YES' to confirm: ").upper().strip()
-                    if confirm_one == 'YES':
-                        self.logger.info(f"User approved trade for {row['Symbol']}.")
+                    confirm_one = input(f"Approve this trade for {row["Symbol"]}? Type YES to confirm: ").upper().strip()
+                    if confirm_one == "YES":
+                        self.logger.info(f"User approved trade for {row["Symbol"]}.")
                         items_to_process.append((index, row))
                     else:
-                        self.logger.info(f"User skipped trade for {row['Symbol']}.")
-                        print(f"Skipping trade for {row['Symbol']}.")
+                        self.logger.info(f"User skipped trade for {row["Symbol"]}.")
+                        print(f"Skipping trade for {row["Symbol"]}.")
                 except KeyboardInterrupt:
                     print("\n🛑 Trade execution cancelled by user."); return
             print("="*80)
@@ -725,18 +779,18 @@ class CryptoPortfolioTracker:
 
         trades_executed_count = 0
         for _, row in items_to_process:
-            symbol = row['Symbol']
-            signal = row['Signal']
+            symbol = row["Symbol"]
+            signal = row["Signal"]
             trade_ticker = f"{symbol}USDT"
-            usd_value = row.get('action_usd_value', 0.0)
-            coin_quantity = row.get('action_coin_quantity', 0.0)
+            usd_value = row.get("action_usd_value", 0.0)
+            coin_quantity = row.get("action_coin_quantity", 0.0)
 
             if usd_value < min_trade_usd:
                 print(f"\n⚠️ SKIPPING {signal} for {symbol}: Suggested trade value (~${usd_value:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
                 continue
 
             try:
-                if signal == 'SELL':
+                if signal == "SELL":
                     if coin_quantity > simulated_balances.get(symbol, 0.0):
                         print(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({coin_quantity:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
                         continue
@@ -758,8 +812,8 @@ class CryptoPortfolioTracker:
                             print(f"✅ LIVE SELL ORDER PLACED.")
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             simulated_balances[symbol] -= adjusted_quantity
-                            simulated_balances['USDT'] += float(order.get('cummulativeQuoteQty', 0.0))
-                            self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}")
+                            simulated_balances["USDT"] += float(order.get("cummulativeQuoteQty", 0.0))
+                            self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances["USDT"]:.2f}")
                             trades_executed_count += 1
                         except BinanceAPIException as e:
                             print(f"❌ LIVE SELL FAILED for {symbol}: {e}")
@@ -767,12 +821,12 @@ class CryptoPortfolioTracker:
                     else:
                         print("✅ (Dry Run) Trade was not placed.")
 
-                elif signal == 'BUY':
-                    if usd_value > simulated_balances.get('USDT', 0.0):
-                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get('USDT', 0.0):,.2f}).")
+                elif signal == "BUY":
+                    if usd_value > simulated_balances.get("USDT", 0.0):
+                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get("USDT", 0.0):,.2f}).")
                         continue
 
-                    if not self._redeem_from_earn_if_needed(asset='USDT', required_amount=usd_value, is_live=is_live):
+                    if not self._redeem_from_earn_if_needed(asset="USDT", required_amount=usd_value, is_live=is_live):
                         print(f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check.")
                         continue
 
@@ -783,9 +837,9 @@ class CryptoPortfolioTracker:
                             order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}")
                             print(f"✅ LIVE BUY ORDER PLACED.")
                             self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
-                            simulated_balances['USDT'] -= float(order.get('cummulativeQuoteQty', 0.0))
-                            simulated_balances[symbol] = simulated_balances.get(symbol, 0.0) + float(order.get('executedQty', 0.0))
-                            self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}")
+                            simulated_balances["USDT"] -= float(order.get("cummulativeQuoteQty", 0.0))
+                            simulated_balances[symbol] = simulated_balances.get(symbol, 0.0) + float(order.get("executedQty", 0.0))
+                            self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances["USDT"]:.2f}")
                             trades_executed_count += 1
                         except BinanceAPIException as e:
                             print(f"❌ LIVE BUY FAILED for {symbol}: {e}")
@@ -807,7 +861,7 @@ class CryptoPortfolioTracker:
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
 
         try:
-            if trade_type == 'BUY':
+            if trade_type == "BUY":
                 usdt_to_spend = amount if is_quote_qty else 0
                 if not is_quote_qty:
                     # If buying a coin quantity, we need to estimate the USDT value
@@ -830,7 +884,7 @@ class CryptoPortfolioTracker:
                 else:
                     print("✅ (Dry Run) BUY Trade was not placed.")
 
-            elif trade_type == 'SELL':
+            elif trade_type == "SELL":
                 coin_quantity_to_sell = amount if not is_quote_qty else 0
                 if is_quote_qty:
                     # If selling for a USDT amount, we need to estimate the coin quantity
@@ -864,119 +918,6 @@ class CryptoPortfolioTracker:
             self.logger.error(f"An unexpected error occurred during manual trade for {symbol}: {e}", exc_info=True)
             print(f"❌ Unexpected Error for {symbol}: {e}")
 
-    async def _fetch_historical_data_async(self, symbol: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
-        """
-        Fetches historical OHLCV data, trying yfinance first and falling back to Binance API.
-        This increases reliability for assets on Binance that may have poor yfinance coverage.
-        """
-        yf_ticker = self._get_yfinance_ticker(symbol)
-        # Use a more descriptive cache key that includes the source
-        cache_key = f"historical_data_{yf_ticker}_{period_str}_{interval_str}"
-
-        # --- Caching logic ---
-        cached_data = self.yfinance_disk_cache.get(cache_key)
-        if cached_data is not None:
-            self.logger.debug(f"Disk Cache HIT for historical data: {cache_key}")
-            return cached_data
-
-        self.logger.debug(f"Disk Cache MISS for historical data: {cache_key}. Fetching from APIs.")
-
-        # --- Fallback Strategy ---
-        # 1. Try yfinance first
-        data = await self._fetch_historical_data_yfinance_async(yf_ticker, period_str, interval_str)
-
-        # 2. If yfinance fails, try Binance API as a fallback
-        if data is None or data.empty:
-            self.logger.warning(f"yfinance failed for {yf_ticker}. Falling back to Binance API.")
-            try:
-                # Define mapping from our interval string to the Binance client's constants
-                interval_map = {
-                    "1d": Client.KLINE_INTERVAL_1DAY,
-                    "1wk": Client.KLINE_INTERVAL_1WEEK,
-                    "1mo": Client.KLINE_INTERVAL_1MONTH,
-                }
-                binance_interval = interval_map.get(interval_str)
-
-                if not binance_interval:
-                    self.logger.error(f"Unsupported interval '{interval_str}' for Binance API fallback.")
-                    return None
-
-                # The python-binance client can interpret human-readable start strings
-                start_str = f"{period_str.replace('y', ' years').replace('mo', ' months')} ago UTC"
-
-                # Fetch klines from Binance
-                binance_pair = f"{symbol.upper()}USDT"
-                self.logger.info(f"Fetching from Binance API: Pair='{binance_pair}', Interval='{binance_interval}', Start='{start_str}'")
-                klines = self.binance_client.get_historical_klines(binance_pair, binance_interval, start_str)
-
-                if not klines:
-                    self.logger.warning(f"Binance API returned no kline data for {binance_pair}.")
-                    self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure
-                    return None
-
-                # Convert to a clean DataFrame, matching the yfinance format
-                cols = ['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume', 'close_time',
-                        'quote_av', 'trades', 'tb_base_av', 'tb_quote_av', 'ignore']
-                data = pd.DataFrame(klines, columns=cols)
-                data['timestamp'] = pd.to_datetime(data['timestamp'], unit='ms', utc=True)
-                data.set_index('timestamp', inplace=True)
-
-                # Keep only the necessary columns and ensure they are numeric
-                data = data[['Open', 'High', 'Low', 'Close', 'Volume']].apply(pd.to_numeric, errors='coerce')
-                self.logger.info(f"Successfully fetched {len(data)} data points for {symbol} from Binance API fallback.")
-
-            except Exception as e:
-                self.logger.error(f"Binance API fallback also failed for {symbol}: {e}", exc_info=True)
-                self.yfinance_disk_cache.set(cache_key, None, expire=3600 * 24) # Cache failure
-                return None
-
-        # Cache the successful result (from either yfinance or Binance) and return it
-        self.yfinance_disk_cache.set(cache_key, data)
-        return data
-
-    async def _fetch_historical_data_yfinance_async(self, yf_ticker: str, period_str: str, interval_str: str) -> Optional[pd.DataFrame]:
-        """
-        Asynchronously fetches historical data from yfinance with improved error handling.
-        This function is now designed to be called by the main _fetch_historical_data_async wrapper.
-        """
-        if not yf_ticker:
-            self.logger.warning("yf_ticker was empty in _fetch_historical_data_yfinance_async.")
-            return None
-
-        try:
-            loop = asyncio.get_event_loop()
-            # yfinance can be slow, run it in a thread pool executor
-            partial_yf_download = functools.partial(
-                yf.download,
-                tickers=yf_ticker,
-                period=period_str, # yfinance handles periods like "4y", "60d" well
-                interval=interval_str,
-                progress=False,
-                auto_adjust=True
-            )
-
-            self.logger.debug(f"Executing yfinance download: Ticker='{yf_ticker}', Period='{period_str}', Interval='{interval_str}'")
-            data = await loop.run_in_executor(None, partial_yf_download)
-
-            if data.empty:
-                self.logger.warning(f"No historical data from yfinance for {yf_ticker} (Period:{period_str}, Interval:{interval_str}).")
-                return None
-
-            # --- Flatten MultiIndex logic ---
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.droplevel(1)
-
-            data.columns = [str(col).capitalize() for col in data.columns]
-            data.index = pd.to_datetime(data.index, utc=True)
-            self.logger.debug(f"Fetched {len(data)} yfinance rows for {yf_ticker}.")
-            return data
-
-        except Exception as e:
-            # This is broad, but yfinance can raise various errors.
-            # The YFInvalidPeriodError for TAO is one example.
-            self.logger.error(f"yfinance download failed for {yf_ticker} with period '{period_str}': {e}", exc_info=True)
-            return None
-
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
         """
         Generates rebalancing suggestions by fetching live portfolio data and passing
@@ -991,14 +932,14 @@ class CryptoPortfolioTracker:
             self.logger.error("Could not fetch live balances. Cannot rebalance.")
             return None
 
-        prices = self._get_current_prices(list(live_balances_df['symbol'].unique()))
-        live_balances_df['value_usd'] = live_balances_df['symbol'].map(prices).fillna(0.0) * live_balances_df['quantity']
+        prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
+        live_balances_df["value_usd"] = live_balances_df["symbol"].map(prices).fillna(0.0) * live_balances_df["quantity"]
 
         # Get the list of coins we actually want to rebalance from the config
         target_symbols = list(self.config.get("target_allocation", {}).keys())
 
         # Filter the DataFrame to create a "core" portfolio
-        core_portfolio_df = live_balances_df[live_balances_df['symbol'].isin(target_symbols)].copy()
+        core_portfolio_df = live_balances_df[live_balances_df["symbol"].isin(target_symbols)].copy()
 
         if core_portfolio_df.empty:
             self.logger.warning("No assets from target_allocation found in live balances. Cannot generate rebalancing suggestions.")
@@ -1054,14 +995,14 @@ class CryptoPortfolioTracker:
             elif choice == 4: break
 
             if timeframe:
-                print(f"\n🔄 Generating {timeframe.replace('_', ' ')} trend report...")
+                print(f"\n🔄 Generating {timeframe.replace("_", " ")} trend report...")
                 try:
                     report = await analyzer.generate_report(timeframe)
 
                     if report:
                         self.print_trend_report(report)
                         export_choice = input("\nDo you want to export this report? (y/n): ").lower()
-                        if export_choice == 'y':
+                        if export_choice == "y":
                             self.export_trend_report(report, timeframe)
                     else:
                         print(f"❌ Could not generate the {timeframe} trend report. See logs for details.")
@@ -1073,12 +1014,15 @@ class CryptoPortfolioTracker:
                 input("\n✅ Press Enter to continue...")
 
     async def sync_data(self):
-        """Orchestrates the Gather, Enrich, and Process pipeline with improved logging."""
+        """
+        Orchestrates the Gather, Enrich, and Process pipeline, now intelligently
+        skipping unsupported data sources when in Testnet mode.
+        """
         self.logger.info("Starting data synchronization pipeline...")
         lookback_config = self.config.get("history_lookback_days", {})
 
-        # Define all simple data sources and their configurations
-        data_sources = {
+        # Define all possible data sources for production mode
+        all_data_sources = {
             "Binance Trade": {"fetcher": self.fetcher.fetch_binance_transactions, "days": lookback_config.get("trades", 90)},
             "Binance Deposit": {"fetcher": self.fetcher.fetch_deposit_history, "days": lookback_config.get("deposits", 90)},
             "Binance Withdrawal": {"fetcher": self.fetcher.fetch_withdrawal_history, "days": lookback_config.get("withdrawals", 90)},
@@ -1090,8 +1034,23 @@ class CryptoPortfolioTracker:
             "Binance Simple Earn Redemption": {"fetcher": self.fetcher.fetch_simple_earn_redemptions, "days": lookback_config.get("simple_earn_redemptions", 90)},
         }
 
+        data_sources_to_fetch = {}
+        fetch_staking = False
+
+        if self.config_manager.is_testnet_mode:
+            # In testnet, only fetch spot trade history
+            self.logger.warning("TESTNET MODE: Syncing SPOT TRADE history only.")
+            data_sources_to_fetch = {
+                "Binance Trade": all_data_sources["Binance Trade"]
+            }
+            fetch_staking = False
+        else:
+            # In production, fetch everything
+            data_sources_to_fetch = all_data_sources
+            fetch_staking = True
+
         fetcher_tasks = []
-        for source, config in data_sources.items():
+        for source, config in data_sources_to_fetch.items():
             latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source)
             if latest_known_ts:
                 self.logger.info(f"History found for '{source}'. Initiating selective sync from {latest_known_ts.strftime('%Y-%m-%d %H:%M')}.")
@@ -1102,16 +1061,21 @@ class CryptoPortfolioTracker:
                 asyncio.to_thread(config["fetcher"], days_back=config['days'], latest_known_ts=latest_known_ts)
             )
 
-        # Special handling for Staking History, which needs a map of timestamps
-        staking_ts_map = {
-            "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source("Binance Staking Subscription"),
-            "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source("Binance Staking Redemption"),
-            "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source("Binance Staking Interest"),
-        }
-        self.logger.info("Checking for Staking history (Subscriptions, Redemptions, Interest)...")
-        fetcher_tasks.append(
-            asyncio.to_thread(self.fetcher.fetch_staking_history, days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
-        )
+        # Only check for staking history if not in testnet mode
+        if fetch_staking:
+            staking_ts_map = {
+                "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source("Binance Staking Subscription"),
+                "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source("Binance Staking Redemption"),
+                "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source("Binance Staking Interest"),
+            }
+            self.logger.info("Checking for Staking history (Subscriptions, Redemptions, Interest)...")
+            fetcher_tasks.append(
+                asyncio.to_thread(self.fetcher.fetch_staking_history, days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
+            )
+
+        if not fetcher_tasks:
+            self.logger.info("No data sources to sync in the current mode.")
+            return
 
         # 1. GATHER
         self.logger.info(f"Launching {len(fetcher_tasks)} data fetching tasks concurrently...")
@@ -1164,9 +1128,9 @@ class CryptoPortfolioTracker:
             while True:
                 period_str = input("Enter backtest period (e.g., 2y, 3y, 5y - default: 3y): ").strip().lower()
                 if not period_str:
-                    period = '3y'  # Default value
+                    period = "3y"  # Default value
                     break
-                # Regex to validate format like '1d', '6m', '5y'
+                # Regex to validate format like "1d", "6m", "5y"
                 if re.match(r"^\d+[dmy]$", period_str):
                     period = period_str
                     break
@@ -1212,7 +1176,7 @@ class CryptoPortfolioTracker:
         is_quote_qty = "USDT" in amount_str_input
         try:
             # Extract numbers from the string
-            numeric_part = re.search(r'[\d\.]+', amount_str_input).group(0)
+            numeric_part = re.search(r"[\d\.]+", amount_str_input).group(0)
             amount = float(numeric_part)
         except (AttributeError, ValueError):
             print("❌ Invalid amount format. Could not parse number.")
@@ -1231,7 +1195,7 @@ class CryptoPortfolioTracker:
 
         confirm = input("Type 'EXECUTE' to confirm: ").strip()
 
-        if confirm == 'EXECUTE':
+        if confirm == "EXECUTE":
             await self._execute_manual_trade(trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live)
         else:
             print("🛑 Trade cancelled by user.")
@@ -1257,13 +1221,13 @@ class CryptoPortfolioTracker:
         total_usdt_balance = 0
         try:
             # Fetch Spot Balance
-            spot_balance = float(self.binance_client.get_asset_balance(asset='USDT').get('free', 0.0))
+            spot_balance = float(self.binance_client.get_asset_balance(asset="USDT").get("free", 0.0))
             total_usdt_balance += spot_balance
 
             # Fetch Earn Balance (if not in testnet mode)
             if not self.config_manager.is_testnet_mode:
-                earn_positions = self.fetcher.fetch_simple_earn_balances(pd.DataFrame([{'symbol': 'USDT'}]))
-                earn_balance = earn_positions.get('USDT', 0.0)
+                earn_positions = self.fetcher.fetch_simple_earn_balances(pd.DataFrame([{"symbol": "USDT"}]))
+                earn_balance = earn_positions.get("USDT", 0.0)
                 total_usdt_balance += earn_balance
 
         except Exception as e:
@@ -1273,7 +1237,7 @@ class CryptoPortfolioTracker:
         self.print_rebalance_suggestions(suggestions_df, available_usdt=total_usdt_balance)
 
         # 4. Check for actionable signals before showing execution prompts
-        actionable_trades = suggestions_df[suggestions_df['Signal'].isin(['BUY', 'SELL'])]
+        actionable_trades = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])]
         if actionable_trades.empty:
             print("\n✅ Your portfolio is balanced. No rebalancing needed at this time.")
             return
@@ -1281,16 +1245,19 @@ class CryptoPortfolioTracker:
         # 4. Add interactive execution choice
         while True:
             action = input(
-                "Type 'EXECUTE ALL' or 'EXECUTE' for one-by-one confirmation: "
+                "Type EXECUTE ALL or EXECUTE for one-by-one confirmation: "
             ).upper().strip()
 
             if not action:
                 print("Returning to main menu...")
                 return
 
-            elif action in ['EXECUTE ALL', 'EXECUTE']:
+            elif action in ["EXECUTE ALL", "EXECUTE"]:
+                self.logger.info("Preparing for rebalance execution...")
+                self._sync_binance_client_time(self.binance_client, context="rebalancing")
+
                 # Determine mode and proceed to fetch balances and execute
-                interactive_mode = (action == 'EXECUTE')
+                interactive_mode = (action == "EXECUTE")
 
                 # Fetch Earn balances ONLY if not in testnet mode
                 earn_balances = {}
@@ -1306,7 +1273,7 @@ class CryptoPortfolioTracker:
                 return # Exit after execution attempt
 
             else:
-                print("Invalid command. Please choose from 'EXECUTE ALL', 'EXECUTE', or 'BACK'.")
+                print("Invalid command. Please choose from EXECUTE ALL, EXECUTE.")
 
     async def run_trading_strategy_backtest(self):
         """
@@ -1347,7 +1314,7 @@ class CryptoPortfolioTracker:
                     print(f"\nConfiguring strategy: {strategy_name}")
 
                     user_params = {}
-                    if hasattr(strategy_class, 'get_user_params'):
+                    if hasattr(strategy_class, "get_user_params"):
                          user_params = strategy_class.get_user_params()
 
                     strategy_to_run = strategy_class(analyzer=analyzer, **user_params)
@@ -1376,11 +1343,11 @@ class CryptoPortfolioTracker:
                     else: print("❌ Invalid selection.")
                 except (ValueError, IndexError): print("❌ Invalid input.")
 
-        if interval is None: interval = '1d'
+        if interval is None: interval = "1d"
         print(f"Using data interval: {interval}")
 
         # Select the coin to test
-        available_coins = self.config.get('trend_analyzer', {}).get('cryptocurrencies', [])
+        available_coins = self.config.get("trend_analyzer", {}).get("cryptocurrencies", [])
         if not available_coins:
             self.logger.info("Trend analyzer coin list is empty, automatically using coins from target_allocation.")
             target_coins = self.config.get("target_allocation", {}).keys()
@@ -1418,19 +1385,19 @@ class CryptoPortfolioTracker:
             initial_capital_str = input("Enter initial capital (default: 10000): ")
             initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
             period_str = input("Enter backtest period (e.g., '3y', '60d', default: '3y'): ")
-            period = period_str if period_str else '3y'
+            period = period_str if period_str else "3y"
 
-            if 'm' in interval and 'y' in period:
+            if "m" in interval and "y" in period:
                 print("⚠️ WARNING: yfinance limits minute data to the last 60 days.")
                 print(f"Adjusting backtest period from '{period}' to '60d'.")
-                period = '60d'
-            elif 'h' in interval and 'y' in period and int(period.replace('y','')) > 2:
+                period = "60d"
+            elif "h" in interval and "y" in period and int(period.replace("y", "")) > 2:
                  print("⚠️ WARNING: yfinance limits hourly data to the last 730 days (2 years).")
                  print(f"Adjusting backtest period from '{period}' to '729d'.")
-                 period = '729d'
+                 period = "729d"
 
         except ValueError:
-            print("❌ Invalid capital amount. Using default values."); initial_capital = 10000.0; period = '3y'
+            print("❌ Invalid capital amount. Using default values."); initial_capital = 10000.0; period = "3y"
 
         await backtester.run(strategy=strategy_to_run, symbol=symbol_to_test, initial_capital=initial_capital, period=period, interval=interval)
         backtester.generate_report()
@@ -1442,16 +1409,16 @@ class CryptoPortfolioTracker:
         print("\n--- 🤖 Live Trading Strategy Runner ---")
 
         # 1. Select Account
-        accounts = [{"name": "Main Account", "type": "main", **self.config.get("api_keys", {})}]
+        accounts = [{"name": "Main Account", "type": "main", **self.config.get("main_api_keys", {})}]
         sub_accounts = self.config.get("sub_accounts", [])
         for sub in sub_accounts:
             # Infer account type from name
-            if "swing" in sub['name'].lower():
-                sub['type'] = 'swing'
-            elif "day" in sub['name'].lower():
-                sub['type'] = 'day'
+            if "swing" in sub["name"].lower():
+                sub["type"] = "swing"
+            elif "day" in sub["name"].lower():
+                sub["type"] = "day"
             else:
-                sub['type'] = 'main' # Default if not specified
+                sub["type"] = "main" # Default if not specified
             accounts.append(sub)
 
 
@@ -1461,7 +1428,7 @@ class CryptoPortfolioTracker:
 
         print("\nSelect account to trade on:")
         for i, acc in enumerate(accounts):
-            print(f"  {i+1}. {acc['name']} (Type: {acc.get('type', 'N/A')})")
+            print(f"  {i+1}. {acc["name"]} (Type: {acc.get("type", "N/A")})")
 
         selected_account = None
         while selected_account is None:
@@ -1474,26 +1441,26 @@ class CryptoPortfolioTracker:
             except (ValueError, IndexError):
                 print("❌ Invalid input.")
 
-        print(f"\nTrading on account: {selected_account['name']}")
+        print(f"\nTrading on account: {selected_account["name"]}")
         live_client = self._init_binance_client(
-            api_key=selected_account.get('binance_key'),
-            api_secret=selected_account.get('binance_secret')
+            api_key=selected_account.get("binance_key"),
+            api_secret=selected_account.get("binance_secret")
         )
         if not live_client:
-            print(f"❌ Failed to initialize Binance client for account: {selected_account['name']}. Check API keys.")
+            print(f"❌ Failed to initialize Binance client for account: {selected_account["name"]}. Check API keys.")
             return
 
         # 2. Select and Configure Strategy based on account type
         all_strategies = {name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass) if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy}
 
-        account_type = selected_account.get('type')
+        account_type = selected_account.get("type")
         available_strategies = {}
-        if account_type == 'main':
+        if account_type == "main":
             available_strategies = all_strategies
-        elif account_type == 'swing':
-            available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ['swing', 'general']}
-        elif account_type == 'day':
-             available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ['day', 'general']}
+        elif account_type == "swing":
+            available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ["swing", "general"]}
+        elif account_type == "day":
+             available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ["day", "general"]}
 
         if not available_strategies:
             print(f"❌ No suitable strategies found for an account of type '{account_type}'.")
@@ -1514,7 +1481,7 @@ class CryptoPortfolioTracker:
                     strategy_name = strategy_list[choice]
                     strategy_class = available_strategies[strategy_name]
                     print(f"\nConfiguring strategy: {strategy_name}")
-                    if hasattr(strategy_class, 'get_user_params'):
+                    if hasattr(strategy_class, "get_user_params"):
                         user_params = strategy_class.get_user_params()
                 else:
                     print("❌ Invalid selection.")
@@ -1533,7 +1500,7 @@ class CryptoPortfolioTracker:
         for coin in target_coins:
             yf_ticker = f"{coin}-USD"
             analyzer.set_symbol(yf_ticker)
-            state_key = f"{selected_account['name']}_{strategy_name}_{coin}"
+            state_key = f"{selected_account["name"]}_{strategy_name}_{coin}"
             previous_state = self.strategy_states.get(state_key)
 
             strategy_instance = strategy_class(
@@ -1544,7 +1511,7 @@ class CryptoPortfolioTracker:
 
             interval = strategy_instance.valid_intervals[0]
             # Use a shorter period for live trading to be faster
-            period = '7d' if 'm' in interval or 'h' in interval else '1y'
+            period = "7d" if "m" in interval or "h" in interval else "1y"
             data = await analyzer.fetch_crypto_data_async(yf_ticker, period=period, interval=interval)
 
             if data is None or data.empty:
@@ -1581,12 +1548,12 @@ class CryptoPortfolioTracker:
 
         print("="*80)
         for trade in signals_to_execute:
-            print(f"-> {trade['Signal']} {trade['Symbol']} (Reason: {trade['Reason']})")
+            print(f"-> {trade["Signal"]} {trade["Symbol"]} (Reason: {trade["Reason"]})")
         print("="*80)
 
         try:
             confirm = input("Type 'EXECUTE' to proceed with the trades listed above: ")
-            if confirm != 'EXECUTE':
+            if confirm != "EXECUTE":
                 print("🛑 Trade execution cancelled by user.")
                 return
         except KeyboardInterrupt:
@@ -1597,6 +1564,28 @@ class CryptoPortfolioTracker:
         for trade in signals_to_execute:
             self._execute_directional_trade(trade, live_client)
 
+    def run_backup_and_restore_session(self):
+        """Orchestrates creating a backup or restoring from one."""
+        print("\n--- 🗄️ Database Backup & Restore ---")
+        print("1. Create a new database backup")
+        print("2. Restore from an existing backup")
+        print("Press Enter to return to the main menu.")
+
+        choice = input("Select an option: ").strip()
+
+        if choice == '1':
+            print("\n💾 Creating database backup...")
+            backup_path = self.db_manager.backup_database()
+            if backup_path:
+                print(f"✅ Backup successful.")
+            else:
+                print("❌ Backup failed. Please check the logs for details.")
+        elif choice == '2':
+            self._restore_database_interactive()
+        else:
+            print("Returning to main menu...")
+            return
+
     async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
         """
         Calculates key portfolio metrics using a consolidated view of holdings,
@@ -1606,58 +1595,58 @@ class CryptoPortfolioTracker:
         cost_basis_df = self.db_manager.get_holdings()
 
         # 1. Fetch balances and merge with cost basis and price data
-        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={'quantity': 'total_quantity_api'})
-        earn_balances_df = pd.DataFrame(columns=['symbol', 'earn_quantity'])
+        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={"quantity": "total_quantity_api"})
+        earn_balances_df = pd.DataFrame(columns=["symbol", "earn_quantity"])
         if not self.config_manager.is_testnet_mode:
             earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
             if earn_dict:
-                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=['symbol', 'earn_quantity'])
+                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=["symbol", "earn_quantity"])
 
-        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on='symbol', how='outer')
-        holdings_df['total_quantity_api'] = pd.to_numeric(holdings_df['total_quantity_api'], errors='coerce').fillna(0)
-        holdings_df['earn_quantity'] = pd.to_numeric(holdings_df['earn_quantity'], errors='coerce').fillna(0)
-        holdings_df['total_quantity'] = holdings_df[['total_quantity_api', 'earn_quantity']].max(axis=1)
-        holdings_df['spot_quantity'] = (holdings_df['total_quantity'] - holdings_df['earn_quantity']).clip(lower=0)
-        holdings_df = holdings_df[holdings_df['total_quantity'] > 1e-8].reset_index(drop=True)
+        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on="symbol", how="outer")
+        holdings_df["total_quantity_api"] = pd.to_numeric(holdings_df["total_quantity_api"], errors="coerce").fillna(0)
+        holdings_df["earn_quantity"] = pd.to_numeric(holdings_df["earn_quantity"], errors="coerce").fillna(0)
+        holdings_df["total_quantity"] = holdings_df[["total_quantity_api", "earn_quantity"]].max(axis=1)
+        holdings_df["spot_quantity"] = (holdings_df["total_quantity"] - holdings_df["earn_quantity"]).clip(lower=0)
+        holdings_df = holdings_df[holdings_df["total_quantity"] > 1e-8].reset_index(drop=True)
 
         if holdings_df.empty:
             return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
 
         if not cost_basis_df.empty:
-            holdings_df = pd.merge(holdings_df, cost_basis_df[['symbol', 'average_cost_basis']], on='symbol', how='left')
+            holdings_df = pd.merge(holdings_df, cost_basis_df[["symbol", "average_cost_basis"]], on="symbol", how="left")
         else:
-            holdings_df['average_cost_basis'] = 0.0
-        holdings_df['average_cost_basis'] = holdings_df['average_cost_basis'].fillna(0.0)
+            holdings_df["average_cost_basis"] = 0.0
+        holdings_df["average_cost_basis"] = holdings_df["average_cost_basis"].fillna(0.0)
 
-        prices = await self.enricher.get_current_prices(holdings_df['symbol'].tolist())
-        holdings_df['current_price'] = holdings_df['symbol'].map(prices).fillna(0.0)
+        prices = await self.enricher.get_current_prices(holdings_df["symbol"].tolist())
+        holdings_df["current_price"] = holdings_df["symbol"].map(prices).fillna(0.0)
 
         # 2. Calculate existing metrics
-        holdings_df['value_usd'] = holdings_df['total_quantity'] * holdings_df['current_price']
-        holdings_df['cost_basis_total'] = holdings_df['total_quantity'] * holdings_df['average_cost_basis']
-        holdings_df['unrealized_pl_usd'] = holdings_df['value_usd'] - holdings_df['cost_basis_total']
-        holdings_df.loc[holdings_df['cost_basis_total'] > 0, 'unrealized_pl_percent'] = (holdings_df['unrealized_pl_usd'] / holdings_df['cost_basis_total']) * 100
+        holdings_df["value_usd"] = holdings_df["total_quantity"] * holdings_df["current_price"]
+        holdings_df["cost_basis_total"] = holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
+        holdings_df["unrealized_pl_usd"] = holdings_df["value_usd"] - holdings_df["cost_basis_total"]
+        holdings_df.loc[holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"] = (holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]) * 100
 
-        total_value = holdings_df['value_usd'].sum()
+        total_value = holdings_df["value_usd"].sum()
         if total_value > 0:
-            holdings_df['allocation'] = holdings_df['value_usd'] / total_value
+            holdings_df["allocation"] = holdings_df["value_usd"] / total_value
         else:
-            holdings_df['allocation'] = 0
+            holdings_df["allocation"] = 0
 
         # 3. Separate Core vs. Other assets and calculate core-specific allocation
         target_symbols = list(self.config.get("target_allocation", {}).keys())
-        holdings_df['is_core'] = holdings_df['symbol'].isin(target_symbols)
+        holdings_df["is_core"] = holdings_df["symbol"].isin(target_symbols)
 
-        core_holdings_df = holdings_df[holdings_df['is_core']].copy()
-        other_holdings_df = holdings_df[~holdings_df['is_core']].copy()
+        core_holdings_df = holdings_df[holdings_df["is_core"]].copy()
+        other_holdings_df = holdings_df[~holdings_df["is_core"]].copy()
 
-        total_core_value = core_holdings_df['value_usd'].sum()
+        total_core_value = core_holdings_df["value_usd"].sum()
         if total_core_value > 0:
-            core_holdings_df['core_allocation'] = core_holdings_df['value_usd'] / total_core_value
+            core_holdings_df["core_allocation"] = core_holdings_df["value_usd"] / total_core_value
         else:
-            core_holdings_df['core_allocation'] = 0
+            core_holdings_df["core_allocation"] = 0
 
-        total_cost_basis = holdings_df['cost_basis_total'].sum()
+        total_cost_basis = holdings_df["cost_basis_total"].sum()
         total_pl_usd = total_value - total_cost_basis
         total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
         total_invested = self.db_manager.calculate_total_invested_capital()
@@ -1684,7 +1673,7 @@ class CryptoPortfolioTracker:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
         if not self.binance_client:
             self.logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
-            return pd.DataFrame(columns=['symbol', 'quantity'])
+            return pd.DataFrame(columns=["symbol", "quantity"])
 
         # --- Close stale connections before making a new request ---
         self.binance_client.session.close()
@@ -1698,35 +1687,35 @@ class CryptoPortfolioTracker:
                 self.logger.debug(f"Attempting to fetch Binance account info (Timeout: {api_timeout}s)...")
                 account_info = self.binance_client.get_account()
 
-                balances_raw = account_info.get('balances', [])
+                balances_raw = account_info.get("balances", [])
                 if not balances_raw:
                     self.logger.info("Fetched 0 balances from Binance Spot wallet.")
-                    return pd.DataFrame(columns=['symbol', 'quantity'])
+                    return pd.DataFrame(columns=["symbol", "quantity"])
 
                 processed_balances = []
                 for b in balances_raw:
-                    free = float(b.get('free', 0.0))
-                    locked = float(b.get('locked', 0.0))
+                    free = float(b.get("free", 0.0))
+                    locked = float(b.get("locked", 0.0))
                     quantity = free + locked
 
                     if quantity > 0.00000001:
                         # Get the raw symbol from the API
-                        asset_symbol_api = b.get('asset', '')
+                        asset_symbol_api = b.get("asset", "")
                         final_symbol = self.symbol_mappings.normalize_symbol(asset_symbol_api)
 
                         # Only append if the final symbol is valid (not empty)
                         if final_symbol:
-                            processed_balances.append({'symbol': final_symbol, 'quantity': quantity})
+                            processed_balances.append({"symbol": final_symbol, "quantity": quantity})
 
 
                 if not processed_balances:
                     self.logger.info("Found raw balances, but all were zero or negligible after processing.")
-                    return pd.DataFrame(columns=['symbol', 'quantity'])
+                    return pd.DataFrame(columns=["symbol", "quantity"])
 
                 df = pd.DataFrame(processed_balances)
-                df = df.groupby('symbol', as_index=False)['quantity'].sum()
+                df = df.groupby("symbol", as_index=False)["quantity"].sum()
 
-                self.logger.debug(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}")
+                self.logger.debug(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else "EMPTY DF"}")
                 self.logger.info(f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot.")
                 return df
 
@@ -1741,7 +1730,7 @@ class CryptoPortfolioTracker:
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching Spot balances: {e}", exc_info=True)
                 break
-        return pd.DataFrame(columns=['symbol', 'quantity'])
+        return pd.DataFrame(columns=["symbol", "quantity"])
 
     def update_holdings_from_transactions(self):
         """
@@ -1755,18 +1744,18 @@ class CryptoPortfolioTracker:
             return
 
         updated_holdings = []
-        for symbol, group_df in all_txs.groupby('symbol'):
+        for symbol, group_df in all_txs.groupby("symbol"):
             self.logger.debug(f"Calculating FIFO for {symbol}...")
 
             group_df_copy = group_df.copy()
-            group_df_copy['price_usd'] = pd.to_numeric(group_df_copy['price_usd'], errors='coerce').fillna(0.0)
-            group_df_copy['quantity'] = pd.to_numeric(group_df_copy['quantity'], errors='coerce').fillna(0.0)
-            group_df_copy['timestamp'] = pd.to_datetime(group_df_copy['timestamp'], errors='coerce')
-            group_df_copy.dropna(subset=['timestamp'], inplace=True)
+            group_df_copy["price_usd"] = pd.to_numeric(group_df_copy["price_usd"], errors="coerce").fillna(0.0)
+            group_df_copy["quantity"] = pd.to_numeric(group_df_copy["quantity"], errors="coerce").fillna(0.0)
+            group_df_copy["timestamp"] = pd.to_datetime(group_df_copy["timestamp"], errors="coerce")
+            group_df_copy.dropna(subset=["timestamp"], inplace=True)
 
             # 1. Isolate real trades for cost basis calculation
             cost_basis_tx_df = group_df_copy[
-                ~group_df_copy['source'].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
+                ~group_df_copy["source"].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
             ]
             self.logger.info(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
 
@@ -1777,7 +1766,7 @@ class CryptoPortfolioTracker:
             # 2. Calculate cost basis and the remaining quantity FROM THAT BASIS
             cost_basis_qty, avg_cost = calculate_fifo_cost_basis(cost_basis_tx_df)
 
-            # 3. If there's a valid average cost, save it.
+            # 3. If there"s a valid average cost, save it.
             # The quantity saved here is just a placeholder; the final report uses the live wallet balance.
             if avg_cost > 0:
                 self.logger.info(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
@@ -1798,7 +1787,7 @@ class CryptoPortfolioTracker:
 
     def create_portfolio_charts(self, metrics: Dict[str, Any]):
         """Generate portfolio charts."""
-        holdings_df = metrics.get('holdings_df'); target_alloc = self.config.get("target_allocation", {})
+        holdings_df = metrics.get("holdings_df"); target_alloc = self.config.get("target_allocation", {})
         if holdings_df is not None: self.visualizer.generate_all_charts(holdings_df, metrics, target_alloc, pd.DataFrame())
         else: self.logger.warning("No holdings data for chart generation.")
 
@@ -1810,12 +1799,12 @@ class CryptoPortfolioTracker:
         print("="*LINE_WIDTH)
 
         if "error" in metrics:
-            print(f"❌ Could not generate summary: {metrics['error']}")
+            print(f"❌ Could not generate summary: {metrics["error"]}")
             print("="*LINE_WIDTH)
             return
 
-        timestamp = metrics.get('timestamp', datetime.datetime.now())
-        print(f"Timestamp:                   {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+        timestamp = metrics.get("timestamp", datetime.datetime.now())
+        print(f"Timestamp:                   {timestamp.strftime("%Y-%m-%d %H:%M:%S")}")
         db_path = self.config.get("database", {}).get("path", "N/A")
         db_name = Path(db_path).name
         if self.config_manager.is_testnet_mode:
@@ -1826,9 +1815,9 @@ class CryptoPortfolioTracker:
         print("-" * LINE_WIDTH)
         print("PERFORMANCE VS. INVESTED CAPITAL:")
 
-        total_invested = metrics.get('total_invested_capital', 0)
-        overall_pl_usd = metrics.get('overall_pl_usd', 0)
-        overall_pl_pct = metrics.get('overall_pl_percent', 0)
+        total_invested = metrics.get("total_invested_capital", 0)
+        overall_pl_usd = metrics.get("overall_pl_usd", 0)
+        overall_pl_pct = metrics.get("overall_pl_percent", 0)
         color_overall = "\033[92m" if overall_pl_usd >= 0 else "\033[91m"
         color_end = "\033[0m"
 
@@ -1837,56 +1826,63 @@ class CryptoPortfolioTracker:
         print("-" * LINE_WIDTH)
 
         print("PERFORMANCE VS. ROLLING COST BASIS:")
-        print(f"Total Portfolio Value:       ${metrics.get('total_value_usd', 0):,.2f}")
-        print(f"Total Cost Basis (FIFO):     ${metrics.get('total_cost_basis_usd', 0):,.2f}")
+        print(f"Total Portfolio Value:       ${metrics.get("total_value_usd", 0):,.2f}")
+        print(f"Total Cost Basis (FIFO):     ${metrics.get("total_cost_basis_usd", 0):,.2f}")
 
-        pl_usd = metrics.get('unrealized_pl_usd', 0)
-        pl_pct = metrics.get('unrealized_pl_percent', 0)
+        pl_usd = metrics.get("unrealized_pl_usd", 0)
+        pl_pct = metrics.get("unrealized_pl_percent", 0)
         color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
 
         print(f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
 
         # Print Core Holdings Table
-        core_holdings_df = metrics.get('core_holdings_df')
+        core_holdings_df = metrics.get("core_holdings_df")
         if core_holdings_df is not None and not core_holdings_df.empty:
             print("\n" + "--- 🎯 Core Portfolio Holdings (Used for Rebalancing) ---".center(LINE_WIDTH))
-            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Core Alloc.':<15} {'Total Alloc.':<10}"
+            # Increased "Asset" width from 8 to 11, decreased "Total Qty" from 18 to 15
+            header = f"{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Core Alloc.":<15} {"Total Alloc.":<10}"
             print(header)
             print("-" * LINE_WIDTH)
-            for _, row in core_holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
-                row_pl_usd = row.get('unrealized_pl_usd', 0)
+            for _, row in core_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
+                row_pl_usd = row.get("unrealized_pl_usd", 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
+
+                core_alloc_str = f"{row.get("core_allocation", 0) * 100:.2f}%"
+                total_alloc_str = f"{row.get("allocation", 0) * 100:.2f}%"
                 print(
-                    f"{row.get('symbol', 'N/A'):<8} "
-                    f"{row.get('total_quantity', 0):<18,.8g} "
-                    f"{row.get('spot_quantity', 0):<15,.8g} "
-                    f"{row.get('earn_quantity', 0):<15,.8g} "
-                    f"${row.get('value_usd', 0):<14,.2f} "
-                    f"${row.get('cost_basis_total', 0):<14,.2f} "
+                    f"{row.get("symbol", "N/A"):<11} "
+                    f"{row.get("total_quantity", 0):<15,.8g} "
+                    f"{row.get("spot_quantity", 0):<15,.8g} "
+                    f"{row.get("earn_quantity", 0):<15,.8g} "
+                    f"${row.get("value_usd", 0):<14,.2f} "
+                    f"${row.get("cost_basis_total", 0):<14,.2f} "
                     f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
-                    f"{row.get('core_allocation', 0) * 100:<14.2f}% "
-                    f"{row.get('allocation', 0) * 100:<9.2f}%"
+                    f"{core_alloc_str:<15} "
+                    f"{total_alloc_str:<10}"
                 )
 
         # Print Other Holdings Table
-        other_holdings_df = metrics.get('other_holdings_df')
+        other_holdings_df = metrics.get("other_holdings_df")
         if other_holdings_df is not None and not other_holdings_df.empty:
             print("\n" + "--- 📈 Other Holdings ---".center(LINE_WIDTH))
-            header = f"{'Asset':<8} {'Total Qty':<18} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Total Alloc.':<10}"
+            # Adjusted header and row formatting for consistency
+            header = f"{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Total Alloc.":<10}"
             print(header)
             print("-" * LINE_WIDTH)
-            for _, row in other_holdings_df.sort_values(by='value_usd', ascending=False).iterrows():
-                row_pl_usd = row.get('unrealized_pl_usd', 0)
+            for _, row in other_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
+                row_pl_usd = row.get("unrealized_pl_usd", 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
+
+                total_alloc_str = f"{row.get("allocation", 0) * 100:.2f}%"
                 print(
-                    f"{row.get('symbol', 'N/A'):<8} "
-                    f"{row.get('total_quantity', 0):<18,.8g} "
-                    f"{row.get('spot_quantity', 0):<15,.8g} "
-                    f"{row.get('earn_quantity', 0):<15,.8g} "
-                    f"${row.get('value_usd', 0):<14,.2f} "
-                    f"${row.get('cost_basis_total', 0):<14,.2f} "
+                    f"{row.get("symbol", "N/A"):<11} "
+                    f"{row.get("total_quantity", 0):<15,.8g} "
+                    f"{row.get("spot_quantity", 0):<15,.8g} "
+                    f"{row.get("earn_quantity", 0):<15,.8g} "
+                    f"${row.get("value_usd", 0):<14,.2f} "
+                    f"${row.get("cost_basis_total", 0):<14,.2f} "
                     f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
-                    f"{row.get('allocation', 0) * 100:<9.2f}%"
+                    f"{total_alloc_str:<10}"
                 )
         print("="*LINE_WIDTH)
 
@@ -1897,31 +1893,31 @@ class CryptoPortfolioTracker:
             return
 
         print("\n" + "="*80)
-        print(f"📈 TREND ANALYSIS REPORT ({report.get('timeframe', 'N/A').upper()})")
-        print(f"Timestamp: {report.get('timestamp')}")
+        print(f"📈 TREND ANALYSIS REPORT ({report.get("timeframe", "N/A").upper()})")
+        print(f"Timestamp: {report.get("timestamp")}")
         print("="*80)
 
-        summary = report.get('market_summary', {})
+        summary = report.get("market_summary", {})
         print("\n--- 🌍 Market Summary ---")
-        print(f"Coins Analyzed: {summary.get('total_coins', 'N/A')}")
-        print(f"Most Common Condition: {summary.get('most_common_condition', 'N/A')}")
-        print(f"Bullish Coins: {summary.get('bull_count', 0)} | Bearish Coins: {summary.get('bear_count', 0)}")
+        print(f"Coins Analyzed: {summary.get("total_coins", "N/A")}")
+        print(f"Most Common Condition: {summary.get("most_common_condition", "N/A")}")
+        print(f"Bullish Coins: {summary.get("bull_count", 0)} | Bearish Coins: {summary.get("bear_count", 0)}")
 
-        btc = report.get('benchmark_analysis', {})
+        btc = report.get("benchmark_analysis", {})
         if btc:
-            print(f"\n--- 🎯 Benchmark Analysis: {btc.get('symbol', 'N/A')} ---")
-            print(f"  Price: ${btc.get('current_price', 0):,.2f} ({btc.get('price_change_pct', 0):+.2f}%) | RSI: {btc.get('rsi', 0):.2f}")
-            print(f"  Support: ${btc.get('support_level', 0):,.2f} | Resistance: ${btc.get('resistance_level', 0):,.2f}")
-            print(f"  Active Conditions: {', '.join(btc.get('active_conditions', ['None']))}")
+            print(f"\n--- 🎯 Benchmark Analysis: {btc.get("symbol", "N/A")} ---")
+            print(f"  Price: ${btc.get("current_price", 0):,.2f} ({btc.get("price_change_pct", 0):+.2f}%) | RSI: {btc.get("rsi", 0):.2f}")
+            print(f"  Support: ${btc.get("support_level", 0):,.2f} | Resistance: ${btc.get("resistance_level", 0):,.2f}")
+            print(f"  Active Conditions: {", ".join(btc.get("active_conditions", ["None"]))}")
 
         print("\n--- 🪙 Coin-by-Coin Analysis ---")
-        for symbol, analysis in report.get('coin_analyses', {}).items():
-            if symbol == btc.get('symbol'): continue # Skip printing benchmark again
+        for symbol, analysis in report.get("coin_analyses", {}).items():
+            if symbol == btc.get("symbol"): continue # Skip printing benchmark again
 
             print(f"\n➡️ {symbol}")
-            print(f"  Price: ${analysis.get('current_price', 0):,.2f} ({analysis.get('price_change_pct', 0):+.2f}%) | RSI: {analysis.get('rsi', 0):.2f}")
-            print(f"  Support: ${analysis.get('support_level', 0):,.2f} | Resistance: ${analysis.get('resistance_level', 0):,.2f}")
-            print(f"  Active Conditions: {', '.join(analysis.get('active_conditions', ['None']))}")
+            print(f"  Price: ${analysis.get("current_price", 0):,.2f} ({analysis.get("price_change_pct", 0):+.2f}%) | RSI: {analysis.get("rsi", 0):.2f}")
+            print(f"  Support: ${analysis.get("support_level", 0):,.2f} | Resistance: ${analysis.get("resistance_level", 0):,.2f}")
+            print(f"  Active Conditions: {", ".join(analysis.get("active_conditions", ["None"]))}")
 
         print("\n" + "="*80)
 
@@ -1932,17 +1928,17 @@ class CryptoPortfolioTracker:
             return
 
         # Sort the DataFrame before printing for a logical display
-        signal_order = {'SELL': 0, 'BUY': 1, 'HOLD': 2}
-        suggestions_df['signal_order'] = suggestions_df['Signal'].map(signal_order)
-        suggestions_df = suggestions_df.sort_values(by=['signal_order', 'Drift (pts)'], ascending=[True, True])
-        suggestions_df = suggestions_df.drop(columns=['signal_order'])
+        signal_order = {"SELL": 0, "BUY": 1, "HOLD": 2}
+        suggestions_df["signal_order"] = suggestions_df["Signal"].map(signal_order)
+        suggestions_df = suggestions_df.sort_values(by=["signal_order", "Drift (pts)"], ascending=[True, True])
+        suggestions_df = suggestions_df.drop(columns=["signal_order"])
 
         print("\n" + "="*88)
         print("⚖️  REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)")
         print("="*88)
 
         # Calculate and display the total value of the core portfolio being rebalanced
-        total_core_value = suggestions_df['Current Value (USD)'].sum()
+        total_core_value = suggestions_df["Current Value (USD)"].sum()
         print("-" * 88)
         print(f"💰 Core Portfolio Value: ${total_core_value:,.2f}")
 
@@ -1952,26 +1948,26 @@ class CryptoPortfolioTracker:
             print("-" * 88)
 
         for _, row in suggestions_df.iterrows():
-            signal = row['Signal']
+            signal = row["Signal"]
             if signal == "SELL": color_code = "\033[91m"
             elif signal == "BUY": color_code = "\033[92m"
             else: color_code = "\033[93m"
             reset_code = "\033[0m"
 
-            signal_icon = {'SELL': '🔴', 'BUY': '🟢', 'HOLD': '🟡'}.get(signal, '⚪️')
+            signal_icon = {"SELL": "🔴", "BUY": "🟢", "HOLD": "🟡"}.get(signal, "⚪️")
 
-            print(f"{color_code}{signal_icon} {row['Symbol']:<7}| Signal: {signal:<4}{reset_code}")
-            print(f"   Allocation: {row['Current %']:.2f}% (Target: {row['Target %']:.1f}%) | Drift: {row['Drift (pts)']:.2f} pts | Value: ${row['Current Value (USD)']:,.2f}")
+            print(f"{color_code}{signal_icon} {row["Symbol"]:<7}| Signal: {signal:<4}{reset_code}")
+            print(f"   Allocation: {row["Current %"]:.2f}% (Target: {row["Target %"]:.1f}%) | Drift: {row["Drift (pts)"]:.2f} pts | Value: ${row["Current Value (USD)"]:,.2f}")
 
-            price_str = f"${row['TA_Price']:,.2f}".ljust(12)
-            support_str = f"${row.get('Support', 0.0):,.2f}"
-            resistance_str = f"${row.get('Resistance', 0.0):,.2f}"
+            price_str = f"${row["TA_Price"]:,.2f}".ljust(12)
+            support_str = f"${row.get("Support", 0.0):,.2f}"
+            resistance_str = f"${row.get("Resistance", 0.0):,.2f}"
 
             print(f"   Price: {price_str} | Support: {support_str} | Resistance: {resistance_str}")
 
-            print(f"   Long-Term Trend: {row['TA_Conditions']}")
+            print(f"   Long-Term Trend: {row["TA_Conditions"]}")
 
-            print(f"   Action: {row['Suggested Action Detail']}")
+            print(f"   Action: {row["Suggested Action Detail"]}")
 
             if row.name != suggestions_df.index[-1]:
                 print("-" * 54)
@@ -1981,14 +1977,14 @@ class CryptoPortfolioTracker:
         """Prints a security-redacted version of the current configuration."""
         print("\n" + "="*50 + "\n⚙️ Current Configuration\n" + "="*50)
 
-        # Use deepcopy to ensure we don't accidentally modify the live config object
+        # Use deepcopy to ensure we don"t accidentally modify the live config object
         safe_config = copy.deepcopy(self.config)
 
         # Redact main API keys
-        if "api_keys" in safe_config:
-            safe_config["api_keys"] = {k: '********' for k in safe_config["api_keys"]}
+        if "main_api_keys" in safe_config:
+            safe_config["main_api_keys"] = {k: "********" for k in safe_config["main_api_keys"]}
 
-        # --- FIX: Redact sub-account keys as well ---
+        # --- Redact sub-account keys as well ---
         if "sub_accounts" in safe_config:
             for account in safe_config["sub_accounts"]:
                 if "binance_key" in account:
@@ -1999,8 +1995,8 @@ class CryptoPortfolioTracker:
         print(json.dumps(safe_config, indent=2))
         print("="*50)
 
-    def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
-    def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get('holdings_df'))
+    def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get("holdings_df"))
+    def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get("holdings_df"))
     def export_csv_backup(self): self.csv_exporter.export(transactions_df=self.db_manager.get_all_transactions(), holdings_df=self.db_manager.get_holdings())
     def cleanup_old_data(self): self.db_manager.cleanup_old_data()
 
@@ -2011,7 +2007,7 @@ class CryptoPortfolioTracker:
             except Exception as e: print(f"❌ Binance Connection: FAILED ({e})")
         else: print("⚠️ Binance Connection: SKIPPED (Failed to Initialize Client/No API keys)")
 
-        test_id = 'BTC'
+        test_id = "BTC"
         prices = self._get_current_prices([test_id])
         price = prices.get(test_id)
 

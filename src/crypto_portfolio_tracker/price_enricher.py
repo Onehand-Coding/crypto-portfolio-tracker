@@ -3,7 +3,6 @@ import logging
 import datetime
 from typing import List, Dict, Any, Optional, Set, Tuple
 
-import pytz
 import httpx
 import pandas as pd
 import yfinance as yf
@@ -12,13 +11,12 @@ from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_t
 
 from .symbol_mapper import SymbolMapper
 
-logger = logging.getLogger(__name__)
-
 
 class PriceEnricher:
     """Takes raw transactions and enriches them with historical USD prices."""
 
     def __init__(self, symbol_mapper: SymbolMapper, config: Dict[str, Any], disk_cache: Cache):
+        self.logger = logging.getLogger(__name__)
         self.symbol_mappings = symbol_mapper
         self.config = config
         self.coingecko_config = config.get("apis", {}).get("coingecko", {})
@@ -32,10 +30,10 @@ class PriceEnricher:
 
         # --- Log whether we are using an API key ---
         if self.coingecko_config.get("api_key"):
-            logger.info("PriceEnricher initialized with a CoinGecko API Key.")
+            self.logger.info("PriceEnricher initialized with a CoinGecko API Key.")
         else:
-            logger.info("PriceEnricher initialized without a CoinGecko API Key (using public access).")
-        logger.info(f"Concurrency limit set to {self.coingecko_semaphore._value} for price fetching.")
+            self.logger.info("PriceEnricher initialized without a CoinGecko API Key (using public access).")
+        self.logger.info(f"Concurrency limit set to {self.coingecko_semaphore._value} for price fetching.")
 
     def _get_price_from_cache(self, symbol: str, date: datetime.datetime) -> float:
         if not symbol: return 0.0
@@ -99,7 +97,7 @@ class PriceEnricher:
                     rate = float(closest_price)
 
         except Exception as e:
-            logger.warning(f"Could not fetch yfinance rate for {ticker} on {date_str}: {e}")
+            self.logger.warning(f"Could not fetch yfinance rate for {ticker} on {date_str}: {e}")
 
         self.fiat_rate_cache[cache_key] = rate
         return rate or 0.0
@@ -129,16 +127,16 @@ class PriceEnricher:
                 data = response.json()
                 price = data.get("market_data", {}).get("current_price", {}).get("usd")
                 if price is not None:
-                    logger.info(f"API SUCCESS: Fetched price for {coin_id} on {date_str}: ${price}")
+                    self.logger.info(f"API SUCCESS: Fetched price for {coin_id} on {date_str}: ${price}")
                     self.disk_cache.set(cache_key, price)
                     self.price_cache[cache_key] = float(price)
                 else:
                     self.price_cache[cache_key] = None
             except httpx.HTTPStatusError as e:
-                logger.warning(f"API FAILED for {coin_id} on {date_str}: {e}")
+                self.logger.warning(f"API FAILED for {coin_id} on {date_str}: {e}")
                 self.price_cache[cache_key] = None
             except Exception as e:
-                logger.error(f"An unexpected error in _fetch_price_for_date for {coin_id}: {e}")
+                self.logger.error(f"An unexpected error in _fetch_price_for_date for {coin_id}: {e}")
                 self.price_cache[cache_key] = None
 
     @retry(
@@ -154,17 +152,17 @@ class PriceEnricher:
         if not price_requests:
             return
 
-        logger.info(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
+        self.logger.info(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
 
         # Only fetch what's missing.
         missing_requests = {(coin_id, date_str) for coin_id, date_str in price_requests
                             if self.price_cache.get(f"{coin_id}_{date_str}") is None and self.disk_cache.get(f"{coin_id}_{date_str}") is None}
 
         if not missing_requests:
-            logger.info("All requested prices were already in the cache. Nothing to fetch.")
+            self.logger.info("All requested prices were already in the cache. Nothing to fetch.")
             return
 
-        logger.info(f"Fetching {len(missing_requests)} missing prices...")
+        self.logger.info(f"Fetching {len(missing_requests)} missing prices...")
 
         async with httpx.AsyncClient() as client:
             tasks = [self._fetch_price_for_date(client, coin_id, date_str) for coin_id, date_str in missing_requests]
@@ -176,18 +174,18 @@ class PriceEnricher:
             cache_key = f"{coin_id}_{date_str}"
             if self.price_cache.get(cache_key) is None and self.disk_cache.get(cache_key) is None:
                 all_successful = False
-                logger.warning(f"Verification failed: Price for {coin_id} on {date_str} is still missing after batch.")
+                self.logger.warning(f"Verification failed: Price for {coin_id} on {date_str} is still missing after batch.")
                 break
 
         if not all_successful:
-            logger.error("One or more price fetches failed in the batch. Raising error to trigger retry.")
+            self.logger.error("One or more price fetches failed in the batch. Raising error to trigger retry.")
             raise httpx.HTTPStatusError(
                 "Batch fetch incomplete, triggering retry.",
                 request=None,
                 response=httpx.Response(status_code=429)
             )
 
-        logger.info("Batch price fetch complete and all prices verified.")
+        self.logger.info("Batch price fetch complete and all prices verified.")
 
     @retry(
         retry=retry_if_exception_type(httpx.HTTPStatusError),
@@ -226,10 +224,10 @@ class PriceEnricher:
                 return prices
 
             except httpx.HTTPStatusError as e:
-                logger.warning(f"Rate limited fetching current prices: {e}. Retrying...")
+                self.logger.warning(f"Rate limited fetching current prices: {e}. Retrying...")
                 raise
             except Exception as e:
-                logger.error(f"An unexpected error occurred while fetching current prices: {e}")
+                self.logger.error(f"An unexpected error occurred while fetching current prices: {e}")
                 return prices
         return prices
 
@@ -307,5 +305,5 @@ class PriceEnricher:
                 price_usd = (raw['fiat_amount'] * fiat_rate) / raw['quantity'] if raw['quantity'] > 0 else 0
                 enriched_txs.append({'symbol': raw['asset'], 'timestamp': ts, 'type': 'BUY', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': f"P2P Buy: {raw['fiat_amount']} {raw['fiat_currency']}"})
 
-        logger.info(f"Enrichment complete. Returning {len(enriched_txs)} final transactions.")
+        self.logger.info(f"Enrichment complete. Returning {len(enriched_txs)} final transactions.")
         return enriched_txs

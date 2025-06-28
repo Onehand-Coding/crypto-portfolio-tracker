@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
-import requests
 
 from . symbol_mapper import SymbolMapper
 
@@ -75,6 +74,17 @@ class BinanceFetcher:
             self.logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
             return pd.DataFrame(columns=['symbol', 'quantity'])
 
+        # Re-synchronize time with the server before every balance fetch to prevent recvWindow errors.
+        try:
+            self.logger.info("Re-synchronizing time with Binance server for fresh data...")
+            server_time = self.binance_client.get_server_time()['serverTime']
+            local_time = int(time.time() * 1000)
+            time_offset = server_time - local_time
+            self.binance_client._server_time_offset = time_offset
+            self.logger.info(f"Time re-synchronized for balance fetch. Offset: {time_offset}ms.")
+        except Exception as e:
+            self.logger.error(f"Could not re-sync time for balance fetch: {e}. Proceeding with old offset.")
+
         self.logger.info("Fetching current spot wallet balances...")
         try:
             account_info = self.binance_client.get_account()
@@ -85,6 +95,12 @@ class BinanceFetcher:
                 quantity = float(b.get('free', 0.0)) + float(b.get('locked', 0.0))
                 if quantity > 1e-8:
                     final_symbol = self.symbol_mappings.normalize_symbol(b.get('asset', ''))
+
+                    # Skip known fiat currencies to prevent unnecessary discovery attempts
+                    if final_symbol in ['EUR', 'JPY', 'BRL', 'ARS', 'CZK', 'MXN', 'UAH', 'ZAR', 'TRY']:
+                        self.logger.debug(f"Skipping known fiat currency: {final_symbol}")
+                        continue
+
                     if final_symbol:
                         processed_balances.append({'symbol': final_symbol, 'quantity': quantity})
 
@@ -203,7 +219,7 @@ class BinanceFetcher:
                 current_page += 1
                 time.sleep(0.5)
             except Exception as e:
-                logger.error(f"Error fetching P2P history: {e}")
+                self.logger.error(f"Error fetching P2P history: {e}")
                 break
 
         # Step 2: De-duplicate the COMPLETED trades by orderNumber to be 100% safe.

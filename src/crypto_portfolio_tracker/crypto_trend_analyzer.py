@@ -108,7 +108,7 @@ class CryptoTrendAnalyzer:
                     "2h": Client.KLINE_INTERVAL_2HOUR, "4h": Client.KLINE_INTERVAL_4HOUR,
                     "6h": Client.KLINE_INTERVAL_6HOUR, "8h": Client.KLINE_INTERVAL_8HOUR,
                     "12h": Client.KLINE_INTERVAL_12HOUR, "1d": Client.KLINE_INTERVAL_1DAY,
-                    "3d": Client.KLINE_INTERVAL_3DAY, "1w": Client.KLINE_INTERVAL_1WEEK,
+                    "3d": Client.KLINE_INTERVAL_3DAY, "1wk": Client.KLINE_INTERVAL_1WEEK,
                     "1mo": Client.KLINE_INTERVAL_1MONTH,
                 }
                 binance_interval = interval_map.get(interval)

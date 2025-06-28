@@ -1,4 +1,3 @@
-
 import shutil
 import sqlite3
 import logging
@@ -18,6 +17,10 @@ class DatabaseManager:
         self.db_path = Path(config.get("database", {}).get("path", "data/portfolio.db"))
         self.db_config = config.get("database", {}) # Store the 'database' sub-dictionary
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # --- Create a dedicated directory for backups ---
+        self.backup_dir = self.db_path.parent / "db_backups"
+        self.backup_dir.mkdir(exist_ok=True)
         self.connection_timeout = self.db_config.get("connection_timeout", 30)
 
         # Define table names as instance attributes
@@ -419,3 +422,52 @@ class DatabaseManager:
             self.logger.error(f"Error calculating net invested capital: {e}", exc_info=True)
             return 0.0
 
+
+
+    def backup_database(self) -> Optional[str]:
+        """
+        Creates a timestamped backup of the current database file in the backup directory.
+        Returns the path of the backup file on success, None on failure.
+        """
+        if not self.db_path.exists():
+            self.logger.error(f"Database file not found at {self.db_path}. Cannot create backup.")
+            return None
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"{self.db_path.name}.{timestamp}.bak"
+            backup_filepath = self.backup_dir / backup_filename
+            shutil.copy2(self.db_path, backup_filepath)
+            self.logger.info(f"Successfully created database backup: {backup_filepath}")
+            return str(backup_filepath)
+        except Exception as e:
+            self.logger.error(f"Failed to create database backup: {e}", exc_info=True)
+            return None
+
+    def list_backups(self) -> List[Path]:
+        """
+        Lists available database backups, sorted from newest to oldest.
+        """
+        try:
+            backup_files = list(self.backup_dir.glob("*.bak"))
+            # Sort by modification time, newest first
+            if backup_files:
+                backup_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            return backup_files
+        except Exception as e:
+            self.logger.error(f"Failed to list database backups: {e}")
+            return []
+
+    def restore_from_backup(self, backup_path: Path) -> bool:
+        """
+        Restores the database from a selected backup file. This is a destructive operation.
+        """
+        if not backup_path.exists():
+            self.logger.error(f"Backup file not found: {backup_path}")
+            return False
+        try:
+            shutil.copy2(backup_path, self.db_path)
+            self.logger.info(f"Successfully restored database from: {backup_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to restore database from backup: {e}", exc_info=True)
+            return False

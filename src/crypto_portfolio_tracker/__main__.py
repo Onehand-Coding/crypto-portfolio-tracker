@@ -81,13 +81,14 @@ def print_main_menu():
     print("7. 💰 Live Trading (Directional Strategy)")
     print("8. 🧪 Run Strategy Backtest")
     print("9. ⚖️  Run Rebalancing Backtest")
-    print("10. 📋 Export Reports Only")
-    print("11. 📈 Generate Charts Only")
-    print("12. 💾 Export Data Backup")
-    print("13. 🧹 Clean Old Data")
-    print("14. ⚙️  View Configuration")
-    print("15. 🔧 Test API Connections")
-    print("16. ❌ Exit")
+    print("10. 📋 Export Reports")
+    print("11. 📈 Generate Charts")
+    print("12. 💾 Export Data Backup (CSV)")
+    print("13. 🗄️  Backup / Restore Database")
+    print("14. 🧹 Clean Old Data")
+    print("15. ⚙️  View Configuration")
+    print("16. 🔧 Test API Connections")
+    print("17. ❌ Exit")
     print("="*50)
 
 
@@ -97,7 +98,7 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
     while True:
         print_main_menu()
         try:
-            choice_str = await loop.run_in_executor(None, input, "Select option (1-16): ")
+            choice_str = await loop.run_in_executor(None, input, "Select option (1-17): ")
             choice = int(choice_str) if choice_str.isdigit() else -1
 
             match choice:
@@ -139,13 +140,15 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
                     print("\n💾 Exporting data backup...")
                     tracker.export_csv_backup()
                 case 13:
+                    tracker.run_backup_and_restore_session()
+                case 14:
                     print("\n🧹 Cleaning old data...")
                     tracker.cleanup_old_data()
-                case 14:
-                    tracker.print_configuration()
                 case 15:
-                    tracker.test_connections()
+                    tracker.print_configuration()
                 case 16:
+                    tracker.test_connections()
+                case 17:
                     print("👋 Exiting. Goodbye!")
                     break
                 case _:
