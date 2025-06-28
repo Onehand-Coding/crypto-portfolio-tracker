@@ -956,6 +956,89 @@ class CryptoPortfolioTracker:
 
         return suggestions_df
 
+    async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
+        """
+        Calculates key portfolio metrics using a consolidated view of holdings,
+        correctly handling the relationship between Spot and Earn balances.
+        """
+        self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
+        cost_basis_df = self.db_manager.get_holdings()
+
+        # 1. Fetch balances and merge with cost basis and price data
+        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={"quantity": "total_quantity_api"})
+        earn_balances_df = pd.DataFrame(columns=["symbol", "earn_quantity"])
+        if not self.config_manager.is_testnet_mode:
+            earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
+            if earn_dict:
+                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=["symbol", "earn_quantity"])
+
+        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on="symbol", how="outer")
+        holdings_df["total_quantity_api"] = pd.to_numeric(holdings_df["total_quantity_api"], errors="coerce").fillna(0)
+        holdings_df["earn_quantity"] = pd.to_numeric(holdings_df["earn_quantity"], errors="coerce").fillna(0)
+        holdings_df["total_quantity"] = holdings_df[["total_quantity_api", "earn_quantity"]].max(axis=1)
+        holdings_df["spot_quantity"] = (holdings_df["total_quantity"] - holdings_df["earn_quantity"]).clip(lower=0)
+        holdings_df = holdings_df[holdings_df["total_quantity"] > 1e-8].reset_index(drop=True)
+
+        if holdings_df.empty:
+            return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
+
+        if not cost_basis_df.empty:
+            holdings_df = pd.merge(holdings_df, cost_basis_df[["symbol", "average_cost_basis"]], on="symbol", how="left")
+        else:
+            holdings_df["average_cost_basis"] = 0.0
+        holdings_df["average_cost_basis"] = holdings_df["average_cost_basis"].fillna(0.0)
+
+        prices = await self.enricher.get_current_prices(holdings_df["symbol"].tolist())
+        holdings_df["current_price"] = holdings_df["symbol"].map(prices).fillna(0.0)
+
+        # 2. Calculate existing metrics
+        holdings_df["value_usd"] = holdings_df["total_quantity"] * holdings_df["current_price"]
+        holdings_df["cost_basis_total"] = holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
+        holdings_df["unrealized_pl_usd"] = holdings_df["value_usd"] - holdings_df["cost_basis_total"]
+        holdings_df.loc[holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"] = (holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]) * 100
+
+        total_value = holdings_df["value_usd"].sum()
+        if total_value > 0:
+            holdings_df["allocation"] = holdings_df["value_usd"] / total_value
+        else:
+            holdings_df["allocation"] = 0
+
+        # 3. Separate Core vs. Other assets and calculate core-specific allocation
+        target_symbols = list(self.config.get("target_allocation", {}).keys())
+        holdings_df["is_core"] = holdings_df["symbol"].isin(target_symbols)
+
+        core_holdings_df = holdings_df[holdings_df["is_core"]].copy()
+        other_holdings_df = holdings_df[~holdings_df["is_core"]].copy()
+
+        total_core_value = core_holdings_df["value_usd"].sum()
+        if total_core_value > 0:
+            core_holdings_df["core_allocation"] = core_holdings_df["value_usd"] / total_core_value
+        else:
+            core_holdings_df["core_allocation"] = 0
+
+        total_cost_basis = holdings_df["cost_basis_total"].sum()
+        total_pl_usd = total_value - total_cost_basis
+        total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
+        total_invested = self.db_manager.calculate_total_invested_capital()
+        overall_pl_usd = total_value - total_invested
+        overall_pl_percent = (overall_pl_usd / total_invested * 100) if total_invested > 0 else 0.0
+
+        metrics = {
+            "total_value_usd": total_value,
+            "total_cost_basis_usd": total_cost_basis,
+            "unrealized_pl_usd": total_pl_usd,
+            "unrealized_pl_percent": total_pl_percent,
+            "total_invested_capital": total_invested,
+            "overall_pl_usd": overall_pl_usd,
+            "overall_pl_percent": overall_pl_percent,
+            "holdings_df": holdings_df,
+            "core_holdings_df": core_holdings_df,
+            "other_holdings_df": other_holdings_df,
+            "timestamp": datetime.datetime.now()
+        }
+        self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
+        return metrics
+
     async def view_trends(self):
         """
         Provides an interactive menu to view cryptocurrency trend analysis reports.
@@ -969,19 +1052,18 @@ class CryptoPortfolioTracker:
             return
 
         while True:
-            print("\n--- 📈 Crypto Trend Analysis ---")
+            print("\n--- 📈 Crypto Trend Analysis ---\n")
             print("Select the timeframe for the analysis:")
             print("1. Long-term (4 Years)")
             print("2. Swing (3 Months)")
             print("3. Day (1 Month)")
-            print("4. Back to Main Menu")
 
             try:
-                choice_str = input("Select option (1-4): ").strip()
+                choice_str = input("Select option (1-3): ").strip()
                 if not choice_str:
                     return
-                if not choice_str.isdigit() or int(choice_str) not in range(1, 5):
-                    print("❌ Invalid input. Please enter a number between 1 and 4.")
+                if not choice_str.isdigit() or int(choice_str) not in range(1, 4):
+                    print("❌ Invalid input. Please enter a number between 1 and 3.")
                     continue
                 choice = int(choice_str)
             except ValueError:
@@ -1432,7 +1514,7 @@ class CryptoPortfolioTracker:
 
         selected_account = None
         while selected_account is None:
-            choice_str = input(f"Select account (1-{len(accounts)}) or press Enter to return: ").strip()
+            choice_str = input(f"Select account (1-{len(accounts)}): ").strip()
             if not choice_str:
                 print("Returning to main menu...")
                 return
@@ -1480,7 +1562,7 @@ class CryptoPortfolioTracker:
         user_params = {}
         strategy_name = ""
         while strategy_class is None:
-            choice_str = input(f"Select strategy to run (1-{len(strategy_list)}) or press Enter to return: ").strip()
+            choice_str = input(f"Select strategy to run (1-{len(strategy_list)}): ").strip()
             if not choice_str:
                 print("Returning to main menu...")
                 return
@@ -1576,7 +1658,7 @@ class CryptoPortfolioTracker:
 
     def run_backup_and_restore_session(self):
         """Orchestrates creating a backup or restoring from one."""
-        print("\n--- 🗄️ Database Backup & Restore ---")
+        print("\n--- 🗄️ Database Backup & Restore ---\n")
         print("1. Create a new database backup")
         print("2. Restore from an existing backup")
         print("Press Enter to return to the main menu.")
@@ -1595,89 +1677,6 @@ class CryptoPortfolioTracker:
         else:
             print("Returning to main menu...")
             return
-
-    async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
-        """
-        Calculates key portfolio metrics using a consolidated view of holdings,
-        correctly handling the relationship between Spot and Earn balances.
-        """
-        self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
-        cost_basis_df = self.db_manager.get_holdings()
-
-        # 1. Fetch balances and merge with cost basis and price data
-        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={"quantity": "total_quantity_api"})
-        earn_balances_df = pd.DataFrame(columns=["symbol", "earn_quantity"])
-        if not self.config_manager.is_testnet_mode:
-            earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
-            if earn_dict:
-                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=["symbol", "earn_quantity"])
-
-        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on="symbol", how="outer")
-        holdings_df["total_quantity_api"] = pd.to_numeric(holdings_df["total_quantity_api"], errors="coerce").fillna(0)
-        holdings_df["earn_quantity"] = pd.to_numeric(holdings_df["earn_quantity"], errors="coerce").fillna(0)
-        holdings_df["total_quantity"] = holdings_df[["total_quantity_api", "earn_quantity"]].max(axis=1)
-        holdings_df["spot_quantity"] = (holdings_df["total_quantity"] - holdings_df["earn_quantity"]).clip(lower=0)
-        holdings_df = holdings_df[holdings_df["total_quantity"] > 1e-8].reset_index(drop=True)
-
-        if holdings_df.empty:
-            return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
-
-        if not cost_basis_df.empty:
-            holdings_df = pd.merge(holdings_df, cost_basis_df[["symbol", "average_cost_basis"]], on="symbol", how="left")
-        else:
-            holdings_df["average_cost_basis"] = 0.0
-        holdings_df["average_cost_basis"] = holdings_df["average_cost_basis"].fillna(0.0)
-
-        prices = await self.enricher.get_current_prices(holdings_df["symbol"].tolist())
-        holdings_df["current_price"] = holdings_df["symbol"].map(prices).fillna(0.0)
-
-        # 2. Calculate existing metrics
-        holdings_df["value_usd"] = holdings_df["total_quantity"] * holdings_df["current_price"]
-        holdings_df["cost_basis_total"] = holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
-        holdings_df["unrealized_pl_usd"] = holdings_df["value_usd"] - holdings_df["cost_basis_total"]
-        holdings_df.loc[holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"] = (holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]) * 100
-
-        total_value = holdings_df["value_usd"].sum()
-        if total_value > 0:
-            holdings_df["allocation"] = holdings_df["value_usd"] / total_value
-        else:
-            holdings_df["allocation"] = 0
-
-        # 3. Separate Core vs. Other assets and calculate core-specific allocation
-        target_symbols = list(self.config.get("target_allocation", {}).keys())
-        holdings_df["is_core"] = holdings_df["symbol"].isin(target_symbols)
-
-        core_holdings_df = holdings_df[holdings_df["is_core"]].copy()
-        other_holdings_df = holdings_df[~holdings_df["is_core"]].copy()
-
-        total_core_value = core_holdings_df["value_usd"].sum()
-        if total_core_value > 0:
-            core_holdings_df["core_allocation"] = core_holdings_df["value_usd"] / total_core_value
-        else:
-            core_holdings_df["core_allocation"] = 0
-
-        total_cost_basis = holdings_df["cost_basis_total"].sum()
-        total_pl_usd = total_value - total_cost_basis
-        total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
-        total_invested = self.db_manager.calculate_total_invested_capital()
-        overall_pl_usd = total_value - total_invested
-        overall_pl_percent = (overall_pl_usd / total_invested * 100) if total_invested > 0 else 0.0
-
-        metrics = {
-            "total_value_usd": total_value,
-            "total_cost_basis_usd": total_cost_basis,
-            "unrealized_pl_usd": total_pl_usd,
-            "unrealized_pl_percent": total_pl_percent,
-            "total_invested_capital": total_invested,
-            "overall_pl_usd": overall_pl_usd,
-            "overall_pl_percent": overall_pl_percent,
-            "holdings_df": holdings_df,
-            "core_holdings_df": core_holdings_df,
-            "other_holdings_df": other_holdings_df,
-            "timestamp": datetime.datetime.now()
-        }
-        self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
-        return metrics
 
     def fetch_binance_balances(self) -> pd.DataFrame:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
