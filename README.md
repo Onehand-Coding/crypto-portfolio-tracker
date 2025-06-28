@@ -97,6 +97,7 @@ crypto-portfolio-tracker/
 ├── data/
 │   ├── portfolio.db               # SQLite database (production)
 │   ├── testnet_portfolio.db       # SQLite database (testnet)
+│   ├── db_backups/                # Timestamped database backups
 │   ├── cache/                     # API response cache
 │   │   ├── backtest_data/         # Cached backtesting data
 │   │   └── coingecko_historical/  # CoinGecko price cache
@@ -127,6 +128,7 @@ crypto-portfolio-tracker/
 ├── main.py                        # Developer convenience entry point
 ├── pyproject.toml                 # Project definition and dependencies
 ├── default_config.json.example    # Configuration template
+├── .env.example                   # Environment variable template
 └── README.md                      # This documentation
 ```
 
@@ -323,15 +325,16 @@ python main.py
 7. 💰 Live Trading (Directional Strategy)
 8. 🧪 Run Strategy Backtest
 9. ⚖️  Run Rebalancing Backtest
-10. 📋 Export Reports Only
-11. 📈 Generate Charts Only
-12. 💾 Export Data Backup
-13. 🧹 Clean Old Data
-14. ⚙️  View Configuration
-15. 🔧 Test API Connections
-16. ❌ Exit
+10. 📋 Export Reports
+11. 📈 Generate Charts
+12. 💾 Export Data Backup (CSV)
+13. 🗄️  Backup / Restore Database
+14. 🧹 Clean Old Data
+15. ⚙️  View Configuration
+16. 🔧 Test API Connections
+17. ❌ Exit
 ==================================================
-Select option (1-16):
+Select option (1-17):
 ```
 
 ### Command-Line Mode
@@ -564,10 +567,10 @@ uv run pytest tests/test_portfolio_tracker.py
 #### API Connection Failed
 ```bash
 # Test API connections through menu
-track-portfolio  # Choose option 15 (Test API Connections)
+track-portfolio  # Choose option 16 (Test API Connections)
 
 # Check configuration
-track-portfolio  # Choose option 14 (View Configuration)
+track-portfolio  # Choose option 15 (View Configuration)
 
 # Verify environment variables
 cat .env
