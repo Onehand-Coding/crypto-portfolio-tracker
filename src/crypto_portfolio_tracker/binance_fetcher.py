@@ -433,3 +433,28 @@ class BinanceFetcher:
             except Exception as e:
                 self.logger.error(f"Error fetching staking history for {txn_type}: {e}")
         return all_txs
+
+    def fetch_futures_balance(self) -> List[Dict[str, Any]]:
+        """Fetches futures account balance."""
+        self.logger.info("Fetching futures account balances...")
+        try:
+            futures_account = self.binance_client.futures_account_balance()
+            return futures_account
+        except BinanceAPIException as e:
+            self.logger.error(f"Error fetching futures account balance: {e}")
+            return []
+
+    def fetch_funding_balance(self) -> List[Dict[str, Any]]:
+        """Fetches funding wallet balance by calling the SAPI endpoint directly."""
+        self.logger.info("Fetching funding wallet balances...")
+        try:
+            funding_wallet = self.binance_client._request_margin_api(
+                'post', 'asset/get-funding-asset', signed=True, data={}
+            )
+            return funding_wallet
+        except BinanceAPIException as e:
+            self.logger.error(f"Binance API error fetching funding wallet: {e}")
+            return []
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred fetching funding wallet: {e}")
+            return []

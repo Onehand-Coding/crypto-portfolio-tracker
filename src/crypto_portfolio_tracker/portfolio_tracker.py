@@ -496,6 +496,38 @@ class CryptoPortfolioTracker:
             self.logger.error(f"Could not fetch symbol info for {symbol}: {e}")
             return None
 
+    def _print_wallet_summary(self, title: str, balances: List[Dict[str, Any]], balance_key: str, asset_key: str = 'asset'):
+        """
+        Helper function to print a formatted summary for a given wallet,
+        handling empty lists and lists with only zero balances gracefully.
+        """
+        LINE_WIDTH = 115
+        print("\n" + f"--- {title} ---".center(LINE_WIDTH))
+
+        # First, create a new list containing only assets with a non-zero balance.
+        # This handles both empty lists and lists with only zero-balance assets.
+        non_zero_balances = []
+        if balances: # Ensure balances is not None
+            for item in balances:
+                balance = float(item.get(balance_key, 0.0))
+                if balance > 1e-8:
+                    non_zero_balances.append(item)
+
+        # Now, check if our new list is empty.
+        if not non_zero_balances:
+            print("No balances found.".center(LINE_WIDTH))
+            return
+
+        # If we have non-zero balances, print the header and the rows.
+        header = f"{"Asset":<15} {"Balance":<20}"
+        print(header)
+        print("-" * len(header))
+
+        for item in non_zero_balances:
+            balance = float(item.get(balance_key, 0.0))
+            asset = item.get(asset_key, 'N/A')
+            print(f"{asset:<15} {balance:<20,.8g}")
+
     def _restore_database_interactive(self):
         """Handles the interactive process of restoring a database."""
         print("\n--- Restoring Database from Backup ---")
@@ -959,18 +991,18 @@ class CryptoPortfolioTracker:
     async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
         """
         Calculates key portfolio metrics using a consolidated view of holdings,
-        correctly handling the relationship between Spot and Earn balances.
+        correctly summing values from Spot, Earn, Futures, and Funding wallets.
         """
-        self.logger.info("Calculating consolidated portfolio metrics (Spot + Earn)...")
+        self.logger.info("Calculating consolidated portfolio metrics (Spot, Earn, Futures, Funding)...")
         cost_basis_df = self.db_manager.get_holdings()
 
-        # 1. Fetch balances and merge with cost basis and price data
+        # 1. Calculate Spot + Earn Value
         total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={"quantity": "total_quantity_api"})
         earn_balances_df = pd.DataFrame(columns=["symbol", "earn_quantity"])
         if not self.config_manager.is_testnet_mode:
             earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
             if earn_dict:
-                 earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=["symbol", "earn_quantity"])
+                    earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=["symbol", "earn_quantity"])
 
         holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on="symbol", how="outer")
         holdings_df["total_quantity_api"] = pd.to_numeric(holdings_df["total_quantity_api"], errors="coerce").fillna(0)
@@ -979,34 +1011,58 @@ class CryptoPortfolioTracker:
         holdings_df["spot_quantity"] = (holdings_df["total_quantity"] - holdings_df["earn_quantity"]).clip(lower=0)
         holdings_df = holdings_df[holdings_df["total_quantity"] > 1e-8].reset_index(drop=True)
 
-        if holdings_df.empty:
-            return {"total_value_usd": 0, "holdings_df": pd.DataFrame()}
+        spot_earn_value = 0
+        if not holdings_df.empty:
+            if not cost_basis_df.empty:
+                holdings_df = pd.merge(holdings_df, cost_basis_df[["symbol", "average_cost_basis"]], on="symbol", how="left")
+            else:
+                holdings_df["average_cost_basis"] = 0.0
+            holdings_df["average_cost_basis"] = holdings_df["average_cost_basis"].fillna(0.0)
 
-        if not cost_basis_df.empty:
-            holdings_df = pd.merge(holdings_df, cost_basis_df[["symbol", "average_cost_basis"]], on="symbol", how="left")
+            prices = await self.enricher.get_current_prices(holdings_df["symbol"].tolist())
+            holdings_df["current_price"] = holdings_df["symbol"].map(prices).fillna(0.0)
+            holdings_df["value_usd"] = holdings_df["total_quantity"] * holdings_df["current_price"]
+            holdings_df["cost_basis_total"] = holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
+            holdings_df["unrealized_pl_usd"] = holdings_df["value_usd"] - holdings_df["cost_basis_total"]
+            holdings_df.loc[holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"] = (holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]) * 100
+
+            spot_earn_value = holdings_df["value_usd"].sum()
+
         else:
-            holdings_df["average_cost_basis"] = 0.0
-        holdings_df["average_cost_basis"] = holdings_df["average_cost_basis"].fillna(0.0)
+            holdings_df = pd.DataFrame(columns=['symbol', 'total_quantity', 'spot_quantity', 'earn_quantity', 'value_usd', 'average_cost_basis', 'cost_basis_total'])
 
-        prices = await self.enricher.get_current_prices(holdings_df["symbol"].tolist())
-        holdings_df["current_price"] = holdings_df["symbol"].map(prices).fillna(0.0)
+        # 2. Calculate Futures Value
+        futures_value = 0
+        futures_balances = self.fetcher.fetch_futures_balance()
+        for item in futures_balances:
+            if item.get('asset') == 'USDT':
+                futures_value += float(item.get('balance', 0.0))
 
-        # 2. Calculate existing metrics
-        holdings_df["value_usd"] = holdings_df["total_quantity"] * holdings_df["current_price"]
-        holdings_df["cost_basis_total"] = holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
-        holdings_df["unrealized_pl_usd"] = holdings_df["value_usd"] - holdings_df["cost_basis_total"]
-        holdings_df.loc[holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"] = (holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]) * 100
+        # 3. Calculate Funding Wallet Value
+        funding_value = 0
+        funding_balances_raw = self.fetcher.fetch_funding_balance()
+        funding_balances = [b for b in funding_balances_raw if float(b.get('free', 0.0)) > 1e-8]
 
-        total_value = holdings_df["value_usd"].sum()
-        if total_value > 0:
-            holdings_df["allocation"] = holdings_df["value_usd"] / total_value
+        if funding_balances:
+            funding_assets = [b['asset'] for b in funding_balances]
+            funding_prices = await self.enricher.get_current_prices(funding_assets)
+            for item in funding_balances:
+                asset = item['asset']
+                price = funding_prices.get(asset, 0.0)
+                quantity = float(item.get('free', 0.0))
+                funding_value += quantity * price
+
+        # 4. Calculate Grand Total
+        total_portfolio_value = spot_earn_value + futures_value + funding_value
+
+        # 5. Consolidate Metrics
+        if total_portfolio_value > 0:
+            holdings_df["allocation"] = holdings_df["value_usd"] / total_portfolio_value
         else:
             holdings_df["allocation"] = 0
 
-        # 3. Separate Core vs. Other assets and calculate core-specific allocation
         target_symbols = list(self.config.get("target_allocation", {}).keys())
         holdings_df["is_core"] = holdings_df["symbol"].isin(target_symbols)
-
         core_holdings_df = holdings_df[holdings_df["is_core"]].copy()
         other_holdings_df = holdings_df[~holdings_df["is_core"]].copy()
 
@@ -1017,14 +1073,18 @@ class CryptoPortfolioTracker:
             core_holdings_df["core_allocation"] = 0
 
         total_cost_basis = holdings_df["cost_basis_total"].sum()
-        total_pl_usd = total_value - total_cost_basis
+        total_pl_usd = spot_earn_value - total_cost_basis
         total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
         total_invested = self.db_manager.calculate_total_invested_capital()
-        overall_pl_usd = total_value - total_invested
+
+        overall_pl_usd = total_portfolio_value - total_invested
         overall_pl_percent = (overall_pl_usd / total_invested * 100) if total_invested > 0 else 0.0
 
         metrics = {
-            "total_value_usd": total_value,
+            "total_value_usd": total_portfolio_value,
+            "spot_earn_value_usd": spot_earn_value,
+            "futures_value_usd": futures_value,
+            "funding_value_usd": funding_value,
             "total_cost_basis_usd": total_cost_basis,
             "unrealized_pl_usd": total_pl_usd,
             "unrealized_pl_percent": total_pl_percent,
@@ -1034,9 +1094,11 @@ class CryptoPortfolioTracker:
             "holdings_df": holdings_df,
             "core_holdings_df": core_holdings_df,
             "other_holdings_df": other_holdings_df,
+            "futures_balances": futures_balances,
+            "funding_balances": funding_balances,
             "timestamp": datetime.datetime.now()
         }
-        self.logger.info(f"Successfully calculated consolidated portfolio metrics.")
+        self.logger.info("Successfully calculated consolidated portfolio metrics.")
         return metrics
 
     async def view_trends(self):
@@ -1801,19 +1863,19 @@ class CryptoPortfolioTracker:
         else: self.logger.warning("No holdings data for chart generation.")
 
     def print_portfolio_summary(self, metrics: Dict[str, Any]):
-        """Prints a consolidated summary of the portfolio, including Spot and Earn balances."""
+        """Prints a consolidated summary of the portfolio, including a breakdown of all wallet values."""
         LINE_WIDTH = 115
         print("\n" + "="*LINE_WIDTH)
-        print("📊 CONSOLIDATED PORTFOLIO SUMMARY (Spot + Earn)")
+        print("📊 CONSOLIDATED PORTFOLIO SUMMARY")
         print("="*LINE_WIDTH)
 
         if "error" in metrics:
-            print(f"❌ Could not generate summary: {metrics["error"]}")
+            print(f"❌ Could not generate summary: {metrics['error']}")
             print("="*LINE_WIDTH)
             return
 
         timestamp = metrics.get("timestamp", datetime.datetime.now())
-        print(f"Timestamp:                   {timestamp.strftime("%Y-%m-%d %H:%M:%S")}")
+        print(f"Timestamp:                   {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         db_path = self.config.get("database", {}).get("path", "N/A")
         db_name = Path(db_path).name
         if self.config_manager.is_testnet_mode:
@@ -1821,6 +1883,15 @@ class CryptoPortfolioTracker:
         else:
             print(f"Database:                    {db_name}")
 
+        print("-" * LINE_WIDTH)
+        print(f"TOTAL PORTFOLIO VALUE:       ${metrics.get('total_value_usd', 0):,.2f}")
+        print("-" * LINE_WIDTH)
+
+        # --- Breakdown of Total Portfolio Value ---
+        print("Wallet Value Breakdown:")
+        print(f"  Spot & Earn Value:         ${metrics.get('spot_earn_value_usd', 0):,.2f}")
+        print(f"  Futures Wallet Value:      ${metrics.get('futures_value_usd', 0):,.2f}")
+        print(f"  Funding Wallet Value:      ${metrics.get('funding_value_usd', 0):,.2f}")
         print("-" * LINE_WIDTH)
 
         total_invested = metrics.get("total_invested_capital", 0)
@@ -1832,71 +1903,71 @@ class CryptoPortfolioTracker:
         print("Performance vs. Invested capital:")
         print(f"Total Invested Capital:      ${total_invested:,.2f}")
         print(f"Overall P/L:                 {color_overall}${overall_pl_usd:,.2f} ({overall_pl_pct:.2f}%){color_end}")
+
         print("-" * LINE_WIDTH)
 
-        print(f"TOTAL PORTFOLIO VALUE:       ${metrics.get("total_value_usd", 0):,.2f}")
-        print("-" * LINE_WIDTH)
-
-        print("Performance vs. Rolling cost basis:")
-        print(f"Total Cost Basis (FIFO):     ${metrics.get("total_cost_basis_usd", 0):,.2f}")
+        print("Performance vs. Rolling cost basis (Spot/Earn only):")
+        print(f"Total Cost Basis (FIFO):     ${metrics.get('total_cost_basis_usd', 0):,.2f}")
 
         pl_usd = metrics.get("unrealized_pl_usd", 0)
         pl_pct = metrics.get("unrealized_pl_percent", 0)
         color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
 
         print(f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
-        print("-" * LINE_WIDTH)
 
         # Print Core Holdings Table
         core_holdings_df = metrics.get("core_holdings_df")
         if core_holdings_df is not None and not core_holdings_df.empty:
             print("\n" + "--- 🎯 Core Portfolio Holdings (Used for Rebalancing) ---".center(LINE_WIDTH))
-            # Increased "Asset" width from 8 to 11, decreased "Total Qty" from 18 to 15
-            header = f"{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Core Alloc.":<15} {"Total Alloc.":<10}"
+            header = f'{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Core Alloc.":<15} {"Total Alloc.":<10}'
             print(header)
             print("-" * len(header))
             for _, row in core_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
                 row_pl_usd = row.get("unrealized_pl_usd", 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
-
-                core_alloc_str = f"{row.get("core_allocation", 0) * 100:.2f}%"
-                total_alloc_str = f"{row.get("allocation", 0) * 100:.2f}%"
+                core_alloc_str = f'{row.get("core_allocation", 0) * 100:.2f}%'
+                total_alloc_str = f'{row.get("allocation", 0) * 100:.2f}%'
                 print(
-                    f"{row.get("symbol", "N/A"):<11} "
-                    f"{row.get("total_quantity", 0):<15,.8g} "
-                    f"{row.get("spot_quantity", 0):<15,.8g} "
-                    f"{row.get("earn_quantity", 0):<15,.8g} "
-                    f"${row.get("value_usd", 0):<14,.2f} "
-                    f"${row.get("cost_basis_total", 0):<14,.2f} "
-                    f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
-                    f"{core_alloc_str:<15} "
-                    f"{total_alloc_str:<10}"
+                    f'{row.get("symbol", "N/A"):<11} '
+                    f'{row.get("total_quantity", 0):<15,.8g} '
+                    f'{row.get("spot_quantity", 0):<15,.8g} '
+                    f'{row.get("earn_quantity", 0):<15,.8g} '
+                    f'${row.get("value_usd", 0):<14,.2f} '
+                    f'${row.get("cost_basis_total", 0):<14,.2f} '
+                    f'{row_color_start}${row_pl_usd:<14,.2f}{color_end} '
+                    f'{core_alloc_str:<15} '
+                    f'{total_alloc_str:<10}'
                 )
 
         # Print Other Holdings Table
         other_holdings_df = metrics.get("other_holdings_df")
         if other_holdings_df is not None and not other_holdings_df.empty:
             print("\n" + "--- 📈 Other Holdings ---".center(LINE_WIDTH))
-            # Adjusted header and row formatting for consistency
-            header = f"{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Total Alloc.":<10}"
+            header = f'{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Total Alloc.":<10}'
             print(header)
             print("-" * len(header))
             for _, row in other_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
                 row_pl_usd = row.get("unrealized_pl_usd", 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
-
-                total_alloc_str = f"{row.get("allocation", 0) * 100:.2f}%"
+                total_alloc_str = f'{row.get("allocation", 0) * 100:.2f}%'
                 print(
-                    f"{row.get("symbol", "N/A"):<11} "
-                    f"{row.get("total_quantity", 0):<15,.8g} "
-                    f"{row.get("spot_quantity", 0):<15,.8g} "
-                    f"{row.get("earn_quantity", 0):<15,.8g} "
-                    f"${row.get("value_usd", 0):<14,.2f} "
-                    f"${row.get("cost_basis_total", 0):<14,.2f} "
-                    f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
-                    f"{total_alloc_str:<10}"
+                    f'{row.get("symbol", "N/A"):<11} '
+                    f'{row.get("total_quantity", 0):<15,.8g} '
+                    f'{row.get("spot_quantity", 0):<15,.8g} '
+                    f'{row.get("earn_quantity", 0):<15,.8g} '
+                    f'${row.get("value_usd", 0):<14,.2f} '
+                    f'${row.get("cost_basis_total", 0):<14,.2f} '
+                    f'{row_color_start}${row_pl_usd:<14,.2f}{color_end} '
+                    f'{total_alloc_str:<10}'
                 )
-        print("="*len(header))
+            print("="*len(header))
+
+        # --- Print Individual Wallet Summaries ---
+        futures_balances = metrics.get("futures_balances")
+        self._print_wallet_summary("Futures Wallet Summary", futures_balances, 'balance')
+
+        funding_balances = metrics.get("funding_balances")
+        self._print_wallet_summary("Funding Wallet Summary", funding_balances, 'free')
 
     def print_trend_report(self, report: Dict[str, Any]):
         """Prints a formatted trend analysis report to the console."""
