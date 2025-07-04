@@ -26,7 +26,7 @@ class BinanceFetcher:
         self.target_assets_for_sync.add("USDT")
         self.logger.info("BinanceFetcher initialized.")
 
-    def _get_start_end_timestamps(self, days_back: int, latest_known_ts: Optional[datetime.datetime]) -> Optional[tuple[int, int]]:
+    def _get_start_end_timestamps(self, source_name: str, days_back: int, latest_known_ts: Optional[datetime.datetime]) -> Optional[tuple[int, int]]:
         """Helper to calculate the start and end timestamps for an API call."""
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         end_ts = int(now_utc.timestamp() * 1000)
@@ -40,11 +40,11 @@ class BinanceFetcher:
             start_dt = now_utc - datetime.timedelta(days=days_back)
 
         if start_dt >= now_utc:
-            self.logger.debug(f"History for this source is up-to-date (last known: {latest_known_ts}). Skipping fetch.")
+            self.logger.debug(f"[{source_name}] History is up-to-date. Skipping fetch.")
             return None
 
         start_ts = int(start_dt.timestamp() * 1000)
-        self.logger.info(f"Fetching data from {start_dt.strftime('%Y-%m-%d %H:%M')} to {now_utc.strftime('%Y-%m-%d %H:%M')}")
+        self.logger.info(f"Fetching [{source_name}] data from {start_dt.strftime('%Y-%m-%d %H:%M')} to {now_utc.strftime('%Y-%m-%d %H:%M')}")
         return start_ts, end_ts
 
     def _fetch_paginated_history(self, endpoint_path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -117,8 +117,8 @@ class BinanceFetcher:
             self.logger.error(f"Unexpected error fetching Spot balances: {e}", exc_info=True)
             return pd.DataFrame(columns=['symbol', 'quantity'])
 
-    def fetch_binance_transactions(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+    def fetch_binance_transactions(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ts, _ = time_window
         now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -150,15 +150,15 @@ class BinanceFetcher:
                             raw_transactions.append({'tx_type': 'TRADE', 'timestamp': timestamp, 'source': 'Binance Trade', 'transaction_hash': f"binance_trade_{trade['id']}", 'raw_data': {'base_asset': self.symbol_mappings.normalize_symbol(base_asset), 'quote_asset': self.symbol_mappings.normalize_symbol(quote_asset), 'is_buyer': trade['isBuyer'], 'quantity': float(trade['qty']), 'price': float(trade['price']), 'fee_quantity': float(trade['commission']), 'fee_currency': self.symbol_mappings.normalize_symbol(trade['commissionAsset'])}})
                     except BinanceAPIException as e:
                         if e.code == -1121: self.logger.debug(f"Invalid pair: {pair}. Skipping.")
-                        else: self.logger.error(f"API Error fetching trades for {pair}: {e}")
+                        else: self.logger.error(f"[{source_name}] API Error fetching trades for {pair}: {e}")
                         break
                     except Exception as e:
-                        self.logger.error(f"Error fetching trades for {pair}: {e}")
+                        self.logger.error(f"[{source_name}] Error fetching trades for {pair}: {e}")
                     chunk_start = chunk_end
         return raw_transactions
 
-    def fetch_deposit_history(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+    def fetch_deposit_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
         raw_transactions = []
@@ -173,8 +173,8 @@ class BinanceFetcher:
             self.logger.error(f"Error fetching deposit history: {e}")
         return raw_transactions
 
-    def fetch_withdrawal_history(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+    def fetch_withdrawal_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
         raw_transactions = []
@@ -189,12 +189,12 @@ class BinanceFetcher:
             self.logger.error(f"Error fetching withdrawal history: {e}")
         return raw_transactions
 
-    def fetch_p2p_usdt_buys(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+    def fetch_p2p_usdt_buys(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """
         Fetches P2P buy history, filtering for COMPLETED trades first and then
         de-duplicating by orderNumber to ensure absolute accuracy.
         """
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
 
@@ -245,8 +245,8 @@ class BinanceFetcher:
         self.logger.debug(f"Found {len(raw_transactions)} COMPLETED and de-duplicated P2P buy transactions.")
         return raw_transactions
 
-    def fetch_spot_convert_history(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+    def fetch_spot_convert_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
         raw_transactions = []
@@ -299,9 +299,9 @@ class BinanceFetcher:
         self.logger.info(f"Finished checking Earn balances. Found holdings for {len(earn_balances_aggregated)} asset(s).")
         return earn_balances_aggregated
 
-    def fetch_simple_earn_rewards(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+    def fetch_simple_earn_rewards(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """Fetches raw Simple Earn flexible reward data with robust pagination."""
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
 
@@ -332,9 +332,9 @@ class BinanceFetcher:
                 break
         return raw_transactions
 
-    def fetch_simple_earn_subscriptions(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+    def fetch_simple_earn_subscriptions(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """Fetches raw Simple Earn flexible subscription data with robust pagination."""
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
 
@@ -363,9 +363,9 @@ class BinanceFetcher:
                 break
         return raw_transactions
 
-    def fetch_simple_earn_redemptions(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+    def fetch_simple_earn_redemptions(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """Fetches raw Simple Earn flexible redemption data with robust pagination."""
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
 
@@ -394,8 +394,8 @@ class BinanceFetcher:
                 break
         return raw_transactions
 
-    def fetch_dividend_history(self, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
-        time_window = self._get_start_end_timestamps(days_back, latest_known_ts)
+    def fetch_dividend_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
+        time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
         if not time_window: return []
         start_ms, end_ms = time_window
         raw_transactions = []
@@ -410,7 +410,7 @@ class BinanceFetcher:
             self.logger.error(f"Error fetching dividend history: {e}")
         return raw_transactions
 
-    def fetch_staking_history(self, days_back: int = 90, latest_known_ts_map: Optional[Dict[str, datetime.datetime]] = None) -> List[Dict[str, Any]]:
+    def fetch_staking_history(self, source_name: str, days_back: int = 90, latest_known_ts_map: Optional[Dict[str, datetime.datetime]] = None) -> List[Dict[str, Any]]:
         if latest_known_ts_map is None: latest_known_ts_map = {}
         all_txs = []
         transaction_types = {
@@ -420,7 +420,7 @@ class BinanceFetcher:
         }
         for txn_type, details in transaction_types.items():
             source_name = details['source']
-            time_window = self._get_start_end_timestamps(days_back, latest_known_ts_map.get(source_name))
+            time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts_map.get(source_name))
             if not time_window: continue
             start_ms, end_ms = time_window
             try:

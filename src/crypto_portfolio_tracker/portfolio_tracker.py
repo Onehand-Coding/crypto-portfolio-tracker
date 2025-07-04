@@ -183,23 +183,6 @@ class CryptoPortfolioTracker:
 
         self.logger.info("Tracker and all components initialized.")
 
-    def _sync_binance_client_time(self, client: Client, context: str = "general"):
-        """
-        Reusable utility to synchronize the given Binance client's clock with the server.
-        """
-        if not client:
-            self.logger.warning(f"Cannot sync time: Binance client for '{context}' is not available.")
-            return
-        try:
-            self.logger.info(f"Synchronizing time for {context}...")
-            server_time = client.get_server_time()['serverTime']
-            local_time = int(time.time() * 1000)
-            time_offset = server_time - local_time
-            client._server_time_offset = time_offset
-            self.logger.info(f"Time synchronized for {context}. New offset: {time_offset}ms.")
-        except Exception as e:
-            self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
-
     def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
         """Initialize and return Binance client with robust session, retries, and time sync."""
 
@@ -704,6 +687,23 @@ class CryptoPortfolioTracker:
             self.logger.error(f"An unexpected error occurred executing directional trade for {symbol}: {e}", exc_info=True)
             print(f"❌ Unexpected Error for {symbol}: {e}")
 
+    def _sync_binance_client_time(self, client: Client, context: str = "general"):
+        """
+        Reusable utility to synchronize the given Binance client's clock with the server.
+        """
+        if not client:
+            self.logger.warning(f"Cannot sync time: Binance client for '{context}' is not available.")
+            return
+        try:
+            self.logger.info(f"Synchronizing time for {context}...")
+            server_time = client.get_server_time()['serverTime']
+            local_time = int(time.time() * 1000)
+            time_offset = server_time - local_time
+            client._server_time_offset = time_offset
+            self.logger.info(f"Time synchronized for {context}. New offset: {time_offset}ms.")
+        except Exception as e:
+            self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
+
     async def _execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float], interactive: bool):
         """
         Executes rebalancing trades, enforcing minimum trade size and updating
@@ -1140,7 +1140,7 @@ class CryptoPortfolioTracker:
                 self.logger.info(f"No history found for '{source}'. Initiating full sync for the last {config['days']} days.")
 
             fetcher_tasks.append(
-                asyncio.to_thread(config["fetcher"], days_back=config['days'], latest_known_ts=latest_known_ts)
+                asyncio.to_thread(config["fetcher"], source_name=source, days_back=config['days'], latest_known_ts=latest_known_ts)
             )
 
         # Only check for staking history if not in testnet mode
@@ -1152,7 +1152,7 @@ class CryptoPortfolioTracker:
             }
             self.logger.info("Checking for Staking history (Subscriptions, Redemptions, Interest)...")
             fetcher_tasks.append(
-                asyncio.to_thread(self.fetcher.fetch_staking_history, days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
+                asyncio.to_thread(self.fetcher.fetch_staking_history, source_name="Binance Staking", days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
             )
 
         if not fetcher_tasks:
