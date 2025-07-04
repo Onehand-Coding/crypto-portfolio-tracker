@@ -1822,7 +1822,6 @@ class CryptoPortfolioTracker:
             print(f"Database:                    {db_name}")
 
         print("-" * LINE_WIDTH)
-        print("PERFORMANCE VS. INVESTED CAPITAL:")
 
         total_invested = metrics.get("total_invested_capital", 0)
         overall_pl_usd = metrics.get("overall_pl_usd", 0)
@@ -1830,12 +1829,15 @@ class CryptoPortfolioTracker:
         color_overall = "\033[92m" if overall_pl_usd >= 0 else "\033[91m"
         color_end = "\033[0m"
 
+        print("Performance vs. Invested capital:")
         print(f"Total Invested Capital:      ${total_invested:,.2f}")
         print(f"Overall P/L:                 {color_overall}${overall_pl_usd:,.2f} ({overall_pl_pct:.2f}%){color_end}")
         print("-" * LINE_WIDTH)
 
-        print("PERFORMANCE VS. ROLLING COST BASIS:")
-        print(f"Total Portfolio Value:       ${metrics.get("total_value_usd", 0):,.2f}")
+        print(f"TOTAL PORTFOLIO VALUE:       ${metrics.get("total_value_usd", 0):,.2f}")
+        print("-" * LINE_WIDTH)
+
+        print("Performance vs. Rolling cost basis:")
         print(f"Total Cost Basis (FIFO):     ${metrics.get("total_cost_basis_usd", 0):,.2f}")
 
         pl_usd = metrics.get("unrealized_pl_usd", 0)
@@ -1843,6 +1845,7 @@ class CryptoPortfolioTracker:
         color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
 
         print(f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
+        print("-" * LINE_WIDTH)
 
         # Print Core Holdings Table
         core_holdings_df = metrics.get("core_holdings_df")
@@ -1851,7 +1854,7 @@ class CryptoPortfolioTracker:
             # Increased "Asset" width from 8 to 11, decreased "Total Qty" from 18 to 15
             header = f"{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Core Alloc.":<15} {"Total Alloc.":<10}"
             print(header)
-            print("-" * LINE_WIDTH)
+            print("-" * len(header))
             for _, row in core_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
                 row_pl_usd = row.get("unrealized_pl_usd", 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
@@ -1877,7 +1880,7 @@ class CryptoPortfolioTracker:
             # Adjusted header and row formatting for consistency
             header = f"{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Total Alloc.":<10}"
             print(header)
-            print("-" * LINE_WIDTH)
+            print("-" * len(header))
             for _, row in other_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
                 row_pl_usd = row.get("unrealized_pl_usd", 0)
                 row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
@@ -1893,7 +1896,7 @@ class CryptoPortfolioTracker:
                     f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
                     f"{total_alloc_str:<10}"
                 )
-        print("="*LINE_WIDTH)
+        print("="*len(header))
 
     def print_trend_report(self, report: Dict[str, Any]):
         """Prints a formatted trend analysis report to the console."""

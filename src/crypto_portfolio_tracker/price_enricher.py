@@ -7,7 +7,7 @@ import httpx
 import pandas as pd
 import yfinance as yf
 from diskcache import Cache
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, wait_random
 
 from .symbol_mapper import SymbolMapper
 
@@ -28,7 +28,6 @@ class PriceEnricher:
         self.target_assets_for_sync.add("USDT")
         self.coingecko_semaphore = asyncio.Semaphore(5)
 
-        # --- Log whether we are using an API key ---
         if self.coingecko_config.get("api_key"):
             self.logger.info("PriceEnricher initialized with a CoinGecko API Key.")
         else:
@@ -45,25 +44,18 @@ class PriceEnricher:
         date_str = date.strftime('%d-%m-%Y')
         cache_key = f"{coin_id}_{date_str}"
 
-        # 1. Check in-memory cache first for performance
         price = self.price_cache.get(cache_key)
         if price is not None:
             return price
 
-        # 2. If not in memory, check the disk cache
         price = self.disk_cache.get(cache_key)
         if price is not None:
-            self.price_cache[cache_key] = price # Add to memory cache for next time
+            self.price_cache[cache_key] = price
             return price
 
-        # 3. If not in any cache, return 0.0
         return 0.0
 
     def _get_historical_fiat_exchange_rate(self, date: datetime.datetime, from_currency: str, to_currency: str) -> float:
-        """
-        Fetches and caches historical fiat exchange rates using yfinance.
-        This version ensures timezone consistency and handles ambiguous Series truth values.
-        """
         if from_currency == to_currency: return 1.0
 
         date_str = date.strftime('%Y-%m-%d')
@@ -83,15 +75,14 @@ class PriceEnricher:
                 if data.index.tz is None:
                     data = data.tz_localize('UTC')
 
-                # The .asof() method can sometimes return a Series. We handle this explicitly.
                 price_or_series = data['Close'].asof(date)
 
                 closest_price = None
                 if isinstance(price_or_series, pd.Series):
                     if not price_or_series.empty:
-                        closest_price = price_or_series.iloc[0] # Take the first element if it's a Series
+                        closest_price = price_or_series.iloc[0]
                 else:
-                    closest_price = price_or_series # It was a single value as expected
+                    closest_price = price_or_series
 
                 if pd.notna(closest_price):
                     rate = float(closest_price)
@@ -103,7 +94,6 @@ class PriceEnricher:
         return rate or 0.0
 
     async def _fetch_price_for_date(self, client: httpx.AsyncClient, coin_id: str, date_str: str):
-        """Asynchronously fetches a single historical price, optionally using an API key."""
         cache_key = f"{coin_id}_{date_str}"
         if self.price_cache.get(cache_key) is not None or self.disk_cache.get(cache_key) is not None:
             if self.price_cache.get(cache_key) is None:
@@ -111,11 +101,10 @@ class PriceEnricher:
             return
 
         async with self.coingecko_semaphore:
-            await asyncio.sleep(self.coingecko_config.get("request_delay_ms", 1000) / 1000.0) # Reduced delay
+            await asyncio.sleep(self.coingecko_config.get("request_delay_ms", 1500) / 1000.0)
             base_url = self.coingecko_config.get("base_url", "https://api.coingecko.com/api/v3")
             url = f"{base_url}/coins/{coin_id}/history"
 
-            # --- FIX: Add API key to params if it exists ---
             params = {'date': date_str, 'localization': 'false'}
             api_key = self.coingecko_config.get("api_key")
             if api_key:
@@ -141,20 +130,15 @@ class PriceEnricher:
 
     @retry(
         retry=retry_if_exception_type(httpx.HTTPStatusError),
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=4, max=60)
+        stop=stop_after_attempt(7),
+        wait=wait_exponential(multiplier=2, min=10, max=120) + wait_random(0, 5)
     )
     async def _batch_fetch_prices(self, price_requests: Set[Tuple[str, str]]):
-        """
-        Manages batch fetching with retries. This version checks for success *after* the
-        batch and raises an error to trigger a retry if any requests failed.
-        """
         if not price_requests:
             return
 
         self.logger.info(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
 
-        # Only fetch what's missing.
         missing_requests = {(coin_id, date_str) for coin_id, date_str in price_requests
                             if self.price_cache.get(f"{coin_id}_{date_str}") is None and self.disk_cache.get(f"{coin_id}_{date_str}") is None}
 
@@ -168,7 +152,6 @@ class PriceEnricher:
             tasks = [self._fetch_price_for_date(client, coin_id, date_str) for coin_id, date_str in missing_requests]
             await asyncio.gather(*tasks)
 
-        # After the batch, check if all requests were successful.
         all_successful = True
         for coin_id, date_str in missing_requests:
             cache_key = f"{coin_id}_{date_str}"
@@ -181,8 +164,8 @@ class PriceEnricher:
             self.logger.error("One or more price fetches failed in the batch. Raising error to trigger retry.")
             raise httpx.HTTPStatusError(
                 "Batch fetch incomplete, triggering retry.",
-                request=None,
-                response=httpx.Response(status_code=429)
+                request=httpx.Request("GET", ""),
+                response=httpx.Response(status_code=429, request=httpx.Request("GET", ""))
             )
 
         self.logger.info("Batch price fetch complete and all prices verified.")
@@ -190,10 +173,9 @@ class PriceEnricher:
     @retry(
         retry=retry_if_exception_type(httpx.HTTPStatusError),
         stop=stop_after_attempt(3),
-        wait=wait_fixed(10)
+        wait=wait_exponential(multiplier=1, min=4, max=10)
     )
     async def get_current_prices(self, symbols: List[str]) -> Dict[str, float]:
-        """Asynchronously fetches current prices for a list of symbols, with retries and optional API key."""
         if not symbols:
             return {}
 
@@ -205,7 +187,6 @@ class PriceEnricher:
         ids_string = ",".join(list(ids_to_fetch))
         url = f"{self.coingecko_config.get('base_url')}/simple/price"
 
-        # --- Add API key to params if it exists ---
         params = {'ids': ids_string, 'vs_currencies': 'usd'}
         api_key = self.coingecko_config.get("api_key")
         if api_key:
@@ -237,7 +218,7 @@ class PriceEnricher:
         """
         if not raw_txs: return []
 
-        # 1. Gather all unique price requests
+        self.logger.info(f"Passing {len(raw_txs)} raw transactions to the PriceEnricher.")
         price_requests: Set[Tuple[str, str]] = set()
         for tx in raw_txs:
             if not tx.get('timestamp') or not isinstance(tx.get('timestamp'), datetime.datetime): continue
@@ -260,10 +241,8 @@ class PriceEnricher:
                     coin_id = self.symbol_mappings.get(symbol)
                     if coin_id: price_requests.add((coin_id, date_str))
 
-        # 2. Batch-fetch all prices
         await self._batch_fetch_prices(price_requests)
 
-        # 3. Apply prices and transform raw data into the final format
         enriched_txs = []
         for tx in raw_txs:
             raw = tx['raw_data']
@@ -271,20 +250,18 @@ class PriceEnricher:
 
             if tx['tx_type'] == 'CONVERT':
                 from_asset, to_asset = raw['from_asset'], raw['to_asset']
-                # Only create the SELL leg if the asset being sold is a target asset
                 if from_asset in self.target_assets_for_sync:
                     price_usd = self._get_price_from_cache(from_asset, ts)
                     enriched_txs.append({'symbol': from_asset, 'timestamp': ts, 'type': 'SELL', 'quantity': raw['from_quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': f"convert_sell_{tx['transaction_hash']}", 'notes': f"Converted to {raw['to_quantity']} {to_asset}"})
-                # Only create the BUY leg if the asset being bought is a target asset
                 if to_asset in self.target_assets_for_sync:
                     price_usd = self._get_price_from_cache(to_asset, ts)
                     enriched_txs.append({'symbol': to_asset, 'timestamp': ts, 'type': 'BUY', 'quantity': raw['to_quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': f"convert_buy_{tx['transaction_hash']}", 'notes': f"Converted from {raw['from_quantity']} {from_asset}"})
 
             elif tx['tx_type'] == 'TRADE':
                 quote_price_usd = self._get_price_from_cache(raw['quote_asset'], ts)
-                price_usd = raw['price'] * quote_price_usd
+                price_usd = raw['price'] * quote_price_usd if quote_price_usd is not None else 0
                 fee_price_usd = self._get_price_from_cache(raw['fee_currency'], ts)
-                fee_usd = raw['fee_quantity'] * fee_price_usd
+                fee_usd = raw['fee_quantity'] * fee_price_usd if fee_price_usd is not None else 0
                 enriched_txs.append({'symbol': raw['base_asset'], 'timestamp': ts, 'type': 'BUY' if raw['is_buyer'] else 'SELL', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': raw['fee_quantity'], 'fee_currency': raw['fee_currency'], 'fee_usd': fee_usd, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': f"Pair: {raw['base_asset']}/{raw['quote_asset']}"})
                 if raw['quote_asset'] in self.target_assets_for_sync:
                     enriched_txs.append({'symbol': raw['quote_asset'], 'timestamp': ts, 'type': 'SELL' if raw['is_buyer'] else 'BUY', 'quantity': raw['quantity'] * raw['price'], 'price_usd': quote_price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': 'Binance Synthetic', 'transaction_hash': f"synth_{tx['transaction_hash']}", 'notes': f"Synthetic for {raw['base_asset']}/{raw['quote_asset']} trade"})
@@ -296,7 +273,7 @@ class PriceEnricher:
             elif tx['tx_type'] in ['WITHDRAWAL', 'EARN_SUBSCRIPTION', 'STAKING_SUBSCRIBE']:
                 price_usd = self._get_price_from_cache(raw['symbol'], ts)
                 fee_price_usd = self._get_price_from_cache(raw.get('fee_currency', raw['symbol']), ts)
-                fee_usd = raw.get('fee_quantity', 0.0) * fee_price_usd
+                fee_usd = raw.get('fee_quantity', 0.0) * fee_price_usd if fee_price_usd is not None else 0
                 tx_type_final = 'WITHDRAWAL' if tx['tx_type'] == 'WITHDRAWAL' else 'SELL'
                 enriched_txs.append({'symbol': raw['symbol'], 'timestamp': ts, 'type': tx_type_final, 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': raw.get('fee_quantity', 0.0), 'fee_currency': raw.get('fee_currency'), 'fee_usd': fee_usd, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': raw.get('notes', '')})
 

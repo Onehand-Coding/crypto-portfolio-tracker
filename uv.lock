@@ -434,7 +434,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "seaborn", specifier = ">=0.13" },
     { name = "setuptools", specifier = "<81" },
-    { name = "tenacity", specifier = ">=8.2" },
+    { name = "tenacity", specifier = ">=8.3.0" },
     { name = "tqdm", specifier = ">=4.66" },
     { name = "xlsxwriter", specifier = ">=3.2" },
     { name = "yfinance", specifier = ">=0.2" },

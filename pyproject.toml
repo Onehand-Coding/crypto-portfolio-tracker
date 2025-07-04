@@ -43,7 +43,7 @@ dependencies = [
     "pytz>=2024.1",        # Timezone handling
     "colorlog>=6.8",       # Colored logging
     "tqdm>=4.66",          # Progress bars
-    "tenacity>=8.2",       # Retry logic
+    "tenacity>=8.3.0",       # Retry logic
     "setuptools<81",       # Build compatibility
 ]
 
