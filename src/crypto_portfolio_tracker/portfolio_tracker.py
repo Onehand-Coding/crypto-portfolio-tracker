@@ -702,10 +702,10 @@ class CryptoPortfolioTracker:
                     print(f"⚠️ SKIPPING SELL for {symbol}: Position value is below minimum trade size.")
                     return
 
-                print(f"\nPreparing MARKET SELL for {trade_quantity:.8g} {symbol} ({size:.0%} of holding)...")
+                print(f"\nPreparing MARKET SELL for {trade_quantity:.8f} {symbol} ({size:.0%} of holding)...")
 
                 if is_live:
-                    order = client.order_market_sell(symbol=trade_ticker, quantity=f"{trade_quantity:.8g}")
+                    order = client.order_market_sell(symbol=trade_ticker, quantity=f"{trade_quantity:.8f}")
                     print(f"✅ LIVE SELL ORDER PLACED: {order}")
                     self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                 else:
@@ -832,15 +832,21 @@ class CryptoPortfolioTracker:
                         print(f"⚠️ SKIPPING SELL for {symbol}: Adjusted quantity is zero or invalid after applying lot size rules.")
                         continue
 
+                    current_price = self._get_current_prices([symbol]).get(symbol, 0)
+                    final_notional_value = adjusted_quantity * current_price
+                    if final_notional_value < min_trade_usd:
+                        print(f"⚠️ SKIPPING SELL for {symbol}: Final trade value (~${final_notional_value:,.2f}) is below minimum of ${min_trade_usd:,.2f} after applying exchange rules.")
+                        continue
+
                     if not self._redeem_from_earn_if_needed(asset=symbol, required_amount=adjusted_quantity, is_live=is_live):
                         print(f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure.")
                         continue
 
-                    print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8g} {symbol}...")
+                    print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
                     if is_live:
                         try:
                             print("🚀 PLACING LIVE ORDER...")
-                            order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8g}")
+                            order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}")
                             print(f"✅ LIVE SELL ORDER PLACED.")
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             simulated_balances[symbol] -= adjusted_quantity
@@ -932,10 +938,10 @@ class CryptoPortfolioTracker:
                     print(f"⚠️ SKIPPING SELL for {symbol}: Quantity is zero or invalid after applying exchange lot size rules.")
                     return
 
-                print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8g} {symbol}...")
+                print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
                 if is_live:
                     print("🚀 PLACING LIVE ORDER...")
-                    order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8g}")
+                    order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}")
                     print(f"✅ LIVE SELL ORDER PLACED.")
                     self.logger.info(f"LIVE MANUAL SELL ORDER PLACED: {order}")
                 else:
