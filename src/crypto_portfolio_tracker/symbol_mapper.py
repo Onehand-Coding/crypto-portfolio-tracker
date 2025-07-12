@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional, List
 import requests
 from requests.exceptions import HTTPError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from .exceptions import NetworkOperationError
 
 
 class SymbolMapper:
@@ -28,7 +29,7 @@ class SymbolMapper:
         if normalized_symbol in self._mappings:
             return self._mappings[normalized_symbol]
 
-        self.logger.warning(f"Symbol '{symbol}' not found. Triggering discovery.")
+        self.logger.debug(f"Symbol '{symbol}' not found. Triggering discovery.")
         self.discover_mappings([normalized_symbol])
 
         if normalized_symbol in self._mappings:
@@ -47,7 +48,7 @@ class SymbolMapper:
             return self._mappings[normalized_symbol]
 
         # If not found, trigger the discovery process for just this symbol
-        self.logger.warning(f"Symbol '{symbol}' not found via .get(). Triggering API discovery.")
+        self.logger.debug(f"Symbol '{symbol}' not found via .get(). Triggering API discovery.")
         self.discover_mappings([normalized_symbol])
 
         # Check again after discovery has run
@@ -76,16 +77,23 @@ class SymbolMapper:
         if api_key:
             params['x_cg_demo_api_key'] = api_key
 
-        response = requests.get(url, params=params, timeout=30)
+        try:
+            response = requests.get(url, params=params, timeout=30)
 
-        # Specifically check for 429 and log it before tenacity handles the retry
-        if response.status_code == 429:
-            self.logger.warning(f"Rate limited (429) fetching market data. Tenacity will retry...")
+            # Specifically check for 429 and log it before tenacity handles the retry
+            if response.status_code == 429:
+                self.logger.warning(f"Rate limited (429) fetching market data. Tenacity will retry...")
 
-        # This will raise an HTTPError for any 4xx or 5xx status code,
-        # which will be caught by the @retry decorator.
-        response.raise_for_status()
-        return response.json()
+            # This will raise an HTTPError for any 4xx or 5xx status code,
+            # which will be caught by the @retry decorator.
+            response.raise_for_status()
+            return response.json()
+        except HTTPError as e:
+            self.logger.error(f"HTTP error fetching market data: {e}", exc_info=True)
+            raise NetworkOperationError(f"Failed to fetch market data from CoinGecko: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error fetching market data: {e}", exc_info=True)
+            raise NetworkOperationError(f"Failed to fetch market data from CoinGecko: {e}")
 
     def get_all_mappings(self) -> Dict[str, str]:
         """Return a copy of all current mappings."""

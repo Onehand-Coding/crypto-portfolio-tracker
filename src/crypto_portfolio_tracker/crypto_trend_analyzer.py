@@ -12,7 +12,7 @@ import yfinance as yf
 import pandas_ta as ta
 from binance.client import Client
 
-from . config import ConfigManager
+from .config import ConfigManager
 
 
 class TrendCondition(Enum):

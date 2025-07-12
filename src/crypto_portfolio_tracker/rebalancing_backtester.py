@@ -8,8 +8,8 @@ import pandas as pd
 import yfinance as yf
 import pandas_ta as ta
 
-from . rebalancing_logic import get_backtest_rebalance_suggestions
-from . crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
+from .rebalancing_logic import get_backtest_rebalance_suggestions
+from .crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 
 class RebalancingBacktester:
@@ -36,7 +36,7 @@ class RebalancingBacktester:
         self.max_drawdown = 0.0
         self.peak_value = initial_capital
         self.executed_allocation = {}
-        self.logger.info("Backtester state reset.")
+        self.logger.debug("Backtester state reset.")
 
     def _pre_calculate_indicators(self, assets_to_calculate: List[str]):
         """

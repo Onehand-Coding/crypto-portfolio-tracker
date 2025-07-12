@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 import pandas as pd
+from .exceptions import DatabaseOperationError
 
 
 class DatabaseManager:
@@ -42,7 +43,7 @@ class DatabaseManager:
             return conn
         except sqlite3.Error as e:
             self.logger.error(f"Database connection error: {e}")
-            raise
+            raise DatabaseOperationError(f"Failed to connect to database: {e}")
 
     def _create_tables(self):
         """Create necessary tables if they don't exist"""
@@ -172,7 +173,7 @@ class DatabaseManager:
             self.logger.info("No valid transactions prepared for DB insert/update after type checks.")
             return 0
 
-        self.logger.info(f"Attempting to insert/update {len(data_to_insert)} transactions using ON CONFLICT DO UPDATE...")
+        self.logger.debug(f"Attempting to insert/update {len(data_to_insert)} transactions using ON CONFLICT DO UPDATE...")
 
         try:
             with self._get_connection() as conn:
@@ -190,19 +191,19 @@ class DatabaseManager:
                     changes_cursor.execute("SELECT changes()")
                     changes_result = changes_cursor.fetchone()
                     rows_affected_fallback = changes_result[0] if changes_result else 0
-                    self.logger.info(f"DB: `executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes.")
+                    self.logger.debug(f"DB: `executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes.")
                     return rows_affected_fallback
                 else:
-                    self.logger.info(f"DB: `executemany` reported {rows_affected} rows affected (inserted or updated).")
+                    self.logger.debug(f"DB: `executemany` reported {rows_affected} rows affected (inserted or updated).")
                 return rows_affected
         except sqlite3.Error as e:
             self.logger.error(f"Database error during bulk insert/update: {e}", exc_info=True)
-            if data_to_insert: # Log the first problematic item for easier debugging
+            if data_to_insert:
                 self.logger.error(f"First data item in problematic batch: {data_to_insert[0]}")
-            return 0 # Indicate 0 rows affected on error
-        except Exception as e_generic: # Catch any other non-SQLite errors
+            raise DatabaseOperationError(f"Database error during bulk insert/update: {e}")
+        except Exception as e_generic:
             self.logger.error(f"Generic error during bulk insert/update: {e_generic}", exc_info=True)
-            return 0
+            raise DatabaseOperationError(f"Generic error during bulk insert/update: {e_generic}")
 
     def get_all_transactions(self) -> pd.DataFrame:
         """Fetch all transactions from the database."""
@@ -422,8 +423,6 @@ class DatabaseManager:
             self.logger.error(f"Error calculating net invested capital: {e}", exc_info=True)
             return 0.0
 
-
-
     def backup_database(self) -> Optional[str]:
         """
         Creates a timestamped backup of the current database file in the backup directory.
@@ -471,3 +470,45 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Failed to restore database from backup: {e}", exc_info=True)
             return False
+
+    def fetch_transactions(self, *args, **kwargs) -> List[Dict[str, Any]]:
+        """Fetch transactions from the database (example method)."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # ... your fetch logic ...
+                return []  # Replace with actual fetch result
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error during fetch: {e}", exc_info=True)
+            raise DatabaseOperationError(f"Database error during fetch: {e}")
+        except Exception as e_generic:
+            self.logger.error(f"Generic error during fetch: {e_generic}", exc_info=True)
+            raise DatabaseOperationError(f"Generic error during fetch: {e_generic}")
+
+    def update_holding(self, *args, **kwargs) -> None:
+        """Update a holding in the database (example method)."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # ... your update logic ...
+                conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error during update: {e}", exc_info=True)
+            raise DatabaseOperationError(f"Database error during update: {e}")
+        except Exception as e_generic:
+            self.logger.error(f"Generic error during update: {e_generic}", exc_info=True)
+            raise DatabaseOperationError(f"Generic error during update: {e_generic}")
+
+    def delete_transaction(self, *args, **kwargs) -> None:
+        """Delete a transaction from the database (example method)."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # ... your delete logic ...
+                conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error during delete: {e}", exc_info=True)
+            raise DatabaseOperationError(f"Database error during delete: {e}")
+        except Exception as e_generic:
+            self.logger.error(f"Generic error during delete: {e_generic}", exc_info=True)
+            raise DatabaseOperationError(f"Generic error during delete: {e_generic}")

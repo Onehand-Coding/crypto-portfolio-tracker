@@ -26,18 +26,21 @@ import pandas_ta as ta
 from binance.client import Client
 from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException
+from requests.exceptions import ConnectionError
+import socket
 
-from . config import ConfigManager
-from . database import DatabaseManager
-from . visualizations import Visualizer
-from . price_enricher import PriceEnricher
-from . binance_fetcher import BinanceFetcher
 from . import trading_strategies
-from . strategy_backtester import StrategyBacktester
-from . rebalancing_backtester import RebalancingBacktester
-from . exporters import ExcelExporter, HtmlExporter, CsvExporter
-from . rebalancing_logic import get_live_rebalance_suggestions
-from . crypto_trend_analyzer import CryptoTrendAnalyzer
+from .config import ConfigManager
+from .database import DatabaseManager
+from .visualizations import Visualizer
+from .price_enricher import PriceEnricher
+from .binance_fetcher import BinanceFetcher
+from .strategy_backtester import StrategyBacktester
+from .rebalancing_backtester import RebalancingBacktester
+from .exporters import ExcelExporter, HtmlExporter, CsvExporter
+from .rebalancing_logic import get_live_rebalance_suggestions
+from .crypto_trend_analyzer import CryptoTrendAnalyzer
+from .exceptions import NetworkOperationError
 
 logger = logging.getLogger(__name__)
 
@@ -146,19 +149,32 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
     return current_quantity, average_cost_basis
 
 
+class NetworkUnavailableError(Exception):
+    """Raised when network is unavailable and offline mode should be triggered."""
+    pass
+
+
 class CryptoPortfolioTracker:
     """Main class for the crypto portfolio tracker."""
 
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager, force_offline: bool = False):
         """Initialize the tracker and its specialist components."""
         self.config_manager = config_manager
         self.config = self.config_manager.config
         self.logger = logging.getLogger(__name__)
 
-        # --- Initialize Core Components ---
+        self.offline_mode = force_offline
         self.db_manager = DatabaseManager(self.config)
         self.symbol_mappings = self.config_manager.symbol_mapper
-        self.binance_client = self._init_binance_client()
+
+        if not self.offline_mode:
+            try:
+                self.binance_client = self._init_binance_client()
+            except NetworkUnavailableError:
+                # Let the main entrypoint handle prompting and re-instantiation
+                raise
+        else:
+            self.binance_client = None
 
         # --- Initialize Caches ---
         self.cache_dir = Path(self.config.get("cache", {}).get("path", "data/cache"))
@@ -167,11 +183,13 @@ class CryptoPortfolioTracker:
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_historical"))
         self.fiat_exchange_rate_cache = Cache(str(self.cache_dir / "fiat_exchange_rates"))
 
-        # --- Instantiate our new specialist classes ---
-        self.fetcher = BinanceFetcher(self.binance_client, self.symbol_mappings, self.config)
-        self.enricher = PriceEnricher(self.symbol_mappings, self.config, self.coingecko_price_cache)
+        if not self.offline_mode:
+            # --- Instantiate our new specialist classes ---
+            self.fetcher = BinanceFetcher(self.binance_client, self.symbol_mappings, self.config)
+        else:
+            self.fetcher = None
 
-        # --- Initialize other components ---
+        self.enricher = PriceEnricher(self.symbol_mappings, self.config, self.coingecko_price_cache)
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
         self.csv_exporter = CsvExporter(self.config)
@@ -206,7 +224,7 @@ class CryptoPortfolioTracker:
             client = Client(api_key, api_secret, requests_params={"timeout": client_timeout})
 
             client.RECV_WINDOW = recv_window
-            self.logger.info(f"Set Binance client recvWindow to {client.RECV_WINDOW}ms.")
+            self.logger.debug(f"Set Binance client recvWindow to {client.RECV_WINDOW}ms.")
 
             # Actively sync time with the server to prevent all recvWindow errors.
             self._sync_binance_client_time(client, context="initialization")
@@ -224,12 +242,14 @@ class CryptoPortfolioTracker:
                 self.logger.info("Connecting to Binance Testnet endpoint.")
                 client.API_URL = "https://testnet.binance.vision/api"
 
-            client.ping()
+            client.ping()  # This will raise if network is down
             self.logger.info("Binance client initialized successfully.")
             return client
+        except (ConnectionError, socket.gaierror) as e:
+            raise NetworkUnavailableError("Network unavailable, entering offline mode.") from e
         except Exception as e:
-            self.logger.error(f"Failed to init Binance client: {e}", exc_info=True)
-            return None
+            # Other errors (bad API key, etc.) should not trigger offline mode
+            raise
 
     def _get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """
@@ -249,9 +269,10 @@ class CryptoPortfolioTracker:
         url = f"{coingecko_config.get("base_url")}/simple/price"
         params = {"ids": ids_string, "vs_currencies": "usd"}
 
+        last_exception = None
         for attempt in range(3): # Try up to 3 times
             try:
-                self.logger.info(f"Fetching current prices for {len(ids_to_fetch)} unique assets...")
+                self.logger.debug(f"Fetching current prices for {len(ids_to_fetch)} unique assets...")
                 response = requests.get(url, params=params, timeout=coingecko_config.get("timeout", 30))
                 response.raise_for_status()
                 fetched_price_data = response.json()
@@ -264,18 +285,21 @@ class CryptoPortfolioTracker:
                 return prices # Return on success
 
             except requests.exceptions.HTTPError as e:
+                last_exception = e
                 if e.response.status_code == 429 and attempt < 2:
                     self.logger.warning("Rate limited fetching current prices. Waiting 10 seconds before retrying...")
                     time.sleep(10)
                     continue # Go to the next attempt
                 else:
                     self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
-                    return prices
+                    break
             except requests.exceptions.RequestException as e:
+                last_exception = e
                 self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
-                return prices
+                break
 
-        return prices
+        # If we reach here, all retries failed
+        raise NetworkOperationError(f"Failed to fetch current prices from CoinGecko after retries: {last_exception}")
 
     def _get_coingecko_historical_price(self, coin_id: str, date_str: str) -> Optional[float]:
         """Fetch historical price from CoinGecko for a specific date, using disk cache."""
@@ -315,22 +339,22 @@ class CryptoPortfolioTracker:
         initial_wait_seconds = 60
         server_error_codes_to_retry = [500, 502, 503, 504]
         retries_left = max_retries
+        last_exception = None
 
-        while retries_left >= 0:
+        while retries_left > 0:
             try:
                 response = requests.get(url, timeout=timeout)
                 response.raise_for_status()
                 data = response.json()
-                if "market_data" in data and "current_price" in data["market_data"] and "usd" in data["market_data"]["current_price"]:
-                    price = float(data["market_data"]["current_price"]["usd"])
-                    self.logger.info(f"Fetched price for {coin_id} on {api_date_str}: ${price:.6f}")
+                price = data.get("market_data", {}).get("current_price", {}).get("usd")
+                if price is not None:
                     self.coingecko_historical_price_disk_cache.set(cache_key, price)
-                    return price
+                    return float(price)
                 else:
-                    self.logger.warning(f"No price data in 'usd' found for {coin_id} on {api_date_str}.")
-                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600 * 24)
+                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
                     return None
             except requests.exceptions.HTTPError as e:
+                last_exception = e
                 should_retry = False
                 if e.response.status_code == 429:
                     should_retry = True
@@ -339,9 +363,9 @@ class CryptoPortfolioTracker:
                     should_retry = True
                     self.logger.error(f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {api_date_str}.")
 
-                if should_retry and retries_left > 0:
+                if should_retry and retries_left > 1:
                     wait_time = initial_wait_seconds * (max_retries - retries_left + 1)
-                    self.logger.info(f"Waiting {wait_time}s before retry... ({retries_left} retries left)")
+                    self.logger.info(f"Waiting {wait_time}s before retry... ({retries_left-1} retries left)")
                     time.sleep(wait_time)
                     retries_left -= 1
                 else:
@@ -352,13 +376,13 @@ class CryptoPortfolioTracker:
                     self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
                     return None
             except Exception as e:
+                last_exception = e
                 self.logger.error(f"Unexpected error fetching CoinGecko historical price for {coin_id}: {e}", exc_info=True)
                 self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600)
-                return None
+                break
 
-        self.logger.error(f"Failed to fetch historical price for {coin_id} after exhausted retries.")
-        self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
-        return None
+        # If we reach here, all retries failed
+        raise NetworkOperationError(f"Failed to fetch historical price for {coin_id} on {date_str} after retries: {last_exception}")
 
     def _get_historical_fiat_exchange_rate(self, date_str_orig: str, from_currency: str, to_currency: str) -> Optional[float]:
         """
@@ -1834,10 +1858,10 @@ class CryptoPortfolioTracker:
             cost_basis_tx_df = group_df_copy[
                 ~group_df_copy["source"].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
             ]
-            self.logger.info(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
+            self.logger.debug(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
 
             if cost_basis_tx_df.empty:
-                self.logger.info(f"No non-transfer transactions for {symbol}. Cannot calculate cost basis.")
+                self.logger.debug(f"No non-transfer transactions for {symbol}. Cannot calculate cost basis.")
                 continue  # Skip to the next symbol
 
             # 2. Calculate cost basis and the remaining quantity FROM THAT BASIS
@@ -1846,14 +1870,14 @@ class CryptoPortfolioTracker:
             # 3. If there"s a valid average cost, save it.
             # The quantity saved here is just a placeholder; the final report uses the live wallet balance.
             if avg_cost > 0:
-                self.logger.info(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
+                self.logger.debug(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
                 updated_holdings.append({
                     "symbol": symbol,
                     "quantity": cost_basis_qty,
                     "average_cost_basis": avg_cost
                 })
             else:
-                self.logger.info(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
+                self.logger.debug(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
 
         if updated_holdings:
             holdings_df = pd.DataFrame(updated_holdings)

@@ -10,6 +10,7 @@ from diskcache import Cache
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, wait_random
 
 from .symbol_mapper import SymbolMapper
+from .exceptions import NetworkOperationError
 
 
 class PriceEnricher:
@@ -32,7 +33,7 @@ class PriceEnricher:
             self.logger.info("PriceEnricher initialized with a CoinGecko API Key.")
         else:
             self.logger.info("PriceEnricher initialized without a CoinGecko API Key (using public access).")
-        self.logger.info(f"Concurrency limit set to {self.coingecko_semaphore._value} for price fetching.")
+        self.logger.debug(f"Concurrency limit set to {self.coingecko_semaphore._value} for price fetching.")
 
     def _get_price_from_cache(self, symbol: str, date: datetime.datetime) -> float:
         if not symbol: return 0.0
@@ -116,7 +117,7 @@ class PriceEnricher:
                 data = response.json()
                 price = data.get("market_data", {}).get("current_price", {}).get("usd")
                 if price is not None:
-                    self.logger.info(f"API SUCCESS: Fetched price for {coin_id} on {date_str}: ${price}")
+                    self.logger.debug(f"API SUCCESS: Fetched price for {coin_id} on {date_str}: ${price}")
                     self.disk_cache.set(cache_key, price)
                     self.price_cache[cache_key] = float(price)
                 else:
@@ -137,16 +138,16 @@ class PriceEnricher:
         if not price_requests:
             return
 
-        self.logger.info(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
+        self.logger.debug(f"Starting controlled batch fetch for {len(price_requests)} unique prices...")
 
         missing_requests = {(coin_id, date_str) for coin_id, date_str in price_requests
                             if self.price_cache.get(f"{coin_id}_{date_str}") is None and self.disk_cache.get(f"{coin_id}_{date_str}") is None}
 
         if not missing_requests:
-            self.logger.info("All requested prices were already in the cache. Nothing to fetch.")
+            self.logger.debug("All requested prices were already in the cache. Nothing to fetch.")
             return
 
-        self.logger.info(f"Fetching {len(missing_requests)} missing prices...")
+        self.logger.debug(f"Fetching {len(missing_requests)} missing prices...")
 
         async with httpx.AsyncClient() as client:
             tasks = [self._fetch_price_for_date(client, coin_id, date_str) for coin_id, date_str in missing_requests]
@@ -162,13 +163,9 @@ class PriceEnricher:
 
         if not all_successful:
             self.logger.error("One or more price fetches failed in the batch. Raising error to trigger retry.")
-            raise httpx.HTTPStatusError(
-                "Batch fetch incomplete, triggering retry.",
-                request=httpx.Request("GET", ""),
-                response=httpx.Response(status_code=429, request=httpx.Request("GET", ""))
-            )
+            raise NetworkOperationError("Batch fetch incomplete, could not retrieve all requested prices from CoinGecko.")
 
-        self.logger.info("Batch price fetch complete and all prices verified.")
+        self.logger.debug("Batch price fetch complete and all prices verified.")
 
     @retry(
         retry=retry_if_exception_type(httpx.HTTPStatusError),
@@ -209,18 +206,15 @@ class PriceEnricher:
                 raise
             except Exception as e:
                 self.logger.error(f"An unexpected error occurred while fetching current prices: {e}")
-                return prices
-        return prices
+                raise NetworkOperationError(f"Failed to fetch current prices from CoinGecko: {e}")
 
-    async def enrich_transactions(self, raw_txs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Orchestrates the enrichment process, correctly handling transaction-specific logic.
-        """
-        if not raw_txs: return []
+        # If we reach here, all retries failed (shouldn't happen due to tenacity, but for safety)
+        raise NetworkOperationError("Failed to fetch current prices from CoinGecko after retries.")
 
-        self.logger.info(f"Passing {len(raw_txs)} raw transactions to the PriceEnricher.")
+    async def enrich_transactions(self, transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        self.logger.debug(f"Passing {len(transactions)} raw transactions to the PriceEnricher.")
         price_requests: Set[Tuple[str, str]] = set()
-        for tx in raw_txs:
+        for tx in transactions:
             if not tx.get('timestamp') or not isinstance(tx.get('timestamp'), datetime.datetime): continue
             date_str = tx['timestamp'].strftime('%d-%m-%Y')
             raw = tx['raw_data']
@@ -243,8 +237,8 @@ class PriceEnricher:
 
         await self._batch_fetch_prices(price_requests)
 
-        enriched_txs = []
-        for tx in raw_txs:
+        enriched_transactions = []
+        for tx in transactions:
             raw = tx['raw_data']
             ts = tx['timestamp']
 
@@ -252,35 +246,35 @@ class PriceEnricher:
                 from_asset, to_asset = raw['from_asset'], raw['to_asset']
                 if from_asset in self.target_assets_for_sync:
                     price_usd = self._get_price_from_cache(from_asset, ts)
-                    enriched_txs.append({'symbol': from_asset, 'timestamp': ts, 'type': 'SELL', 'quantity': raw['from_quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': f"convert_sell_{tx['transaction_hash']}", 'notes': f"Converted to {raw['to_quantity']} {to_asset}"})
+                    enriched_transactions.append({'symbol': from_asset, 'timestamp': ts, 'type': 'SELL', 'quantity': raw['from_quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': f"convert_sell_{tx['transaction_hash']}", 'notes': f"Converted to {raw['to_quantity']} {to_asset}"})
                 if to_asset in self.target_assets_for_sync:
                     price_usd = self._get_price_from_cache(to_asset, ts)
-                    enriched_txs.append({'symbol': to_asset, 'timestamp': ts, 'type': 'BUY', 'quantity': raw['to_quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': f"convert_buy_{tx['transaction_hash']}", 'notes': f"Converted from {raw['from_quantity']} {from_asset}"})
+                    enriched_transactions.append({'symbol': to_asset, 'timestamp': ts, 'type': 'BUY', 'quantity': raw['to_quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': f"convert_buy_{tx['transaction_hash']}", 'notes': f"Converted from {raw['from_quantity']} {from_asset}"})
 
             elif tx['tx_type'] == 'TRADE':
                 quote_price_usd = self._get_price_from_cache(raw['quote_asset'], ts)
                 price_usd = raw['price'] * quote_price_usd if quote_price_usd is not None else 0
                 fee_price_usd = self._get_price_from_cache(raw['fee_currency'], ts)
                 fee_usd = raw['fee_quantity'] * fee_price_usd if fee_price_usd is not None else 0
-                enriched_txs.append({'symbol': raw['base_asset'], 'timestamp': ts, 'type': 'BUY' if raw['is_buyer'] else 'SELL', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': raw['fee_quantity'], 'fee_currency': raw['fee_currency'], 'fee_usd': fee_usd, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': f"Pair: {raw['base_asset']}/{raw['quote_asset']}"})
+                enriched_transactions.append({'symbol': raw['base_asset'], 'timestamp': ts, 'type': 'BUY' if raw['is_buyer'] else 'SELL', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': raw['fee_quantity'], 'fee_currency': raw['fee_currency'], 'fee_usd': fee_usd, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': f"Pair: {raw['base_asset']}/{raw['quote_asset']}"})
                 if raw['quote_asset'] in self.target_assets_for_sync:
-                    enriched_txs.append({'symbol': raw['quote_asset'], 'timestamp': ts, 'type': 'SELL' if raw['is_buyer'] else 'BUY', 'quantity': raw['quantity'] * raw['price'], 'price_usd': quote_price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': 'Binance Synthetic', 'transaction_hash': f"synth_{tx['transaction_hash']}", 'notes': f"Synthetic for {raw['base_asset']}/{raw['quote_asset']} trade"})
+                    enriched_transactions.append({'symbol': raw['quote_asset'], 'timestamp': ts, 'type': 'SELL' if raw['is_buyer'] else 'BUY', 'quantity': raw['quantity'] * raw['price'], 'price_usd': quote_price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': 'Binance Synthetic', 'transaction_hash': f"synth_{tx['transaction_hash']}", 'notes': f"Synthetic for {raw['base_asset']}/{raw['quote_asset']} trade"})
 
             elif tx['tx_type'] in ['DEPOSIT', 'EARN_REWARD', 'DIVIDEND', 'STAKING_INTEREST', 'EARN_REDEMPTION', 'STAKING_REDEMPTION']:
                 price_usd = self._get_price_from_cache(raw['symbol'], ts)
-                enriched_txs.append({'symbol': raw['symbol'], 'timestamp': ts, 'type': 'DEPOSIT', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': raw.get('notes', '')})
+                enriched_transactions.append({'symbol': raw['symbol'], 'timestamp': ts, 'type': 'DEPOSIT', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': raw.get('notes', '')})
 
             elif tx['tx_type'] in ['WITHDRAWAL', 'EARN_SUBSCRIPTION', 'STAKING_SUBSCRIBE']:
                 price_usd = self._get_price_from_cache(raw['symbol'], ts)
                 fee_price_usd = self._get_price_from_cache(raw.get('fee_currency', raw['symbol']), ts)
                 fee_usd = raw.get('fee_quantity', 0.0) * fee_price_usd if fee_price_usd is not None else 0
                 tx_type_final = 'WITHDRAWAL' if tx['tx_type'] == 'WITHDRAWAL' else 'SELL'
-                enriched_txs.append({'symbol': raw['symbol'], 'timestamp': ts, 'type': tx_type_final, 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': raw.get('fee_quantity', 0.0), 'fee_currency': raw.get('fee_currency'), 'fee_usd': fee_usd, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': raw.get('notes', '')})
+                enriched_transactions.append({'symbol': raw['symbol'], 'timestamp': ts, 'type': tx_type_final, 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': raw.get('fee_quantity', 0.0), 'fee_currency': raw.get('fee_currency'), 'fee_usd': fee_usd, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': raw.get('notes', '')})
 
             elif tx['tx_type'] == 'P2P_BUY':
                 fiat_rate = self._get_historical_fiat_exchange_rate(ts, raw['fiat_currency'], 'USD')
                 price_usd = (raw['fiat_amount'] * fiat_rate) / raw['quantity'] if raw['quantity'] > 0 else 0
-                enriched_txs.append({'symbol': raw['asset'], 'timestamp': ts, 'type': 'BUY', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': f"P2P Buy: {raw['fiat_amount']} {raw['fiat_currency']}"})
+                enriched_transactions.append({'symbol': raw['asset'], 'timestamp': ts, 'type': 'BUY', 'quantity': raw['quantity'], 'price_usd': price_usd, 'fee_quantity': 0, 'fee_currency': None, 'fee_usd': 0, 'source': tx['source'], 'transaction_hash': tx['transaction_hash'], 'notes': f"P2P Buy: {raw['fiat_amount']} {raw['fiat_currency']}"})
 
-        self.logger.info(f"Enrichment complete. Returning {len(enriched_txs)} final transactions.")
-        return enriched_txs
+        self.logger.debug(f"Enrichment complete. Returning {len(enriched_transactions)} final transactions.")
+        return enriched_transactions

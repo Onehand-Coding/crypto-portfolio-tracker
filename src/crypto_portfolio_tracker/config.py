@@ -10,7 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from typing import Dict, Any, Optional, List
 
-from . symbol_mapper import SymbolMapper
+from .symbol_mapper import SymbolMapper
 
 
 class ConfigManager:

@@ -26,14 +26,14 @@ class Visualizer:
         self.formats = self.config.get("formats", ["png"])
         plt.style.use(self.chart_style)
         sns.set_palette(self.color_palette)
-        self.logger.info("Visualizer initialized.")
+        self.logger.debug("Visualizer initialized.")
 
     def _save_chart(self, fig, filename_prefix: str):
         """Saves the figure in configured formats."""
         base_path = self.export_path / filename_prefix
         for fmt in self.formats:
             filepath = base_path.with_suffix(f".{fmt}")
-            try: fig.savefig(filepath, dpi=self.dpi, bbox_inches='tight'); self.logger.info(f"Chart saved to: {filepath}")
+            try: fig.savefig(filepath, dpi=self.dpi, bbox_inches='tight'); self.logger.debug(f"Chart saved to: {filepath}")
             except Exception as e: self.logger.error(f"Failed to save chart {filepath}: {e}")
         plt.close(fig)
 

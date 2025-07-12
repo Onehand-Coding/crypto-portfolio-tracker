@@ -12,8 +12,9 @@ from typing import Optional
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 
-from .portfolio_tracker import CryptoPortfolioTracker
+from .portfolio_tracker import CryptoPortfolioTracker, NetworkUnavailableError
 from .config import ConfigManager
+from .exceptions import NetworkOperationError
 
 logger = logging.getLogger(__name__)
 
@@ -65,20 +66,23 @@ def setup_logging(level_override: Optional[str] = None):
         root_logger.addHandler(file_handler)
 
     logger.info(f"Logging configured to level: {log_level_str}")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def print_main_menu():
+def print_main_menu(offline_mode=False):
     """Prints the main menu options."""
     print("\n" + "="*50)
     print("🚀 Crypto Portfolio Tracker v2.1.0")
+    if offline_mode:
+        print("⚠️  OFFLINE MODE: Network features are disabled.")
     print("="*50)
-    print("1. 🔄 Full Sync & Analysis (Recommended)")
+    print("1. 🔄 Full Sync & Analysis")
     print("2. 📊 Quick Portfolio Summary")
     print("3. 📈 View Crypto Trends")
     print("4. ⚖️  View Rebalance Suggestions")
     print("5. 🤖 Execute Rebalancing Trades")
-    print("6. 🔀 TRADE Manual Trade (Buy/Sell)")
-    print("7. 💰 Live Trading (Directional Strategy)")
+    print("6. 🔀 TRADE Manual Trade")
+    print("7. 💰 Live Trading")
     print("8. 🧪 Run Strategy Backtest")
     print("9. ⚖️  Run Rebalancing Backtest")
     print("10. 📋 Export Reports")
@@ -95,11 +99,17 @@ def print_main_menu():
 async def run_interactive_mode(tracker: CryptoPortfolioTracker):
     """Runs the main interactive menu loop, now fully asynchronous."""
     loop = asyncio.get_event_loop()
+    offline_mode = getattr(tracker, "offline_mode", False)
+    unavailable_offline = {1,2,3,4,5,6,7,8,10,11}
     while True:
-        print_main_menu()
+        print_main_menu(offline_mode)
         try:
             choice_str = await loop.run_in_executor(None, input, "Select option (1-17): ")
             choice = int(choice_str) if choice_str.isdigit() else -1
+
+            if offline_mode and choice in unavailable_offline:
+                print("❌ This feature is unavailable in offline mode.")
+                continue
 
             match choice:
                 case 1:
@@ -154,6 +164,8 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 case _:
                     print("❌ Invalid option. Please try again.")
 
+        except NetworkOperationError as e:
+            print(f"\n❌ Network error: {e}\nOperation aborted. Please check your connection and try again.")
         except Exception as e:
             logger.error(f"Error in interactive mode: {e}", exc_info=True)
             print(f"\n❌ An unexpected error occurred: {e}\nPlease check logs for more details.")
@@ -173,13 +185,19 @@ async def amain():
     logger.info("Starting Crypto Portfolio Tracker")
     config_manager = ConfigManager()
 
+    tracker = None
     try:
         tracker = CryptoPortfolioTracker(config_manager)
-        await run_interactive_mode(tracker)
-    except Exception as e:
-        logger.critical(f"A critical error occurred at the top level: {e}", exc_info=True)
-    finally:
-        logger.info("Application finished.")
+    except NetworkUnavailableError:
+        resp = input("⚠️  Network appears unavailable. Enter offline mode? [Y/n]: ").strip().lower()
+        if resp not in ("", "y", "yes"):
+            print("Exiting. Please check your network and try again.")
+            return
+        tracker = CryptoPortfolioTracker(config_manager, force_offline=True)
+
+    if getattr(tracker, "offline_mode", False):
+        print("⚠️  OFFLINE MODE: Network features are disabled.")
+    await run_interactive_mode(tracker)
 
 
 def main():

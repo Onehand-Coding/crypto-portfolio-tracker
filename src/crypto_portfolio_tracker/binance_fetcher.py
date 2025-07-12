@@ -9,7 +9,8 @@ import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 
-from . symbol_mapper import SymbolMapper
+from .symbol_mapper import SymbolMapper
+from .exceptions import NetworkOperationError
 
 
 class BinanceFetcher:
@@ -24,7 +25,7 @@ class BinanceFetcher:
         self.config = config
         self.target_assets_for_sync = set(self.config.get("target_allocation", {}).keys())
         self.target_assets_for_sync.add("USDT")
-        self.logger.info("BinanceFetcher initialized.")
+        self.logger.debug("BinanceFetcher initialized.")
 
     def _get_start_end_timestamps(self, source_name: str, days_back: int, latest_known_ts: Optional[datetime.datetime]) -> Optional[tuple[int, int]]:
         """Helper to calculate the start and end timestamps for an API call."""
@@ -44,7 +45,7 @@ class BinanceFetcher:
             return None
 
         start_ts = int(start_dt.timestamp() * 1000)
-        self.logger.info(f"Fetching [{source_name}] data from {start_dt.strftime('%Y-%m-%d %H:%M')} to {now_utc.strftime('%Y-%m-%d %H:%M')}")
+        self.logger.debug(f"Fetching [{source_name}] data from {start_dt.strftime('%Y-%m-%d %H:%M')} to {now_utc.strftime('%Y-%m-%d %H:%M')}")
         return start_ts, end_ts
 
     def _fetch_paginated_history(self, endpoint_path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -74,7 +75,6 @@ class BinanceFetcher:
             self.logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
             return pd.DataFrame(columns=['symbol', 'quantity'])
 
-        # Re-synchronize time with the server before every balance fetch to prevent recvWindow errors.
         try:
             self.logger.info("Re-synchronizing time with Binance server for fresh data...")
             server_time = self.binance_client.get_server_time()['serverTime']
@@ -111,11 +111,11 @@ class BinanceFetcher:
             # Consolidate any duplicate symbols (e.g. from LD-prefixed assets)
             df = df.groupby('symbol', as_index=False)['quantity'].sum()
 
-            self.logger.info(f"Fetched and consolidated {len(df)} non-zero balances.")
+            self.logger.debug(f"Fetched and consolidated {len(df)} non-zero balances.")
             return df
         except Exception as e:
             self.logger.error(f"Unexpected error fetching Spot balances: {e}", exc_info=True)
-            return pd.DataFrame(columns=['symbol', 'quantity'])
+            raise NetworkOperationError(f"Failed to fetch Binance Spot balances: {e}")
 
     def fetch_binance_transactions(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
@@ -130,32 +130,36 @@ class BinanceFetcher:
         potential_base_assets = [s for s in self.target_assets_for_sync if s not in stablecoin_quotes]
         processed_pairs = set()
 
-        for base_asset in potential_base_assets:
-            for quote_asset in all_quotes_to_check:
-                if base_asset == quote_asset: continue
-                pair = f"{base_asset}{quote_asset}"
-                if pair in processed_pairs: continue
-                processed_pairs.add(pair)
+        try:
+            for base_asset in potential_base_assets:
+                for quote_asset in all_quotes_to_check:
+                    if base_asset == quote_asset: continue
+                    pair = f"{base_asset}{quote_asset}"
+                    if pair in processed_pairs: continue
+                    processed_pairs.add(pair)
 
-                chunk_start = current_chunk_start_dt
-                while chunk_start < now_utc:
-                    chunk_end = min(chunk_start + datetime.timedelta(hours=23), now_utc)
-                    try:
-                        trades = self.binance_client.get_my_trades(symbol=pair, startTime=int(chunk_start.timestamp()*1000), endTime=int(chunk_end.timestamp()*1000), limit=1000)
-                        for trade in trades:
-                            timestamp = pd.to_datetime(trade.get('time'), unit='ms', utc=True)
-                            if pd.isna(timestamp):
-                                self.logger.warning(f"Skipping trade with invalid timestamp: {trade}")
-                                continue
-                            raw_transactions.append({'tx_type': 'TRADE', 'timestamp': timestamp, 'source': 'Binance Trade', 'transaction_hash': f"binance_trade_{trade['id']}", 'raw_data': {'base_asset': self.symbol_mappings.normalize_symbol(base_asset), 'quote_asset': self.symbol_mappings.normalize_symbol(quote_asset), 'is_buyer': trade['isBuyer'], 'quantity': float(trade['qty']), 'price': float(trade['price']), 'fee_quantity': float(trade['commission']), 'fee_currency': self.symbol_mappings.normalize_symbol(trade['commissionAsset'])}})
-                    except BinanceAPIException as e:
-                        if e.code == -1121: self.logger.debug(f"Invalid pair: {pair}. Skipping.")
-                        else: self.logger.error(f"[{source_name}] API Error fetching trades for {pair}: {e}")
-                        break
-                    except Exception as e:
-                        self.logger.error(f"[{source_name}] Error fetching trades for {pair}: {e}")
-                    chunk_start = chunk_end
-        return raw_transactions
+                    chunk_start = current_chunk_start_dt
+                    while chunk_start < now_utc:
+                        chunk_end = min(chunk_start + datetime.timedelta(hours=23), now_utc)
+                        try:
+                            trades = self.binance_client.get_my_trades(symbol=pair, startTime=int(chunk_start.timestamp()*1000), endTime=int(chunk_end.timestamp()*1000), limit=1000)
+                            for trade in trades:
+                                timestamp = pd.to_datetime(trade.get('time'), unit='ms', utc=True)
+                                if pd.isna(timestamp):
+                                    self.logger.warning(f"Skipping trade with invalid timestamp: {trade}")
+                                    continue
+                                raw_transactions.append({'tx_type': 'TRADE', 'timestamp': timestamp, 'source': 'Binance Trade', 'transaction_hash': f"binance_trade_{trade['id']}", 'raw_data': {'base_asset': self.symbol_mappings.normalize_symbol(base_asset), 'quote_asset': self.symbol_mappings.normalize_symbol(quote_asset), 'is_buyer': trade['isBuyer'], 'quantity': float(trade['qty']), 'price': float(trade['price']), 'fee_quantity': float(trade['commission']), 'fee_currency': self.symbol_mappings.normalize_symbol(trade['commissionAsset'])}})
+                        except BinanceAPIException as e:
+                            if e.code == -1121: self.logger.debug(f"Invalid pair: {pair}. Skipping.")
+                            else: self.logger.error(f"[{source_name}] API Error fetching trades for {pair}: {e}")
+                            break
+                        except Exception as e:
+                            self.logger.error(f"[{source_name}] Error fetching trades for {pair}: {e}")
+                        chunk_start = chunk_end
+            return raw_transactions
+        except Exception as e:
+            self.logger.error(f"Unexpected error fetching Binance transactions: {e}", exc_info=True)
+            raise NetworkOperationError(f"Failed to fetch Binance transactions: {e}")
 
     def fetch_deposit_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
@@ -169,9 +173,35 @@ class BinanceFetcher:
                 normalized_symbol = self.symbol_mappings.normalize_symbol(deposit.get('coin').upper())
                 if normalized_symbol not in self.target_assets_for_sync: continue
                 raw_transactions.append({'tx_type': 'DEPOSIT', 'timestamp': timestamp, 'source': 'Binance Deposit', 'transaction_hash': deposit.get('txId'), 'raw_data': {'symbol': normalized_symbol, 'quantity': float(deposit.get('amount', 0)), 'notes': f"Network: {deposit.get('network')}"}})
+            return raw_transactions
+        except BinanceAPIException as e:
+            if getattr(e, 'code', None) == -1021:
+                self.logger.warning("BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once.")
+                self._resync_time()
+                try:
+                    for deposit in self.binance_client.get_deposit_history(startTime=start_ms, endTime=end_ms, status=1):
+                        timestamp = pd.to_datetime(deposit.get('insertTime'), unit='ms', utc=True)
+                        if pd.isna(timestamp): continue
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(deposit.get('coin').upper())
+                        if normalized_symbol not in self.target_assets_for_sync: continue
+                        raw_transactions.append({'tx_type': 'DEPOSIT', 'timestamp': timestamp, 'source': 'Binance Deposit', 'transaction_hash': deposit.get('txId'), 'raw_data': {'symbol': normalized_symbol, 'quantity': float(deposit.get('amount', 0)), 'notes': f"Network: {deposit.get('network')}"}})
+                    return raw_transactions
+                except BinanceAPIException as e2:
+                    if getattr(e2, 'code', None) == -1021:
+                        self.logger.error("Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                        print("❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                    else:
+                        self.logger.error(f"Error fetching deposit history after retry: {e2}", exc_info=True)
+                        print(f"❌ Binance API error: {e2}")
+            elif getattr(e, 'code', None) == -2015:
+                self.logger.error("BinanceAPIException -2015: Invalid API-key, IP, or permissions for action.")
+                print("❌ Binance API error: Invalid API-key, IP, or permissions for action. Please check your API credentials and permissions.")
+            else:
+                self.logger.error(f"Error fetching deposit history: {e}", exc_info=True)
+                print(f"❌ Binance API error: {e}")
         except Exception as e:
-            self.logger.error(f"Error fetching deposit history: {e}")
-        return raw_transactions
+            self.logger.error(f"Unexpected error fetching deposit history: {e}", exc_info=True)
+            print(f"❌ Unexpected error: {e}")
 
     def fetch_withdrawal_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
@@ -185,9 +215,32 @@ class BinanceFetcher:
                 normalized_symbol = self.symbol_mappings.normalize_symbol(withdrawal.get('coin').upper())
                 if normalized_symbol not in self.target_assets_for_sync: continue
                 raw_transactions.append({'tx_type': 'WITHDRAWAL', 'timestamp': timestamp, 'source': 'Binance Withdrawal', 'transaction_hash': withdrawal.get('txId') or f"binance_withdraw_{withdrawal.get('id')}", 'raw_data': {'symbol': normalized_symbol, 'quantity': float(withdrawal.get('amount', 0)), 'fee_quantity': float(withdrawal.get('transactionFee', 0.0)), 'fee_currency': normalized_symbol}})
+            return raw_transactions
+        except BinanceAPIException as e:
+            if getattr(e, 'code', None) == -1021:
+                self.logger.warning("BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once.")
+                self._resync_time()
+                try:
+                    for withdrawal in self.binance_client.get_withdraw_history(startTime=start_ms, endTime=end_ms, status=6):
+                        timestamp = pd.to_datetime(withdrawal.get('applyTime'), utc=True)
+                        if pd.isna(timestamp): continue
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(withdrawal.get('coin').upper())
+                        if normalized_symbol not in self.target_assets_for_sync: continue
+                        raw_transactions.append({'tx_type': 'WITHDRAWAL', 'timestamp': timestamp, 'source': 'Binance Withdrawal', 'transaction_hash': withdrawal.get('txId') or f"binance_withdraw_{withdrawal.get('id')}", 'raw_data': {'symbol': normalized_symbol, 'quantity': float(withdrawal.get('amount', 0)), 'fee_quantity': float(withdrawal.get('transactionFee', 0.0)), 'fee_currency': normalized_symbol}})
+                    return raw_transactions
+                except BinanceAPIException as e2:
+                    if getattr(e2, 'code', None) == -1021:
+                        self.logger.error("Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                        print("❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                    else:
+                        self.logger.error(f"Error fetching withdrawal history after retry: {e2}", exc_info=True)
+                        print(f"❌ Binance API error: {e2}")
+            else:
+                self.logger.error(f"Error fetching withdrawal history: {e}", exc_info=True)
+                print(f"❌ Binance API error: {e}")
         except Exception as e:
-            self.logger.error(f"Error fetching withdrawal history: {e}")
-        return raw_transactions
+            self.logger.error(f"Unexpected error fetching withdrawal history: {e}", exc_info=True)
+            print(f"❌ Unexpected error: {e}")
 
     def fetch_p2p_usdt_buys(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         """
@@ -204,8 +257,8 @@ class BinanceFetcher:
         current_page = 1
         PAGE_SIZE = 100
 
-        while True:
-            try:
+        try:
+            while True:
                 history = self.binance_client.get_c2c_trade_history(tradeType='BUY', page=current_page, rows=PAGE_SIZE, startTimestamp=start_ms, endTimestamp=end_ms)
                 trades_in_page = history.get('data', [])
                 if not trades_in_page: break
@@ -218,32 +271,79 @@ class BinanceFetcher:
                 if len(trades_in_page) < PAGE_SIZE: break
                 current_page += 1
                 time.sleep(0.5)
-            except Exception as e:
-                self.logger.error(f"Error fetching P2P history: {e}")
-                break
+            # Step 2: De-duplicate the COMPLETED trades by orderNumber to be 100% safe.
+            # This handles the case where the API might send the same completed order twice.
+            unique_trades = {trade['orderNumber']: trade for trade in all_completed_trades}
+            final_trades = list(unique_trades.values())
 
-        # Step 2: De-duplicate the COMPLETED trades by orderNumber to be 100% safe.
-        # This handles the case where the API might send the same completed order twice.
-        unique_trades = {trade['orderNumber']: trade for trade in all_completed_trades}
-        final_trades = list(unique_trades.values())
+            raw_transactions = []
+            for trade in final_trades:
+                raw_transactions.append({
+                    'tx_type': 'P2P_BUY',
+                    'timestamp': pd.to_datetime(trade.get('createTime'), unit='ms', utc=True),
+                    'source': 'Binance P2P Buy',
+                    'transaction_hash': trade.get('orderNumber'),
+                    'raw_data': {
+                        'asset': 'USDT',
+                        'quantity': float(trade.get('amount', 0)),
+                        'fiat_currency': p2p_fiat_currency,
+                        'fiat_amount': float(trade.get('totalPrice', 0))
+                    }
+                })
 
-        raw_transactions = []
-        for trade in final_trades:
-            raw_transactions.append({
-                'tx_type': 'P2P_BUY',
-                'timestamp': pd.to_datetime(trade.get('createTime'), unit='ms', utc=True),
-                'source': 'Binance P2P Buy',
-                'transaction_hash': trade.get('orderNumber'),
-                'raw_data': {
-                    'asset': 'USDT',
-                    'quantity': float(trade.get('amount', 0)),
-                    'fiat_currency': p2p_fiat_currency,
-                    'fiat_amount': float(trade.get('totalPrice', 0))
-                }
-            })
+            self.logger.debug(f"Found {len(raw_transactions)} COMPLETED and de-duplicated P2P buy transactions.")
+            return raw_transactions
+        except BinanceAPIException as e:
+            if getattr(e, 'code', None) == -1021:
+                self.logger.warning("BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once.")
+                self._resync_time()
+                try:
+                    current_page = 1
+                    all_completed_trades = []
+                    while True:
+                        history = self.binance_client.get_c2c_trade_history(tradeType='BUY', page=current_page, rows=PAGE_SIZE, startTimestamp=start_ms, endTimestamp=end_ms)
+                        trades_in_page = history.get('data', [])
+                        if not trades_in_page: break
+                        for trade in trades_in_page:
+                            if trade.get('orderStatus') == 'COMPLETED':
+                                all_completed_trades.append(trade)
+                        if len(trades_in_page) < PAGE_SIZE: break
+                        current_page += 1
+                    # Step 2: De-duplicate the COMPLETED trades by orderNumber to be 100% safe.
+                    # This handles the case where the API might send the same completed order twice.
+                    unique_trades = {trade['orderNumber']: trade for trade in all_completed_trades}
+                    final_trades = list(unique_trades.values())
 
-        self.logger.debug(f"Found {len(raw_transactions)} COMPLETED and de-duplicated P2P buy transactions.")
-        return raw_transactions
+                    raw_transactions = []
+                    for trade in final_trades:
+                        raw_transactions.append({
+                            'tx_type': 'P2P_BUY',
+                            'timestamp': pd.to_datetime(trade.get('createTime'), unit='ms', utc=True),
+                            'source': 'Binance P2P Buy',
+                            'transaction_hash': trade.get('orderNumber'),
+                            'raw_data': {
+                                'asset': 'USDT',
+                                'quantity': float(trade.get('amount', 0)),
+                                'fiat_currency': p2p_fiat_currency,
+                                'fiat_amount': float(trade.get('totalPrice', 0))
+                            }
+                        })
+
+                    self.logger.debug(f"Found {len(raw_transactions)} COMPLETED and de-duplicated P2P buy transactions.")
+                    return raw_transactions
+                except BinanceAPIException as e2:
+                    if getattr(e2, 'code', None) == -1021:
+                        self.logger.error("Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                        print("❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                    else:
+                        self.logger.error(f"Error fetching P2P USDT buys after retry: {e2}", exc_info=True)
+                        print(f"❌ Binance API error: {e2}")
+            else:
+                self.logger.error(f"Error fetching P2P USDT buys: {e}", exc_info=True)
+                print(f"❌ Binance API error: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error fetching P2P USDT buys: {e}", exc_info=True)
+            print(f"❌ Unexpected error: {e}")
 
     def fetch_spot_convert_history(self, source_name: str, days_back: int = 90, latest_known_ts: Optional[datetime.datetime] = None) -> List[Dict[str, Any]]:
         time_window = self._get_start_end_timestamps(source_name, days_back, latest_known_ts)
@@ -260,9 +360,35 @@ class BinanceFetcher:
                     to_asset = self.symbol_mappings.normalize_symbol(trade['toAsset'].upper())
                     if not (from_asset in self.target_assets_for_sync or to_asset in self.target_assets_for_sync): continue
                     raw_transactions.append({'tx_type': 'CONVERT', 'timestamp': timestamp, 'source': 'Binance Convert', 'transaction_hash': f"convert_{trade.get('quoteId')}", 'raw_data': {'from_asset': from_asset, 'from_quantity': float(trade['fromAmount']), 'to_asset': to_asset, 'to_quantity': float(trade['toAmount'])}})
+            return raw_transactions
+        except BinanceAPIException as e:
+            if getattr(e, 'code', None) == -1021:
+                self.logger.warning("BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once.")
+                self._resync_time()
+                try:
+                    history = self.binance_client.get_convert_trade_history(startTime=start_ms, endTime=end_ms, limit=1000)
+                    for trade in history.get('list', []):
+                        if trade.get('orderStatus') == "SUCCESS":
+                            timestamp = pd.to_datetime(trade.get('createTime'), unit='ms', utc=True)
+                            if pd.isna(timestamp): continue
+                            from_asset = self.symbol_mappings.normalize_symbol(trade['fromAsset'].upper())
+                            to_asset = self.symbol_mappings.normalize_symbol(trade['toAsset'].upper())
+                            if not (from_asset in self.target_assets_for_sync or to_asset in self.target_assets_for_sync): continue
+                            raw_transactions.append({'tx_type': 'CONVERT', 'timestamp': timestamp, 'source': 'Binance Convert', 'transaction_hash': f"convert_{trade.get('quoteId')}", 'raw_data': {'from_asset': from_asset, 'from_quantity': float(trade['fromAmount']), 'to_asset': to_asset, 'to_quantity': float(trade['toAmount'])}})
+                    return raw_transactions
+                except BinanceAPIException as e2:
+                    if getattr(e2, 'code', None) == -1021:
+                        self.logger.error("Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                        print("❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings.")
+                    else:
+                        self.logger.error(f"Error fetching spot convert history after retry: {e2}", exc_info=True)
+                        print(f"❌ Binance API error: {e2}")
+            else:
+                self.logger.error(f"Error fetching spot convert history: {e}", exc_info=True)
+                print(f"❌ Binance API error: {e}")
         except Exception as e:
-            self.logger.error(f"Error fetching Spot Convert history: {e}")
-        return raw_transactions
+            self.logger.error(f"Unexpected error fetching spot convert history: {e}", exc_info=True)
+            print(f"❌ Unexpected error: {e}")
 
     def fetch_simple_earn_balances(self, spot_balances_df: pd.DataFrame) -> Dict[str, float]:
         """
@@ -458,3 +584,15 @@ class BinanceFetcher:
         except Exception as e:
             self.logger.error(f"An unexpected error occurred fetching funding wallet: {e}")
             return []
+
+    def _resync_time(self):
+        """Synchronize local time with Binance server."""
+        try:
+            self.logger.info("Re-synchronizing time with Binance server for fresh data...")
+            server_time = self.binance_client.get_server_time()['serverTime']
+            local_time = int(time.time() * 1000)
+            time_offset = server_time - local_time
+            self.binance_client._server_time_offset = time_offset
+            self.logger.info(f"Time re-synchronized for balance fetch. Offset: {time_offset}ms.")
+        except Exception as e:
+            self.logger.error(f"Failed to sync time with Binance: {e}", exc_info=True)

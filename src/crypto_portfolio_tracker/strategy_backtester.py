@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from typing import Dict, Any, Optional
 
-from . crypto_trend_analyzer import CryptoTrendAnalyzer
+from .crypto_trend_analyzer import CryptoTrendAnalyzer
 
 
 class StrategyBacktester:
@@ -30,7 +30,7 @@ class StrategyBacktester:
         self.trade_log = []
         self.portfolio_value_history = []
         self.data = None
-        self.logger.info(f"Backtester state reset. Initial capital: ${self.initial_capital:,.2f}")
+        self.logger.debug(f"Backtester state reset. Initial capital: ${self.initial_capital:,.2f}")
 
     def _execute_trade(self, date, signal: str, price: float, reason: str, size: float):
         """Executes a simulated buy or sell trade using a specified size."""
