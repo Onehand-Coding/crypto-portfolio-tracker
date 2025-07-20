@@ -265,6 +265,20 @@ class RebalancingBacktester:
         strategy_volatility = strategy_returns_pct.std() * np.sqrt(252)
         sharpe_ratio = (strategy_returns_pct.mean() * 252) / strategy_volatility if strategy_volatility > 0 else 0
 
+        # Store statistics for Streamlit UI
+        self.summary_stats = {
+            'Initial Capital': self.initial_capital,
+            'Final Portfolio Value': final_value,
+            'Strategy Total Return': strategy_return,
+            'Buy & Hold Return': buy_hold_return,
+            'Strategy Outperformance': strategy_return - buy_hold_return,
+            'Maximum Drawdown': -self.max_drawdown,
+            'Annualized Volatility': strategy_volatility,
+            'Sharpe Ratio': sharpe_ratio,
+            'Total Trades Executed': len(self.trade_log)
+        }
+
+        # Print the report (existing code)
         print("\n" + "=" * 80)
         print("DYNAMIC REBALANCING STRATEGY - BACKTEST REPORT")
         print("=" * 80)

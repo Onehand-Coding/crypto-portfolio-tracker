@@ -512,3 +512,13 @@ class DatabaseManager:
         except Exception as e_generic:
             self.logger.error(f"Generic error during delete: {e_generic}", exc_info=True)
             raise DatabaseOperationError(f"Generic error during delete: {e_generic}")
+
+    def get_all_snapshots(self) -> pd.DataFrame:
+        """Fetch all portfolio snapshots from the database."""
+        query = "SELECT * FROM portfolio_snapshots ORDER BY timestamp;"
+        try:
+            with self._get_connection() as conn:
+                return pd.read_sql_query(query, conn, parse_dates=['timestamp'])
+        except Exception as e:
+            self.logger.error(f"Error fetching all snapshots: {e}")
+            return pd.DataFrame()

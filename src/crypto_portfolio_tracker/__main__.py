@@ -79,20 +79,16 @@ def print_main_menu(offline_mode=False):
     print("1. 🔄 Full Sync & Analysis")
     print("2. 📊 Quick Portfolio Summary")
     print("3. 📈 View Crypto Trends")
-    print("4. ⚖️  View Rebalance Suggestions")
-    print("5. 🤖 Execute Rebalancing Trades")
-    print("6. 🔀 TRADE Manual Trade")
-    print("7. 💰 Live Trading")
-    print("8. 🧪 Run Strategy Backtest")
-    print("9. ⚖️  Run Rebalancing Backtest")
-    print("10. 📋 Export Reports")
-    print("11. 📈 Generate Charts")
-    print("12. 💾 Export Data Backup (CSV)")
-    print("13. 🗄️  Backup / Restore Database")
-    print("14. 🧹 Clean Old Data")
-    print("15. ⚙️  View Configuration")
-    print("16. 🔧 Test API Connections")
-    print("17. ❌ Exit")
+    print("4. 🤖 Execute Rebalancing Trades")
+    print("5. 🔀 Trading")
+    print("6. 🧪 Backtesting")
+    print("7. 📋 Export Reports / Data")
+    print("8. 📈 Generate Charts")
+    print("9. 🗄️  Backup / Restore Database")
+    print("10. 🧹 Clean Old Data")
+    print("11. ⚙️  View Configuration")
+    print("12. 🔧 Test API Connections")
+    print("13. ❌ Exit")
     print("="*50)
 
 
@@ -100,11 +96,11 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
     """Runs the main interactive menu loop, now fully asynchronous."""
     loop = asyncio.get_event_loop()
     offline_mode = getattr(tracker, "offline_mode", False)
-    unavailable_offline = {1,2,3,4,5,6,7,8,10,11}
+    unavailable_offline = {1,2,3,4,5,6,7,8}
     while True:
         print_main_menu(offline_mode)
         try:
-            choice_str = await loop.run_in_executor(None, input, "Select option (1-17): ")
+            choice_str = await loop.run_in_executor(None, input, "Select option (1-13): ")
             choice = int(choice_str) if choice_str.isdigit() else -1
 
             if offline_mode and choice in unavailable_offline:
@@ -124,41 +120,69 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 case 3:
                     await tracker.view_trends()
                 case 4:
-                    print("\n⚖️  Generating rebalance suggestions...")
-                    suggestions = await tracker.get_core_portfolio_rebalance_suggestions_technical()
-                    tracker.print_rebalance_suggestions(suggestions)
-                case 5:
                     await tracker.run_rebalance_and_execute()
+                case 5:
+                    # Trading submenu: Manual or Live
+                    print("\n--- 🔀 Trading ---")
+                    print("1. Manual Trade (Buy/Sell)")
+                    print("2. Live Trading Strategy")
+                    print("Press Enter to return to main menu.")
+                    sub_choice = await loop.run_in_executor(None, input, "Select option (1-2): ")
+                    if sub_choice == "1":
+                        await tracker.run_manual_trade_session()
+                    elif sub_choice == "2":
+                        await tracker.run_live_strategy()
+                    else:
+                        print("Returning to main menu...")
                 case 6:
-                    await tracker.run_manual_trade_session()
+                    # Backtesting submenu: Strategy or Rebalancing
+                    print("\n--- 🧪 Backtesting ---")
+                    print("1. Strategy Backtest")
+                    print("2. Rebalancing Backtest")
+                    print("Press Enter to return to main menu.")
+                    sub_choice = await loop.run_in_executor(None, input, "Select option (1-2): ")
+                    if sub_choice == "1":
+                        await tracker.run_trading_strategy_backtest()
+                    elif sub_choice == "2":
+                        await tracker.run_rebalancing_backtest()
+                    else:
+                        print("Returning to main menu...")
                 case 7:
-                    await tracker.run_live_strategy()
-                case 8:
-                    await tracker.run_trading_strategy_backtest()
-                case 9:
-                    await tracker.run_rebalancing_backtest()
-                case 10:
-                    print("\n📋 Exporting reports...")
+                    # Export submenu: Excel, HTML, CSV, or All
+                    print("\n--- 📋 Export Reports / Data ---")
+                    print("1. Export Excel Report")
+                    print("2. Export HTML Report")
+                    print("3. Export CSV Data Backup")
+                    print("4. Export ALL (Excel, HTML, CSV)")
+                    print("Press Enter to return to main menu.")
+                    sub_choice = await loop.run_in_executor(None, input, "Select option (1-4): ")
                     metrics = await tracker.calculate_portfolio_metrics()
-                    tracker.export_to_excel(metrics)
-                    tracker.export_to_html(metrics)
-                case 11:
+                    if sub_choice == "1":
+                        tracker.export_to_excel(metrics)
+                    elif sub_choice == "2":
+                        tracker.export_to_html(metrics)
+                    elif sub_choice == "3":
+                        tracker.export_csv_backup()
+                    elif sub_choice == "4":
+                        tracker.export_to_excel(metrics)
+                        tracker.export_to_html(metrics)
+                        tracker.export_csv_backup()
+                    else:
+                        print("Returning to main menu...")
+                case 8:
                     print("\n📈 Generating charts...")
                     metrics = await tracker.calculate_portfolio_metrics()
                     tracker.create_portfolio_charts(metrics)
-                case 12:
-                    print("\n💾 Exporting data backup...")
-                    tracker.export_csv_backup()
-                case 13:
+                case 9:
                     tracker.run_backup_and_restore_session()
-                case 14:
+                case 10:
                     print("\n🧹 Cleaning old data...")
                     tracker.cleanup_old_data()
-                case 15:
+                case 11:
                     tracker.print_configuration()
-                case 16:
+                case 12:
                     tracker.test_connections()
-                case 17:
+                case 13:
                     print("👋 Exiting. Goodbye!")
                     break
                 case _:

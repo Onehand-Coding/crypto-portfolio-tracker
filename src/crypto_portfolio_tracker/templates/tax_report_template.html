@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Crypto Tax Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #181a20; color: #eee; }
+        .container { max-width: 900px; margin: 30px auto; background: #232946; padding: 30px; border-radius: 8px; }
+        h1 { color: #e94560; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #393e6e; padding: 8px 12px; }
+        th { background: #393e6e; }
+        tr:nth-child(even) { background: #24283b; }
+        tr:nth-child(odd) { background: #232946; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧾 Crypto Tax Report</h1>
+        <p>Generated on: {{ timestamp }}</p>
+        {{ tax_table|safe }}
+    </div>
+</body>
+</html>

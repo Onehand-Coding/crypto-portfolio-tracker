@@ -103,9 +103,9 @@ class StrategyBacktester:
         self.logger.info("Backtest run finished.")
 
     def generate_report(self):
-        """Calculates and prints the performance report."""
+        """Calculates and prints the performance report, and stores results for UI."""
         if not self.portfolio_value_history:
-            print("No backtest data to generate a report.")
+            self.summary_stats = None
             return
 
         final_value = self.portfolio_value_history[-1]
@@ -117,6 +117,31 @@ class StrategyBacktester:
 
         outperformance = total_return_pct - buy_hold_return_pct
 
+        # Calculate volatility, sharpe, drawdown
+        returns = pd.Series(self.portfolio_value_history).pct_change().fillna(0)
+        volatility = returns.std() * (252 ** 0.5)
+        sharpe = (returns.mean() * 252) / volatility if volatility > 0 else 0
+
+        max_drawdown = 0
+        peak = self.portfolio_value_history[0]
+        for v in self.portfolio_value_history:
+            peak = max(peak, v)
+            dd = (peak - v) / peak
+            max_drawdown = max(max_drawdown, dd)
+
+        self.summary_stats = {
+            "Initial Capital": self.initial_capital,
+            "Final Portfolio Value": final_value,
+            "Strategy Total Return": total_return_pct / 100,
+            "Buy & Hold Return": buy_hold_return_pct / 100,
+            "Strategy Outperformance": outperformance / 100,
+            "Maximum Drawdown": -max_drawdown,
+            "Annualized Volatility": volatility,
+            "Sharpe Ratio": sharpe,
+            "Total Trades Executed": len(self.trade_log)
+        }
+
+        # (Optional) Still print for CLI
         print("\n" + "="*80)
         print(f"📈 BACKTEST PERFORMANCE REPORT: {self.symbol} ({self.data.index[0].year} - {self.data.index[-1].year})")
         print(f"Strategy: {self.strategy_name}")
@@ -130,7 +155,6 @@ class StrategyBacktester:
         print("-" * 40)
         print(f"Total Trades Executed:   {len(self.trade_log)}")
         print("="*80)
-
         print("\n--- Trade Log (First 15) ---")
         for trade in self.trade_log[:15]:
             print(trade)

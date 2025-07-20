@@ -760,7 +760,7 @@ class CryptoPortfolioTracker:
         except Exception as e:
             self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
 
-    async def _execute_rebalancing_trades(self, suggestions_df: pd.DataFrame, earn_balances: Dict[str, float], interactive: bool):
+    async def _execute_rebalancing_trades(self, suggestions_df, earn_balances, interactive, auto_confirm=False):
         """
         Executes rebalancing trades, enforcing minimum trade size and updating
         simulated balances after each trade to enable sequential funding.
@@ -802,18 +802,18 @@ class CryptoPortfolioTracker:
 
         items_to_process = []
         if not interactive:
-            print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-            print(trades_to_execute[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
-            print("="*80)
-            try:
+            if auto_confirm:
+                items_to_process = list(trades_to_execute.iterrows())
+            else:
+                print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
+                print(trades_to_execute[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
+                print("="*80)
                 confirm = input("Type EXECUTE ALL to proceed with all trades listed above: ")
                 if confirm == "EXECUTE ALL":
                     self.logger.info("User confirmed bulk trade execution.")
                     items_to_process = list(trades_to_execute.iterrows())
                 else:
                     print("🛑 Bulk trade execution cancelled by user."); return
-            except KeyboardInterrupt:
-                print("\n🛑 Trade execution cancelled by user."); return
         else:
             print("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
             for index, row in trades_to_execute.iterrows():
@@ -1443,7 +1443,7 @@ class CryptoPortfolioTracker:
                     print("🟡 TESTNET MODE: Skipping Earn wallet check.")
 
                 # Pass everything to the Executor with the chosen mode
-                await self._execute_rebalancing_trades(suggestions_df, earn_balances, interactive=interactive_mode)
+                await self._execute_rebalancing_trades(suggestions_df, earn_balances, interactive=interactive_mode, auto_confirm=True)
                 return # Exit after execution attempt
 
             else:

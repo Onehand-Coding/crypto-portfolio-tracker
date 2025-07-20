@@ -1,6 +1,7 @@
 import pandas as pd
 import pandas_ta as ta
 from typing import Tuple, Optional, List, Dict, Any
+import streamlit as st
 
 from .crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
@@ -71,6 +72,15 @@ class MultiTimeframeMomentumStrategy(Strategy):
     """
     valid_intervals = ['1d']
     strategy_type = 'swing'
+    strategy_param_specs = {
+        "trailing_stop_pct": {
+            "type": "float",
+            "label": "Trailing Stop (%)",
+            "default": 20.0,
+            "min_value": 1.0,
+            "max_value": 99.0,
+        }
+    }
 
     def __init__(self, analyzer: CryptoTrendAnalyzer, state: Optional[Dict[str, Any]] = None, trailing_stop_pct: float = 0.20, **kwargs):
         super().__init__(analyzer=analyzer, state=state, **kwargs)
@@ -150,6 +160,20 @@ class OpeningRangeBreakoutStrategy(Strategy):
     """
     valid_intervals = ['15m', '1h']
     strategy_type = 'day'
+    strategy_param_specs = {
+        "range_duration": {
+            "type": "text",
+            "label": "Opening Range Duration (e.g., '1h', '30m')",
+            "default": "1h"
+        },
+        "risk_per_trade_pct": {
+            "type": "float",
+            "label": "Capital to Risk per Trade (%)",
+            "default": 20.0,
+            "min_value": 1.0,
+            "max_value": 100.0,
+        }
+    }
 
     def __init__(self, analyzer: CryptoTrendAnalyzer, state: Optional[Dict[str, Any]] = None, range_duration: str = "1h", risk_per_trade_pct: float = 0.20, **kwargs):
         super().__init__(analyzer=analyzer, state=state, **kwargs)
@@ -226,8 +250,7 @@ class OpeningRangeBreakoutStrategy(Strategy):
             self._state['stop_loss'] = opening_range_low
             return "BUY", self.risk_per_trade_pct, f"Breakout above {self.range_duration} range high ${opening_range_high:.2f}"
 
-        return "HOLD", 0.0, "Awaiting breakout."#
-
+        return "HOLD", 0.0, "Awaiting breakout."
 
 
 class VolatilityAdaptiveEMASwing(Strategy):
@@ -385,3 +408,4 @@ class ORBWithVolumeFilter(Strategy):
             return "BUY", 1.0, f"Volume-confirmed breakout above ${self._state['opening_range_high']:.2f}"
 
         return "HOLD", 0.0, "Awaiting valid breakout"
+
