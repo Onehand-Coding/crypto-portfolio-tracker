@@ -11,16 +11,31 @@ import streamlit as st
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-from collections import deque
 from jinja2 import Environment, FileSystemLoader
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+import matplotlib.dates as mdates
 
 from crypto_portfolio_tracker import trading_strategies
 from crypto_portfolio_tracker.config import ConfigManager
-from crypto_portfolio_tracker.exceptions import NetworkOperationError
 from crypto_portfolio_tracker.strategy_backtester import StrategyBacktester
+from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
-from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker, NetworkUnavailableError, calculate_fifo_cost_basis
+from crypto_portfolio_tracker.exceptions import NetworkOperationError, NetworkUnavailableError
+from crypto_portfolio_tracker.utils import (
+    parse_df_string,
+    format_percent,
+    format_usd,
+    format_qty,
+    build_holdings_table,
+    clean_futures_balances,
+    clean_funding_balances,
+    clean_export_df,
+    calculate_fifo_realized_gains,
+    calculate_fifo_cost_basis,
+)
 
 # Suppress pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
@@ -91,161 +106,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-def calculate_fifo_realized_gains(transactions_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Calculates realized gains/losses for each SELL using FIFO.
-    Returns a DataFrame with columns:
-    ['date', 'symbol', 'quantity', 'proceeds_usd', 'cost_basis_usd', 'gain_usd']
-    """
-    results = []
-    for symbol, group in transactions_df.groupby("symbol"):
-        # Sort by timestamp
-        group = group.sort_values("timestamp").reset_index(drop=True)
-        buy_lots = deque()
-        for idx, row in group.iterrows():
-            tx_type = row["type"]
-            quantity = float(row["quantity"])
-            price = float(row["price_usd"])
-            fee_usd = float(row.get("fee_usd", 0.0)) if not pd.isna(row.get("fee_usd", 0.0)) else 0.0
-            date = pd.to_datetime(row["timestamp"])
-            if tx_type in ["BUY", "DEPOSIT"]:
-                # Add to FIFO queue
-                total_cost = (quantity * price) + fee_usd
-                effective_price = total_cost / quantity if quantity > 0 else 0.0
-                buy_lots.append({"qty": quantity, "price": effective_price})
-            elif tx_type in ["SELL", "WITHDRAWAL"]:
-                sell_qty = quantity
-                proceeds = quantity * price - fee_usd  # Net proceeds after fee
-                cost_basis = 0.0
-                lots_used = []
-                while sell_qty > 0 and buy_lots:
-                    lot = buy_lots[0]
-                    lot_qty = lot["qty"]
-                    lot_price = lot["price"]
-                    if lot_qty <= sell_qty:
-                        used_qty = lot_qty
-                        cost_basis += used_qty * lot_price
-                        sell_qty -= used_qty
-                        buy_lots.popleft()
-                    else:
-                        used_qty = sell_qty
-                        cost_basis += used_qty * lot_price
-                        lot["qty"] -= used_qty
-                        sell_qty = 0
-                # If not enough buys, cost_basis for missing qty is 0 (could warn)
-                gain = proceeds - cost_basis
-                results.append({
-                    "date": date,
-                    "symbol": symbol,
-                    "quantity": quantity,
-                    "proceeds_usd": proceeds,
-                    "cost_basis_usd": cost_basis,
-                    "gain_usd": gain,
-                })
-    return pd.DataFrame(results)
-
-
-def parse_df_string(df_string):
-    """Parse a DataFrame from its .to_string() output."""
-    return pd.read_fwf(io.StringIO(df_string))
-
-def format_percent(val):
-    return f"{val:.2f}%" if pd.notnull(val) else ""
-
-def format_usd(val):
-    return f"${val:,.2f}" if pd.notnull(val) else ""
-
-def format_qty(val):
-    return f"{val:,.8f}" if pd.notnull(val) else ""
-
-def build_holdings_table(df, alloc_col="allocation"):
-    # Columns: Asset, Total Qty, Spot Qty, Earn Qty, Value (USD), Cost Basis, P/L (USD), Alloc.
-    cols = [
-        ("Asset", "symbol"),
-        ("Total Qty", "total_quantity_api"),
-        ("Spot Qty", "spot_quantity"),
-        ("Earn Qty", "earn_quantity"),
-        ("Value (USD)", "value_usd"),
-        ("Cost Basis", "cost_basis_total"),
-        ("P/L (USD)", "unrealized_pl_usd"),
-        ("Alloc.", alloc_col),
-    ]
-    out = pd.DataFrame()
-    for label, col in cols:
-        if col in df.columns:
-            if "alloc" in col:
-                out[label] = (df[col] * 100).map(format_percent)
-            elif "usd" in col or "cost_basis" in col or "pl_usd" in col or "value" in col:
-                out[label] = df[col].map(format_usd)
-            elif "qty" in col or "quantity" in col:
-                out[label] = df[col].map(format_qty)
-            else:
-                out[label] = df[col]
-        else:
-            out[label] = ""
-    return out
-
-def clean_futures_balances(df):
-    # Only show nonzero balances
-    if "balance" in df.columns:
-        df = df[df["balance"].astype(float) > 0]
-    if df.empty:
-        return None
-    keep = ["asset", "balance", "availableBalance", "crossUnPnl"]
-    df = df[[col for col in keep if col in df.columns]].copy()
-    df.rename(columns={
-        "asset": "Asset",
-        "balance": "Balance",
-        "availableBalance": "Available",
-        "crossUnPnl": "Unrealized P/L"
-    }, inplace=True)
-    for col in ["Balance", "Available", "Unrealized P/L"]:
-        if col in df.columns:
-            df[col] = df[col].astype(float).map("{:,.8f}".format)
-    return df
-
-def clean_funding_balances(df):
-    # Only show nonzero balances
-    if "balance" in df.columns:
-        df = df[df["balance"].astype(float) > 0]
-    if df.empty:
-        return None
-    return df
-
-def clean_export_df(df):
-    # Map columns to user-friendly names and set desired order
-    col_map = {
-        "symbol": "Asset",
-        "total_quantity_api": "Total Qty",
-        "earn_quantity": "Earn Qty",
-        "total_quantity": "Total Qty",
-        "spot_quantity": "Spot Qty",
-        "average_cost_basis": "Avg Cost Basis",
-        "current_price": "Current Price",
-        "value_usd": "Value (USD)",
-        "cost_basis_total": "Cost Basis",
-        "unrealized_pl_usd": "Unrealized P/L (USD)",
-        "unrealized_pl_percent": "Unrealized P/L (%)",
-        "allocation": "Allocation (%)",
-        "is_core": "Core Asset"
-    }
-    # Desired column order
-    desired_order = [
-        "Asset", "Total Qty", "Spot Qty", "Earn Qty", "Current Price", "Value (USD)",
-        "Avg Cost Basis", "Cost Basis", "Unrealized P/L (USD)", "Unrealized P/L (%)", "Allocation (%)", "Core Asset"
-    ]
-    df = df.rename(columns=col_map)
-    # Only keep columns in desired order that exist in df
-    cols = [col for col in desired_order if col in df.columns]
-    df = df[cols]
-    # Format booleans and NaNs
-    for col in df.columns:
-        if df[col].dtype == bool:
-            df[col] = df[col].map({True: "Yes", False: "No"})
-        if df[col].dtype == float or df[col].dtype == int:
-            df[col] = df[col].fillna("")
-    return df
 
 class PortfolioDashboard:
     """Main Streamlit Dashboard class"""
@@ -346,14 +206,12 @@ class PortfolioDashboard:
         page = st.sidebar.radio(
             "Navigation",
             [
-                "🏠 Dashboard",
-                "📈 Market Trends",
-                "⚖️ Rebalancing",
-                "💰 Trading",
-                "🧪 Backtesting",
-                "📋 Reports & Export",
-                "📊 Charts",
-                "🗄️ Data Management",
+                "🏠 Home",
+                "📈 Market",
+                "⚖️ Rebalance",
+                "💰 Trade",
+                "🧪 Backtest",
+                "🗄️ Database",
                 "⚙️ Configuration",
                 "🔧 System Status"
             ]
@@ -400,7 +258,6 @@ class PortfolioDashboard:
             st.error(f"Sync failed: {str(e)}")
 
     def save_snapshot(self):
-        """Save portfolio snapshot"""
         tracker = self.initialize_tracker()
         try:
             if st.session_state.portfolio_metrics:
@@ -416,7 +273,7 @@ class PortfolioDashboard:
             st.info("No portfolio metrics available. Please sync first.")
             return
 
-        st.markdown("### 📊 Portfolio Summary")
+        # st.markdown("### 📊 Portfolio Summary")
         st.write(f"**Timestamp:** {metrics.get('timestamp', '')}")
         st.write(f"**Database:** {metrics.get('database', 'portfolio.db')}")
         st.write(f"**Total Portfolio Value:** {format_usd(metrics.get('total_value_usd', 0))}")
@@ -477,24 +334,456 @@ class PortfolioDashboard:
         else:
             st.info("No balances found.")
 
-    def render_dashboard_page(self):
+    def render_home_page(self):
+        import io
+        from pathlib import Path
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import plotly.express as px
+        import plotly.graph_objects as go
+
         tracker = self.initialize_tracker()
-        st.markdown("## 🏠 Portfolio Dashboard")
-        if st.button("🔄 Calculate Portfolio Metrics"):
-            if not st.session_state.offline_mode:
-                with st.spinner("Calculating portfolio metrics..."):
-                    metrics = asyncio.run(tracker.calculate_portfolio_metrics())
-                    st.session_state.portfolio_metrics = metrics
-                    st.success("Portfolio metrics calculated!")
-            else:
-                st.error("Portfolio metrics calculation unavailable in offline mode")
-        if not st.session_state.tracker_initialized:
-            st.info("Please wait while the tracker initializes...")
+        st.markdown("## 🏠 Home")
+
+        tracker = self.initialize_tracker()
+        metrics = st.session_state.get("portfolio_metrics")
+        if not metrics:
+            st.info("No portfolio metrics available. Please run a full sync first.")
             return
-        if st.session_state.portfolio_metrics:
-            self.display_metrics(st.session_state.portfolio_metrics)
-        else:
-            st.info("No portfolio data yet. Please sync your portfolio.")
+
+        holdings_df = metrics.get("holdings_df")
+        target_allocation = self.config_manager.config.get("target_allocation", {})
+        snapshots = None
+        try:
+            snapshots = tracker.db_manager.get_all_snapshots()
+        except Exception:
+            snapshots = None
+
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            "📊 Performance",
+            "📝 Trade Log",
+            "🧾 Tax Report",
+            "📂 View Exports",
+            "🟣 Allocation Pie",
+            "🟡 Allocation Comparison",
+            "🟢 P/L by Asset",
+            "🔵 Value Over Time"
+        ])
+
+        # --- 1. Portfolio Performance ---
+        with tab1:
+            st.header("📊 Portfolio Performance")
+            if st.button("🔄 Calculate Portfolio Metrics"):
+                if not st.session_state.offline_mode:
+                    with st.spinner("Calculating portfolio metrics..."):
+                        metrics = asyncio.run(tracker.calculate_portfolio_metrics())
+                        st.session_state.portfolio_metrics = metrics
+                        st.success("Portfolio metrics calculated!")
+                else:
+                    st.error("Portfolio metrics calculation unavailable in offline mode")
+            if not metrics:
+                st.info("No portfolio metrics available. Please run a full sync first.")
+            else:
+                self.display_metrics(metrics)
+                st.info("For a full, professional report, use the export buttons below.")
+                export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+                export_dir.mkdir(parents=True, exist_ok=True)
+                if st.button("Export to Excel"):
+                    tracker.export_to_excel(metrics)
+                    st.success("Excel report exported!")
+                if st.button("Export to HTML"):
+                    tracker.export_to_html(metrics)
+                    st.success("HTML report exported!")
+
+        # --- 2. Trade Log ---
+        with tab2:
+            st.header("📝 Trade Log")
+            db_manager = tracker.db_manager
+            try:
+                tx_df = db_manager.get_all_transactions()
+            except Exception as e:
+                st.error(f"Failed to load transactions: {e}")
+                tx_df = pd.DataFrame()
+            if tx_df.empty:
+                st.info("No transactions found.")
+            else:
+                # Clean up columns for display
+                col_map = {
+                    "timestamp": "Date/Time",
+                    "symbol": "Asset",
+                    "type": "Type",
+                    "quantity": "Quantity",
+                    "price": "Price (USD)",
+                    "fee_usd": "Fee (USD)",
+                    "side": "Side",
+                    "notes": "Notes",
+                    "source": "Trade Source",
+                }
+                desired_order = [
+                    "Date/Time", "Asset", "Type", "Side", "Quantity", "Price (USD)",
+                    "Fee (USD)", "Trade Source", "Notes"
+                ]
+                drop_cols = [col for col in ["id", "asset_id"] if col in tx_df.columns]
+                display_df = tx_df.drop(columns=drop_cols, errors="ignore")
+                display_df = display_df.rename(columns=col_map)
+
+                # Explicitly set column order for display
+                ordered_cols = [col for col in desired_order if col in display_df.columns]
+                display_df = display_df[ordered_cols]
+
+                display_df = display_df.reset_index(drop=True)
+                st.dataframe(display_df)
+                st.download_button("Download Trade Log (CSV)", tx_df.to_csv(index=False), "trade_log.csv")
+
+        # --- 4. Tax Report ---
+        with tab3:
+            st.header("🧾 Tax Report")
+            try:
+                tx_df = db_manager.get_all_transactions()
+            except Exception as e:
+                st.error(f"Failed to load transactions: {e}")
+                tx_df = pd.DataFrame()
+            if tx_df.empty:
+                st.info("No transactions found.")
+            else:
+                tax_df = calculate_fifo_realized_gains(tx_df)
+                if tax_df.empty:
+                    st.info("No taxable events found.")
+                else:
+                    tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        year = st.selectbox("Year", ["All"] + sorted(tax_df["year"].unique().astype(str)), key="tax_year")
+                    with col2:
+                        asset = st.selectbox("Asset", ["All"] + sorted(tax_df["symbol"].unique()), key="tax_asset")
+                    filtered = tax_df.copy()
+                    if year != "All":
+                        filtered = filtered[filtered["year"].astype(str) == year]
+                    if asset != "All":
+                        filtered = filtered[filtered["symbol"] == asset]
+                    tax_col_map = {
+                        "date": "Date",
+                        "symbol": "Asset",
+                        "quantity": "Quantity",
+                        "proceeds_usd": "Proceeds (USD)",
+                        "cost_basis_usd": "Cost Basis (USD)",
+                        "gain_usd": "Realized Gain (USD)",
+                        "year": "Year"
+                    }
+                    filtered = filtered.rename(columns=tax_col_map)
+                    for col in ["Proceeds (USD)", "Cost Basis (USD)", "Realized Gain (USD)"]:
+                        if col in filtered.columns:
+                            filtered[col] = filtered[col].map(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
+                    if "Quantity" in filtered.columns:
+                        filtered["Quantity"] = filtered["Quantity"].map(lambda x: f"{x:,.6f}" if pd.notnull(x) else "")
+                    st.dataframe(filtered)
+                    st.markdown("#### Summary")
+                    # 1. Group and aggregate on raw numeric columns
+                    summary = tax_df.copy()
+                    if year != "All":
+                        summary = summary[summary["year"].astype(str) == year]
+                    if asset != "All":
+                        summary = summary[summary["symbol"] == asset]
+
+                    summary = summary.groupby(["year", "symbol"]).agg(
+                        total_gain_usd=("gain_usd", "sum"),
+                        total_proceeds_usd=("proceeds_usd", "sum"),
+                        total_cost_basis_usd=("cost_basis_usd", "sum"),
+                        total_quantity=("quantity", "sum"),
+                    ).reset_index()
+
+                    # 2. Format the summary for display
+                    summary = summary.rename(columns={
+                        "year": "Year",
+                        "symbol": "Asset",
+                        "total_gain_usd": "Total Realized Gain (USD)",
+                        "total_proceeds_usd": "Total Proceeds (USD)",
+                        "total_cost_basis_usd": "Total Cost Basis (USD)",
+                        "total_quantity": "Total Quantity"
+                    })
+                    for col in ["Total Realized Gain (USD)", "Total Proceeds (USD)", "Total Cost Basis (USD)"]:
+                        summary[col] = summary[col].map(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
+                    if "Total Quantity" in summary.columns:
+                        summary["Total Quantity"] = summary["Total Quantity"].map(lambda x: f"{x:,.6f}" if pd.notnull(x) else "")
+
+                    st.dataframe(summary)
+                    st.info("For a full, professional tax report, use the export buttons below.")
+                    export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+                    export_dir.mkdir(parents=True, exist_ok=True)
+                    if st.button("Export Tax Report to Excel"):
+                        # Remove timezone info from all datetime columns
+                        for col in tax_df.select_dtypes(include=["datetimetz"]).columns:
+                            tax_df[col] = tax_df[col].dt.tz_localize(None)
+                        filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                        tax_df.to_excel(export_dir / filename, index=False)
+                        st.success(f"Excel tax report exported as {filename}!")
+                    if st.button("Export Tax Report to HTML"):
+                        filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                        template_path = Path(__file__).parent / "templates"
+                        env = Environment(loader=FileSystemLoader(template_path))
+                        template = env.get_template("tax_report_template.html")
+                        html_content = template.render(
+                            tax_table=tax_df.to_html(index=False, classes='table table-striped'),
+                            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        )
+                        with open(export_dir / filename, "w") as f:
+                            f.write(html_content)
+                        st.success(f"HTML tax report exported as {filename}!")
+
+        # --- 5. View Exported Data ---
+        with tab4:
+            st.header("📂 View Exported Data")
+            export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+            export_dir.mkdir(parents=True, exist_ok=True)
+
+            # Filter out trend report exports
+            files = sorted(
+                [f for f in export_dir.glob("*.*") if not f.name.startswith("trend_report_")],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+
+            if not files:
+                st.info("No exported files found.")
+            else:
+                file_names = [f.name for f in files]
+                selected_file = st.selectbox("Select Exported File", file_names)
+                file_path = export_dir / selected_file
+                st.markdown(f"**File:** `{selected_file}`")
+
+                # --- Preview logic ---
+                previewed = False
+                if selected_file.endswith(".csv"):
+                    try:
+                        df = pd.read_csv(file_path)
+                        st.dataframe(df)
+                        previewed = True
+                    except Exception as e:
+                        st.error(f"Failed to preview CSV: {e}")
+                elif selected_file.endswith(".xlsx"):
+                    try:
+                        df = pd.read_excel(file_path)
+                        st.dataframe(df)
+                        previewed = True
+                    except Exception as e:
+                        st.error(f"Failed to preview Excel: {e}")
+                elif selected_file.endswith(".html"):
+                    try:
+                        with open(file_path, "r") as f:
+                            html = f.read()
+                        st.components.v1.html(html, height=600, scrolling=True)
+                        previewed = True
+                    except Exception as e:
+                        st.error(f"Failed to preview HTML: {e}")
+                elif selected_file.endswith(".json"):
+                    try:
+                        import json
+                        with open(file_path, "r") as f:
+                            data = json.load(f)
+                        st.json(data)
+                        previewed = True
+                    except Exception as e:
+                        st.error(f"Failed to preview JSON: {e}")
+                else:
+                    st.info("Preview not supported for this file type.")
+
+                # --- Buttons below preview ---
+                col1, col2 = st.columns(2)
+                with col1:
+                    with open(file_path, "rb") as f:
+                        st.download_button("Download", f, file_name=selected_file, use_container_width=True)
+                with col2:
+                    if st.button("Delete", key=f"delete_{selected_file}", use_container_width=True):
+                        try:
+                            file_path.unlink()
+                            st.success(f"Deleted {selected_file}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete: {e}")
+
+        # --- 1. Portfolio Allocation Pie Chart ---
+        with tab5:
+            st.subheader("Portfolio Allocation (by Value)")
+            if holdings_df is not None and not holdings_df.empty:
+                pie_df = holdings_df.copy()
+                pie_df = pie_df[pie_df["value_usd"] > 0]
+                # Plotly chart for interactivity
+                fig_plotly = px.pie(
+                    pie_df,
+                    names="symbol",
+                    values="value_usd",
+                    title="Portfolio Allocation by Value",
+                    hole=0.4
+                )
+                st.plotly_chart(fig_plotly, use_container_width=True)
+                # Matplotlib chart for universal PNG download
+                fig, ax = plt.subplots()
+                ax.pie(pie_df["value_usd"], labels=pie_df["symbol"], autopct='%1.1f%%', startangle=90)
+                ax.set_title("Portfolio Allocation by Value")
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                st.download_button(
+                    "Download Pie Chart (PNG, universal)",
+                    buf,
+                    file_name="portfolio_allocation_pie.png",
+                    mime="image/png"
+                )
+                plt.close(fig)
+            else:
+                st.info("No holdings data available for allocation pie chart.")
+
+        # --- 2. Current vs. Target Allocation Bar Chart ---
+        with tab6:
+            st.subheader("Current vs. Target Allocation")
+            if holdings_df is not None and not holdings_df.empty and target_allocation:
+                current_alloc = holdings_df.set_index('symbol')['allocation'] * 100
+                target_alloc = pd.Series(target_allocation) * 100
+                comparison_df = pd.DataFrame({
+                    'Current (%)': current_alloc,
+                    'Target (%)': target_alloc
+                }).fillna(0)
+                # Plotly chart for interactivity
+                fig_plotly = go.Figure()
+                fig_plotly.add_trace(go.Bar(
+                    x=comparison_df.index,
+                    y=comparison_df['Current (%)'],
+                    name='Current (%)',
+                    marker_color='indigo'
+                ))
+                fig_plotly.add_trace(go.Bar(
+                    x=comparison_df.index,
+                    y=comparison_df['Target (%)'],
+                    name='Target (%)',
+                    marker_color='orange'
+                ))
+                fig_plotly.update_layout(
+                    barmode='group',
+                    title="Current vs. Target Portfolio Allocation",
+                    xaxis_title="Asset",
+                    yaxis_title="Allocation (%)"
+                )
+                st.plotly_chart(fig_plotly, use_container_width=True)
+                # Matplotlib chart for universal PNG download
+                fig, ax = plt.subplots()
+                width = 0.35
+                x = range(len(comparison_df.index))
+                ax.bar([i - width/2 for i in x], comparison_df['Current (%)'], width=width, label='Current (%)', color='indigo')
+                ax.bar([i + width/2 for i in x], comparison_df['Target (%)'], width=width, label='Target (%)', color='orange')
+                ax.set_xticks(list(x))
+                ax.set_xticklabels(comparison_df.index, rotation=45)
+                ax.set_ylabel("Allocation (%)")
+                ax.set_title("Current vs. Target Portfolio Allocation")
+                ax.legend()
+                fig.tight_layout()
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                st.download_button(
+                    "Download Allocation Comparison (PNG, universal)",
+                    buf,
+                    file_name="allocation_comparison_bar.png",
+                    mime="image/png"
+                )
+                plt.close(fig)
+            else:
+                st.info("No data available for allocation comparison chart.")
+
+        # --- 3. Unrealized P/L by Asset Bar Chart ---
+        with tab7:
+            st.subheader("Unrealized Profit/Loss (P/L) by Asset")
+            if holdings_df is not None and not holdings_df.empty and "unrealized_pl_usd" in holdings_df.columns:
+                pl_df = holdings_df.set_index('symbol')["unrealized_pl_usd"].sort_values()
+                colors = ['red' if x < 0 else 'green' for x in pl_df]
+                # Plotly chart for interactivity
+                fig_plotly = go.Figure([go.Bar(
+                    x=pl_df.index,
+                    y=pl_df.values,
+                    marker_color=colors
+                )])
+                fig_plotly.update_layout(
+                    title="Unrealized P/L by Asset",
+                    xaxis_title="Asset",
+                    yaxis_title="Unrealized P/L (USD)"
+                )
+                st.plotly_chart(fig_plotly, use_container_width=True)
+                # Matplotlib chart for universal PNG download
+                fig, ax = plt.subplots()
+                bar_colors = ['green' if v >= 0 else 'red' for v in pl_df.values]
+                ax.bar(pl_df.index, pl_df.values, color=bar_colors)
+                ax.set_ylabel("Unrealized P/L (USD)")
+                ax.set_title("Unrealized P/L by Asset")
+                ax.axhline(0, color='black', linewidth=0.8)
+                ax.tick_params(axis='x', rotation=45)  # <-- Use this line
+                fig.tight_layout()
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                st.download_button(
+                    "Download P/L Chart (PNG, universal)",
+                    buf,
+                    file_name="pl_by_asset_bar.png",
+                    mime="image/png"
+                )
+                plt.close(fig)
+            else:
+                st.info("No P/L data available for this chart.")
+
+        # --- 4. Portfolio Value Over Time Line Chart ---
+        with tab8:
+            st.subheader("Portfolio Value Over Time")
+            if snapshots is not None and not snapshots.empty:
+                snapshots = snapshots.copy()
+                snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
+                snapshots = snapshots.dropna(subset=["timestamp"])
+                snapshots = snapshots[snapshots["timestamp"].dt.year > 2000]  # Filter out weird old dates
+
+                # Drop duplicate timestamps, keeping the last entry for each timestamp
+                snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
+
+                # Debug output (optional, for development)
+                # st.write("Snapshot Data Preview", snapshots.head(20))
+                # st.write("Unique timestamps:", snapshots["timestamp"].nunique(), "Total rows:", len(snapshots))
+                # duplicates = snapshots[snapshots.duplicated(subset=["timestamp"], keep=False)]
+                # if not duplicates.empty:
+                #     st.warning("Duplicate timestamps found in snapshots!")
+                #     st.dataframe(duplicates)
+
+                # Plotly chart for interactivity
+                fig_plotly = px.line(
+                    snapshots,
+                    x="timestamp",
+                    y="total_value_usd",
+                    title="Portfolio Value Over Time",
+                    markers=True,
+                    labels={"total_value_usd": "Total Value (USD)", "timestamp": "Date"}
+                )
+                fig_plotly.update_xaxes(
+                    tickformat="%Y-%m-%d",  # Format as date
+                    ticklabelmode="period"
+                )
+                st.plotly_chart(fig_plotly, use_container_width=True)
+                # Matplotlib chart for universal PNG download
+                fig, ax = plt.subplots()
+                ax.plot(snapshots["timestamp"], snapshots["total_value_usd"], marker='o')
+                ax.set_xlabel("Date")
+                ax.set_ylabel("Total Value (USD)")
+                ax.set_title("Portfolio Value Over Time")
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                fig.autofmt_xdate()
+                fig.tight_layout()
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                st.download_button(
+                    "Download Value History (PNG, universal)",
+                    buf,
+                    file_name="portfolio_value_history.png",
+                    mime="image/png"
+                )
+                plt.close(fig)
+            else:
+                st.info("No snapshot data available for value history chart.")
 
     def render_market_trends(self):
         st.markdown("## 📈 Market Trends")
@@ -2003,11 +2292,11 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                     )
 
                 with col3:
-                    period_options = ["1y", "2y", "3y", "5y", "60d", "90d", "180d", "Custom"]
+                    period_options = ["1y", "3y", "5y", "60d", "90d", "180d", "Custom"]
                     selected_period_option = st.selectbox(
                         "Backtest Period",
                         period_options,
-                        index=2,  # Default to 3y
+                        index=1,  # Default to 3y
                         help="Historical period to run the backtest over"
                     )
 
@@ -2394,7 +2683,7 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                                 df['date'] = pd.to_datetime(df['date'])
                                 df = df.set_index('date')
                                 df = df.rename(columns={'value': 'Portfolio Value ($)'})
-                                
+
                                 # Create the chart with proper date axis
                                 st.line_chart(df, use_container_width=True)
 
@@ -2407,269 +2696,486 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                         st.error(f"❌ Rebalancing backtest failed: {str(e)}")
                         st.info("💡 Try adjusting the parameters or check your allocation settings")
 
-    def render_reports(self):
+    def render_charts(self):
+
+
+        st.markdown("## 📊 Portfolio Charts")
+        st.info("Visualize your portfolio with interactive charts. Select a chart type below.")
+
+        # tracker = self.initialize_tracker()
+        # metrics = st.session_state.get("portfolio_metrics")
+        # if not metrics:
+        #     st.info("No portfolio metrics available. Please run a full sync first.")
+        #     return
+
+        # holdings_df = metrics.get("holdings_df")
+        # target_allocation = self.config_manager.config.get("target_allocation", {})
+        # snapshots = None
+        # try:
+        #     snapshots = tracker.db_manager.get_all_snapshots()
+        # except Exception:
+        #     snapshots = None
+
+        # chart_tabs = st.tabs([
+        #     "🟣 Allocation Pie",
+        #     "🟡 Allocation Comparison",
+        #     "🟢 P/L by Asset",
+        #     "🔵 Value Over Time"
+        # ])
+
+        # # --- 1. Portfolio Allocation Pie Chart ---
+        # with chart_tabs[0]:
+        #     st.subheader("Portfolio Allocation (by Value)")
+        #     if holdings_df is not None and not holdings_df.empty:
+        #         pie_df = holdings_df.copy()
+        #         pie_df = pie_df[pie_df["value_usd"] > 0]
+        #         # Plotly chart for interactivity
+        #         fig_plotly = px.pie(
+        #             pie_df,
+        #             names="symbol",
+        #             values="value_usd",
+        #             title="Portfolio Allocation by Value",
+        #             hole=0.4
+        #         )
+        #         st.plotly_chart(fig_plotly, use_container_width=True)
+        #         # Matplotlib chart for universal PNG download
+        #         fig, ax = plt.subplots()
+        #         ax.pie(pie_df["value_usd"], labels=pie_df["symbol"], autopct='%1.1f%%', startangle=90)
+        #         ax.set_title("Portfolio Allocation by Value")
+        #         buf = io.BytesIO()
+        #         fig.savefig(buf, format="png", bbox_inches="tight")
+        #         buf.seek(0)
+        #         st.download_button(
+        #             "Download Pie Chart (PNG, universal)",
+        #             buf,
+        #             file_name="portfolio_allocation_pie.png",
+        #             mime="image/png"
+        #         )
+        #         plt.close(fig)
+        #     else:
+        #         st.info("No holdings data available for allocation pie chart.")
+
+        # # --- 2. Current vs. Target Allocation Bar Chart ---
+        # with chart_tabs[1]:
+        #     st.subheader("Current vs. Target Allocation")
+        #     if holdings_df is not None and not holdings_df.empty and target_allocation:
+        #         current_alloc = holdings_df.set_index('symbol')['allocation'] * 100
+        #         target_alloc = pd.Series(target_allocation) * 100
+        #         comparison_df = pd.DataFrame({
+        #             'Current (%)': current_alloc,
+        #             'Target (%)': target_alloc
+        #         }).fillna(0)
+        #         # Plotly chart for interactivity
+        #         fig_plotly = go.Figure()
+        #         fig_plotly.add_trace(go.Bar(
+        #             x=comparison_df.index,
+        #             y=comparison_df['Current (%)'],
+        #             name='Current (%)',
+        #             marker_color='indigo'
+        #         ))
+        #         fig_plotly.add_trace(go.Bar(
+        #             x=comparison_df.index,
+        #             y=comparison_df['Target (%)'],
+        #             name='Target (%)',
+        #             marker_color='orange'
+        #         ))
+        #         fig_plotly.update_layout(
+        #             barmode='group',
+        #             title="Current vs. Target Portfolio Allocation",
+        #             xaxis_title="Asset",
+        #             yaxis_title="Allocation (%)"
+        #         )
+        #         st.plotly_chart(fig_plotly, use_container_width=True)
+        #         # Matplotlib chart for universal PNG download
+        #         fig, ax = plt.subplots()
+        #         width = 0.35
+        #         x = range(len(comparison_df.index))
+        #         ax.bar([i - width/2 for i in x], comparison_df['Current (%)'], width=width, label='Current (%)', color='indigo')
+        #         ax.bar([i + width/2 for i in x], comparison_df['Target (%)'], width=width, label='Target (%)', color='orange')
+        #         ax.set_xticks(list(x))
+        #         ax.set_xticklabels(comparison_df.index, rotation=45)
+        #         ax.set_ylabel("Allocation (%)")
+        #         ax.set_title("Current vs. Target Portfolio Allocation")
+        #         ax.legend()
+        #         fig.tight_layout()
+        #         buf = io.BytesIO()
+        #         fig.savefig(buf, format="png", bbox_inches="tight")
+        #         buf.seek(0)
+        #         st.download_button(
+        #             "Download Allocation Comparison (PNG, universal)",
+        #             buf,
+        #             file_name="allocation_comparison_bar.png",
+        #             mime="image/png"
+        #         )
+        #         plt.close(fig)
+        #     else:
+        #         st.info("No data available for allocation comparison chart.")
+
+        # # --- 3. Unrealized P/L by Asset Bar Chart ---
+        # with chart_tabs[2]:
+        #     st.subheader("Unrealized Profit/Loss (P/L) by Asset")
+        #     if holdings_df is not None and not holdings_df.empty and "unrealized_pl_usd" in holdings_df.columns:
+        #         pl_df = holdings_df.set_index('symbol')["unrealized_pl_usd"].sort_values()
+        #         colors = ['red' if x < 0 else 'green' for x in pl_df]
+        #         # Plotly chart for interactivity
+        #         fig_plotly = go.Figure([go.Bar(
+        #             x=pl_df.index,
+        #             y=pl_df.values,
+        #             marker_color=colors
+        #         )])
+        #         fig_plotly.update_layout(
+        #             title="Unrealized P/L by Asset",
+        #             xaxis_title="Asset",
+        #             yaxis_title="Unrealized P/L (USD)"
+        #         )
+        #         st.plotly_chart(fig_plotly, use_container_width=True)
+        #         # Matplotlib chart for universal PNG download
+        #         fig, ax = plt.subplots()
+        #         bar_colors = ['green' if v >= 0 else 'red' for v in pl_df.values]
+        #         ax.bar(pl_df.index, pl_df.values, color=bar_colors)
+        #         ax.set_ylabel("Unrealized P/L (USD)")
+        #         ax.set_title("Unrealized P/L by Asset")
+        #         ax.axhline(0, color='black', linewidth=0.8)
+        #         ax.tick_params(axis='x', rotation=45)  # <-- Use this line
+        #         fig.tight_layout()
+        #         buf = io.BytesIO()
+        #         fig.savefig(buf, format="png", bbox_inches="tight")
+        #         buf.seek(0)
+        #         st.download_button(
+        #             "Download P/L Chart (PNG, universal)",
+        #             buf,
+        #             file_name="pl_by_asset_bar.png",
+        #             mime="image/png"
+        #         )
+        #         plt.close(fig)
+        #     else:
+        #         st.info("No P/L data available for this chart.")
+
+        # # --- 4. Portfolio Value Over Time Line Chart ---
+        # with chart_tabs[3]:
+        #     st.subheader("Portfolio Value Over Time")
+        #     if snapshots is not None and not snapshots.empty:
+        #         snapshots = snapshots.copy()
+        #         snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
+        #         snapshots = snapshots.dropna(subset=["timestamp"])
+        #         snapshots = snapshots[snapshots["timestamp"].dt.year > 2000]  # Filter out weird old dates
+
+        #         # Drop duplicate timestamps, keeping the last entry for each timestamp
+        #         snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
+
+        #         # Debug output (optional, for development)
+        #         st.write("Snapshot Data Preview", snapshots.head(20))
+        #         st.write("Unique timestamps:", snapshots["timestamp"].nunique(), "Total rows:", len(snapshots))
+        #         duplicates = snapshots[snapshots.duplicated(subset=["timestamp"], keep=False)]
+        #         if not duplicates.empty:
+        #             st.warning("Duplicate timestamps found in snapshots!")
+        #             st.dataframe(duplicates)
+
+        #         # Plotly chart for interactivity
+        #         fig_plotly = px.line(
+        #             snapshots,
+        #             x="timestamp",
+        #             y="total_value_usd",
+        #             title="Portfolio Value Over Time",
+        #             markers=True,
+        #             labels={"total_value_usd": "Total Value (USD)", "timestamp": "Date"}
+        #         )
+        #         fig_plotly.update_xaxes(
+        #             tickformat="%Y-%m-%d",  # Format as date
+        #             ticklabelmode="period"
+        #         )
+        #         st.plotly_chart(fig_plotly, use_container_width=True)
+        #         # Matplotlib chart for universal PNG download
+        #         fig, ax = plt.subplots()
+        #         ax.plot(snapshots["timestamp"], snapshots["total_value_usd"], marker='o')
+        #         ax.set_xlabel("Date")
+        #         ax.set_ylabel("Total Value (USD)")
+        #         ax.set_title("Portfolio Value Over Time")
+        #         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        #         fig.autofmt_xdate()
+        #         fig.tight_layout()
+        #         buf = io.BytesIO()
+        #         fig.savefig(buf, format="png", bbox_inches="tight")
+        #         buf.seek(0)
+        #         st.download_button(
+        #             "Download Value History (PNG, universal)",
+        #             buf,
+        #             file_name="portfolio_value_history.png",
+        #             mime="image/png"
+        #         )
+        #         plt.close(fig)
+        #     else:
+        #         st.info("No snapshot data available for value history chart.")
+
+    def render_data_management(self):
         import pandas as pd
         from pathlib import Path
 
-        st.markdown("## 📋 Reports & Export")
+        st.markdown("## 🗄️ Data Management")
 
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📊 Performance", "📝 Trade Log", "📸 Snapshot", "🧾 Tax Report", "📂 View Exports"
+        tracker = self.initialize_tracker()
+        db_path = tracker.db_manager.db_path
+        backup_dir = tracker.db_manager.backup_dir
+
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "💾 Backup & Restore", "⬆️ Import / ⬇️ Export", "📸 Snapshots", "ℹ️ Info"
         ])
 
-        # --- 1. Portfolio Performance ---
+        # --- 1. Backup & Restore ---
         with tab1:
-            st.header("📊 Portfolio Performance")
-            tracker = self.initialize_tracker()
-            metrics = st.session_state.get("portfolio_metrics")
-            if not metrics:
-                st.info("No portfolio metrics available. Please run a full sync first.")
-            else:
-                self.display_metrics(metrics)
-                st.info("For a full, professional report, use the export buttons below.")
-                export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
-                export_dir.mkdir(parents=True, exist_ok=True)
-                if st.button("Export to Excel"):
-                    tracker.export_to_excel(metrics)
-                    st.success("Excel report exported!")
-                if st.button("Export to HTML"):
-                    tracker.export_to_html(metrics)
-                    st.success("HTML report exported!")
+            st.header("💾 Backup & Restore")
+            if st.button("Create Backup"):
+                backup_path = tracker.db_manager.backup_database()
+                if backup_path:
+                    st.success(f"Backup created: {backup_path}")
+                else:
+                    st.error("Backup failed. See logs for details.")
 
-        # --- 2. Trade Log ---
-        with tab2:
-            st.header("📝 Trade Log")
-            db_manager = tracker.db_manager
-            try:
-                tx_df = db_manager.get_all_transactions()
-            except Exception as e:
-                st.error(f"Failed to load transactions: {e}")
-                tx_df = pd.DataFrame()
-            if tx_df.empty:
-                st.info("No transactions found.")
+            backups = tracker.db_manager.list_backups()
+            if not backups:
+                st.info("No backups found.")
             else:
+                backup_names = [b.name for b in backups]
+                selected_backup = st.selectbox("Select backup", backup_names)
+                backup_path = backup_dir / selected_backup
+
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    asset = st.selectbox("Asset", ["All"] + sorted(tx_df["symbol"].unique().tolist()))
+                    with open(backup_path, "rb") as f:
+                        st.download_button("Download", f, file_name=selected_backup, use_container_width=True)
                 with col2:
-                    tx_type = st.selectbox("Type", ["All"] + sorted(tx_df["type"].unique().tolist()))
+                    if st.button("Delete", key=f"delete_{selected_backup}", use_container_width=True):
+                        try:
+                            backup_path.unlink()
+                            st.success(f"Deleted {selected_backup}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete: {e}")
                 with col3:
-                    year = st.selectbox("Year", ["All"] + sorted(pd.to_datetime(tx_df["timestamp"]).dt.year.unique().astype(str)))
-                filtered = tx_df.copy()
-                if asset != "All":
-                    filtered = filtered[filtered["symbol"] == asset]
-                if tx_type != "All":
-                    filtered = filtered[filtered["type"] == tx_type]
-                if year != "All":
-                    filtered = filtered[pd.to_datetime(filtered["timestamp"]).dt.year.astype(str) == year]
-                st.dataframe(filtered)
-                st.download_button("Download Trade Log (CSV)", filtered.to_csv(index=False), "trade_log.csv")
+                    if st.button("Restore", key=f"restore_{selected_backup}", use_container_width=True):
+                        st.warning("⚠️ This will overwrite your current database. This action is irreversible!")
+                        if st.button("Confirm Restore", key=f"confirm_restore_{selected_backup}"):
+                            success = tracker.db_manager.restore_from_backup(backup_path)
+                            if success:
+                                st.success("Database restored. Please restart the app to use the restored data.")
+                            else:
+                                st.error("Restore failed. See logs for details.")
 
-        # --- 3. Portfolio Snapshot ---
+        # --- 2. Import/Export ---
+        with tab2:
+            st.header("⬆️ Import / ⬇️ Export Raw Data")
+            export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+            data_export_dir = export_dir / "data_management"
+            data_export_dir.mkdir(parents=True, exist_ok=True)
+
+            st.markdown("#### Create New Export")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                export_type = st.selectbox("Select data to export", ["Holdings", "Transactions"])
+            with col2:
+                export_format = st.radio("Select format", ["CSV", "Excel"], horizontal=True)
+
+            if st.button("🚀 Generate Export", use_container_width=True, type="primary"):
+                with st.spinner(f"Generating {export_type} export..."):
+                    df = None
+                    if export_type == "Holdings":
+                        df = tracker.db_manager.get_holdings()
+                    else: # Transactions
+                        df = tracker.db_manager.get_all_transactions()
+
+                    if df is not None and not df.empty:
+                        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        file_extension = "xlsx" if export_format == "Excel" else "csv"
+                        filename = f"{export_type.lower()}_export_{now_str}.{file_extension}"
+                        filepath = data_export_dir / filename
+
+                        # Create a copy and handle timezones for Excel compatibility
+                        export_df = df.copy()
+                        for col in export_df.select_dtypes(['datetimetz']).columns:
+                            export_df[col] = export_df[col].dt.tz_localize(None)
+
+                        if export_format == "CSV":
+                            export_df.to_csv(filepath, index=False)
+                        else: # Excel
+                            export_df.to_excel(filepath, index=False, engine="openpyxl")
+                        
+                        st.success(f"Successfully created export: `{filename}`")
+                        st.rerun()
+                    else:
+                        st.warning(f"No {export_type} data available to export.")
+            
+            st.markdown("---")
+            st.markdown("#### My Exports")
+
+            all_files = sorted(
+                list(data_export_dir.glob("*_export_*.*")),
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+
+            if not all_files:
+                st.info("No exports found. Generate one above!")
+            else:
+                selected_export = st.selectbox(
+                    "Select an export file:",
+                    options=all_files,
+                    format_func=lambda x: f"{x.name} ({x.stat().st_size/1024:.1f} KB, {datetime.fromtimestamp(x.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})"
+                )
+
+                if "preview_file" not in st.session_state:
+                    st.session_state.preview_file = None
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("👁️ Preview", use_container_width=True):
+                        st.session_state.preview_file = selected_export
+                        st.rerun()
+                with col2:
+                    with open(selected_export, "rb") as f:
+                        file_bytes = f.read()
+                        st.download_button(
+                            label="⬇️ Download",
+                            data=file_bytes,
+                            file_name=selected_export.name,
+                            mime=f"text/{selected_export.suffix[1:].lower()}" if selected_export.suffix == ".csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                with col3:
+                    if st.button("🗑️ Delete", use_container_width=True):
+                        try:
+                            selected_export.unlink()
+                            if st.session_state.preview_file == selected_export:
+                                st.session_state.preview_file = None
+                            st.success(f"Deleted {selected_export.name}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete: {e}")
+
+                if st.session_state.preview_file:
+                    st.markdown("---")
+                    st.markdown(f"### 👁️ Preview: {st.session_state.preview_file.name}")
+                    try:
+                        if st.session_state.preview_file.name.endswith(".csv"):
+                            st.dataframe(pd.read_csv(st.session_state.preview_file))
+                        else:
+                            st.dataframe(pd.read_excel(st.session_state.preview_file))
+                    except Exception as e:
+                        st.error(f"Could not preview file: {e}")
+
+                    if st.button("❌ Close Preview"):
+                        st.session_state.preview_file = None
+                        st.rerun()
+
+            st.markdown("---")
+            st.markdown("### Import")
+            uploaded_holdings = st.file_uploader("Import Holdings (CSV/Excel)", type=["csv", "xlsx"], key="import_holdings")
+            if uploaded_holdings:
+                try:
+                    if uploaded_holdings.name.endswith(".csv"):
+                        df = pd.read_csv(uploaded_holdings)
+                    else:
+                        df = pd.read_excel(uploaded_holdings)
+                    st.dataframe(df)
+                    if st.button("Import Holdings"):
+                        tracker.db_manager.update_holdings(df)
+                        st.success("Holdings imported successfully!")
+                except Exception as e:
+                    st.error(f"Failed to import holdings: {e}")
+
+            uploaded_tx = st.file_uploader("Import Transactions (CSV/Excel)", type=["csv", "xlsx"], key="import_tx")
+            if uploaded_tx:
+                try:
+                    if uploaded_tx.name.endswith(".csv"):
+                        df = pd.read_csv(uploaded_tx)
+                    else:
+                        df = pd.read_excel(uploaded_tx)
+                    st.dataframe(df)
+                    # You would need to implement a bulk insert for transactions
+                    # if st.button("Import Transactions"):
+                    #     tracker.db_manager.bulk_insert_transactions(df.to_dict(orient="records"))
+                    #     st.success("Transactions imported successfully!")
+                except Exception as e:
+                    st.error(f"Failed to import transactions: {e}")
+
+        # --- 3. Manage Snapshots ---
         with tab3:
-            st.header("📸 Portfolio Snapshot")
+            st.header("📸 Snapshots")
             try:
                 snapshots = tracker.db_manager.get_all_snapshots()
+                snapshots = snapshots.drop_duplicates(subset=["timestamp"])
             except Exception as e:
                 st.error(f"Failed to load snapshots: {e}")
                 snapshots = pd.DataFrame()
             if snapshots.empty:
                 st.info("No snapshots found. Take a snapshot from the dashboard first.")
             else:
-                snapshot_dates = pd.to_datetime(snapshots["timestamp"])
-                selected_date = st.selectbox("Select Snapshot Date", snapshot_dates.dt.strftime("%Y-%m-%d %H:%M:%S"))
-                # Convert both to date for matching
-                selected_dt = pd.to_datetime(selected_date)
-                snap_row = snapshots[snapshots["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S") == selected_date]
-                if not snap_row.empty:
-                    snap_row = snap_row.iloc[0]
-                    # Format the fields for display
-                    display_dict = {
-                        "Timestamp": pd.to_datetime(snap_row["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
-                        "Total Value (USD)": f"${snap_row['total_value_usd']:,.2f}",
-                        "Total Cost Basis (USD)": f"${snap_row['total_cost_basis_usd']:,.2f}",
-                        "Unrealized P/L (USD)": f"${snap_row['unrealized_pl_usd']:,.2f}",
-                        "Unrealized P/L (%)": f"{snap_row['unrealized_pl_percent']:.2f}%",
-                    }
-                    st.write("### Snapshot Details")
-                    st.table(pd.DataFrame([display_dict]))
-                    st.download_button("Download Snapshot (CSV)", snap_row.to_frame().T.to_csv(index=False), "portfolio_snapshot.csv")
-                else:
-                    st.warning("No snapshot found for the selected date/time.")
+                snapshots = snapshots.sort_values("timestamp")
+                # Improved label for NaT/NaN
+                snapshot_labels = []
+                for _, row in snapshots.iterrows():
+                    if pd.isna(row['timestamp']):
+                        label = f"⚠️ Invalid Snapshot (No Timestamp) | Value: ${row['total_value_usd']:,.2f}"
+                    else:
+                        label = f"{row['timestamp']} | Value: ${row['total_value_usd']:,.2f}"
+                    snapshot_labels.append(label)
+                selected_idx = st.selectbox("Select Snapshot", range(len(snapshots)), format_func=lambda i: snapshot_labels[i])
+                selected_row = snapshots.iloc[selected_idx]
 
-        # --- 4. Tax Report ---
-        with tab4:
-            st.header("🧾 Tax Report")
-            try:
-                tx_df = db_manager.get_all_transactions()
-            except Exception as e:
-                st.error(f"Failed to load transactions: {e}")
-                tx_df = pd.DataFrame()
-            if tx_df.empty:
-                st.info("No transactions found.")
-            else:
-                tax_df = calculate_fifo_realized_gains(tx_df)
-                if tax_df.empty:
-                    st.info("No taxable events found.")
-                else:
-                    tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        year = st.selectbox("Year", ["All"] + sorted(tax_df["year"].unique().astype(str)), key="tax_year")
-                    with col2:
-                        asset = st.selectbox("Asset", ["All"] + sorted(tax_df["symbol"].unique()), key="tax_asset")
-                    filtered = tax_df.copy()
-                    if year != "All":
-                        filtered = filtered[filtered["year"].astype(str) == year]
-                    if asset != "All":
-                        filtered = filtered[filtered["symbol"] == asset]
-                    tax_col_map = {
-                        "date": "Date",
-                        "symbol": "Asset",
-                        "quantity": "Quantity",
-                        "proceeds_usd": "Proceeds (USD)",
-                        "cost_basis_usd": "Cost Basis (USD)",
-                        "gain_usd": "Realized Gain (USD)",
-                        "year": "Year"
-                    }
-                    filtered = filtered.rename(columns=tax_col_map)
-                    for col in ["Proceeds (USD)", "Cost Basis (USD)", "Realized Gain (USD)"]:
-                        if col in filtered.columns:
-                            filtered[col] = filtered[col].map(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
-                    if "Quantity" in filtered.columns:
-                        filtered["Quantity"] = filtered["Quantity"].map(lambda x: f"{x:,.6f}" if pd.notnull(x) else "")
-                    st.dataframe(filtered)
-                    st.markdown("#### Summary")
-                    # 1. Group and aggregate on raw numeric columns
-                    summary = tax_df.copy()
-                    if year != "All":
-                        summary = summary[summary["year"].astype(str) == year]
-                    if asset != "All":
-                        summary = summary[summary["symbol"] == asset]
+                st.write("### Snapshot Details")
+                display_dict = {
+                    "Timestamp": str(selected_row["timestamp"]),
+                    "Total Value (USD)": f"${selected_row['total_value_usd']:,.2f}",
+                    "Total Cost Basis (USD)": f"${selected_row['total_cost_basis_usd']:,.2f}",
+                    "Unrealized P/L (USD)": f"${selected_row['unrealized_pl_usd']:,.2f}",
+                    "Unrealized P/L (%)": f"{selected_row['unrealized_pl_percent']:.2f}%",
+                }
+                st.table(pd.DataFrame([display_dict]))
 
-                    summary = summary.groupby(["year", "symbol"]).agg(
-                        total_gain_usd=("gain_usd", "sum"),
-                        total_proceeds_usd=("proceeds_usd", "sum"),
-                        total_cost_basis_usd=("cost_basis_usd", "sum"),
-                        total_quantity=("quantity", "sum"),
-                    ).reset_index()
-
-                    # 2. Format the summary for display
-                    summary = summary.rename(columns={
-                        "year": "Year",
-                        "symbol": "Asset",
-                        "total_gain_usd": "Total Realized Gain (USD)",
-                        "total_proceeds_usd": "Total Proceeds (USD)",
-                        "total_cost_basis_usd": "Total Cost Basis (USD)",
-                        "total_quantity": "Total Quantity"
-                    })
-                    for col in ["Total Realized Gain (USD)", "Total Proceeds (USD)", "Total Cost Basis (USD)"]:
-                        summary[col] = summary[col].map(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
-                    if "Total Quantity" in summary.columns:
-                        summary["Total Quantity"] = summary["Total Quantity"].map(lambda x: f"{x:,.6f}" if pd.notnull(x) else "")
-
-                    st.dataframe(summary)
-                    st.info("For a full, professional tax report, use the export buttons below.")
-                    export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
-                    export_dir.mkdir(parents=True, exist_ok=True)
-                    if st.button("Export Tax Report to Excel"):
-                        # Remove timezone info from all datetime columns
-                        for col in tax_df.select_dtypes(include=["datetimetz"]).columns:
-                            tax_df[col] = tax_df[col].dt.tz_localize(None)
-                        filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                        tax_df.to_excel(export_dir / filename, index=False)
-                        st.success(f"Excel tax report exported as {filename}!")
-                    if st.button("Export Tax Report to HTML"):
-                        filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-                        template_path = Path(__file__).parent / "templates"
-                        env = Environment(loader=FileSystemLoader(template_path))
-                        template = env.get_template("tax_report_template.html")
-                        html_content = template.render(
-                            tax_table=tax_df.to_html(index=False, classes='table table-striped'),
-                            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        )
-                        with open(export_dir / filename, "w") as f:
-                            f.write(html_content)
-                        st.success(f"HTML tax report exported as {filename}!")
-
-        # --- 5. View Exported Data ---
-        with tab5:
-            st.header("📂 View Exported Data")
-            export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
-            export_dir.mkdir(parents=True, exist_ok=True)
-
-            # Filter out trend report exports
-            files = sorted(
-                [f for f in export_dir.glob("*.*") if not f.name.startswith("trend_report_")],
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
-
-            if not files:
-                st.info("No exported files found.")
-            else:
-                file_names = [f.name for f in files]
-                selected_file = st.selectbox("Select Exported File", file_names)
-                file_path = export_dir / selected_file
-                st.markdown(f"**File:** `{selected_file}`")
-
-                # --- Preview logic ---
-                previewed = False
-                if selected_file.endswith(".csv"):
-                    try:
-                        df = pd.read_csv(file_path)
-                        st.dataframe(df)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview CSV: {e}")
-                elif selected_file.endswith(".xlsx"):
-                    try:
-                        df = pd.read_excel(file_path)
-                        st.dataframe(df)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview Excel: {e}")
-                elif selected_file.endswith(".html"):
-                    try:
-                        with open(file_path, "r") as f:
-                            html = f.read()
-                        st.components.v1.html(html, height=600, scrolling=True)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview HTML: {e}")
-                elif selected_file.endswith(".json"):
-                    try:
-                        import json
-                        with open(file_path, "r") as f:
-                            data = json.load(f)
-                        st.json(data)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview JSON: {e}")
-                else:
-                    st.info("Preview not supported for this file type.")
-
-                # --- Buttons below preview ---
                 col1, col2 = st.columns(2)
                 with col1:
-                    with open(file_path, "rb") as f:
-                        st.download_button("Download", f, file_name=selected_file, use_container_width=True)
+                    st.download_button("Download Snapshot (CSV)", selected_row.to_frame().T.to_csv(index=False), "portfolio_snapshot.csv")
                 with col2:
-                    if st.button("Delete", key=f"delete_{selected_file}", use_container_width=True):
+                    if st.button("Delete Selected Snapshot"):
+                        timestamp_to_delete = selected_row["timestamp"]
                         try:
-                            file_path.unlink()
-                            st.success(f"Deleted {selected_file}")
+                            with tracker.db_manager._get_connection() as conn:
+                                if pd.isna(timestamp_to_delete):
+                                    sql = "DELETE FROM portfolio_snapshots WHERE timestamp IS NULL"
+                                    params = ()
+                                else:
+                                    naive_timestamp = pd.to_datetime(timestamp_to_delete).to_pydatetime().replace(tzinfo=None)
+                                    sql = "DELETE FROM portfolio_snapshots WHERE timestamp = ?"
+                                    params = (naive_timestamp,)
+                                conn.execute(sql, params)
+                                conn.commit()
+                            st.success(f"Deleted snapshot {selected_row['timestamp']}")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Failed to delete: {e}")
+                            st.error(f"Failed to delete snapshot: {e}")
 
-    def render_charts(self):
-        st.markdown("## 📊 Portfolio Charts")
-        st.info("Charts would be displayed here")
+            st.markdown("---")
+            if st.button("Delete all Snapshot"):
+                try:
+                    tracker.cleanup_old_data()
+                    st.success("All Snapshot cleaned up successfully!")
+                except Exception as e:
+                    st.error(f"Failed to clean old Snapshot: {e}")
 
-    def render_data_management(self):
-        st.markdown("## 🗄️ Data Management")
-        st.info("Data management features would be displayed here")
+        # --- 4. Database Info ---
+        with tab4:
+            st.header("ℹ️ Database Info")
+            st.write(f"**Database Path:** `{db_path}`")
+            if os.path.exists(db_path):
+                st.write(f"**Size:** {os.path.getsize(db_path)/1024:.1f} KB")
+                st.write(f"**Last Modified:** {pd.to_datetime(os.path.getmtime(db_path), unit='s')}")
+            else:
+                st.warning("Database file not found.")
+            st.write(f"**Backup Directory:** `{backup_dir}`")
+            if backup_dir.exists():
+                st.write(f"**Backups Available:** {len(list(backup_dir.glob('*.bak')))}")
+            else:
+                st.warning("Backup directory not found.")
 
     def render_configuration(self):
         st.markdown("## ⚙️ Configuration")
@@ -2687,14 +3193,12 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         self.render_status_indicator()
         selected_page = self.render_sidebar()
         page_mapping = {
-            "🏠 Dashboard": self.render_dashboard_page,
-            "📈 Market Trends": self.render_market_trends,
-            "⚖️ Rebalancing": self.render_rebalancing,
-            "💰 Trading": self.render_trading,
-            "🧪 Backtesting": self.render_backtesting,
-            "📋 Reports & Export": self.render_reports,
-            "📈 Charts": self.render_charts,
-            "🗄️ Data Management": self.render_data_management,
+            "🏠 Home": self.render_home_page,
+            "📈 Market": self.render_market_trends,
+            "⚖️ Rebalance": self.render_rebalancing,
+            "💰 Trade": self.render_trading,
+            "🧪 Backtest": self.render_backtesting,
+            "🗄️ Database": self.render_data_management,
             "⚙️ Configuration": self.render_configuration,
             "🔧 System Status": self.render_system_status
         }

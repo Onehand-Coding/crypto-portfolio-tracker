@@ -35,123 +35,13 @@ from .database import DatabaseManager
 from .visualizations import Visualizer
 from .price_enricher import PriceEnricher
 from .binance_fetcher import BinanceFetcher
+from .utils import calculate_fifo_cost_basis
 from .strategy_backtester import StrategyBacktester
-from .rebalancing_backtester import RebalancingBacktester
-from .exporters import ExcelExporter, HtmlExporter, CsvExporter
-from .rebalancing_logic import get_live_rebalance_suggestions
 from .crypto_trend_analyzer import CryptoTrendAnalyzer
-from .exceptions import NetworkOperationError
-
-logger = logging.getLogger(__name__)
-
-
-def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
-    """
-    Calculates current quantity and average cost basis using FIFO.
-    Assumes transactions_df is for a single asset, sorted by timestamp.
-    Incorporates fee_usd into the cost of BUY/DEPOSIT transactions.
-    """
-    buy_lots = deque()  # Queue to store {"qty": quantity, "price": effective_price_usd_per_unit}
-    current_quantity = 0.0
-    total_cost_basis = 0.0 # This will track the cost basis of *remaining* lots
-
-    if transactions_df.empty:
-        symbol = transactions_df["symbol"].iloc[0] if not transactions_df.empty and "symbol" in transactions_df.columns else "Unknown"
-        logger.debug(f"No transactions provided to calculate_fifo_cost_basis for symbol {symbol}. Returning 0, 0.")
-        return 0.0, 0.0
-
-    # Ensure correct dtypes and sorting
-    transactions_df = transactions_df.copy()
-    transactions_df["timestamp"] = pd.to_datetime(transactions_df["timestamp"], errors="coerce")
-    transactions_df = transactions_df.sort_values(by="timestamp").reset_index(drop=True)
-
-    if transactions_df["timestamp"].isna().any():
-        logger.warning(f"Found NaT timestamps for symbol {transactions_df["symbol"].iloc[0] if not transactions_df.empty else "Unknown"} after coercion. Dropping these rows for FIFO.")
-        transactions_df.dropna(subset=["timestamp"], inplace=True)
-        if transactions_df.empty:
-            logger.warning(f"All transactions dropped for symbol due to NaT timestamps. Returning 0, 0.")
-            return 0.0,0.0
-
-    for _, row in transactions_df.iterrows():
-        tx_type = row.get("type")
-
-        try:
-            quantity = float(row.get("quantity", 0.0))
-        except (ValueError, TypeError):
-            logger.warning(f"Invalid quantity '{row.get("quantity")}' for tx {row.get("transaction_hash")}. Using 0.0.")
-            quantity = 0.0
-
-        if quantity == 0.0 and tx_type in ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL"]:
-            logger.debug(f"Skipping zero quantity {tx_type} transaction: {row.get("transaction_hash")}")
-            continue
-
-        price = row.get("price_usd")
-
-        fee_usd = row.get("fee_usd", 0.0)
-        if pd.isna(fee_usd) or not isinstance(fee_usd, (int, float)):
-            logger.debug(f"Invalid or missing fee_usd ('{row.get("fee_usd")}') for tx {row.get("transaction_hash")}. Using 0.0 for fee_usd.")
-            fee_usd = 0.0
-        else:
-            try:
-                fee_usd = float(fee_usd)
-            except (ValueError, TypeError):
-                logger.warning(f"Could not convert fee_usd '{row.get("fee_usd")}' to float for tx {row.get("transaction_hash")}. Using 0.0 for fee_usd.")
-                fee_usd = 0.0
-
-        if tx_type == "BUY" or tx_type == "DEPOSIT":
-            actual_tx_price_usd = 0.0
-            if price is not None and isinstance(price, (int, float)) and price > 0:
-                actual_tx_price_usd = float(price)
-            elif price == 0.0 and tx_type == "DEPOSIT":
-                actual_tx_price_usd = 0.0
-            elif price is None or not isinstance(price, (int, float)) or price <=0 :
-                logger.warning(f"{tx_type} tx for {row.get("symbol", "N/A")} (ID: {row.get("transaction_hash", "N/A")}) "
-                               f"has invalid/missing price ({price}). Using $0 price component for this lot.")
-                actual_tx_price_usd = 0.0
-
-            # <<< FEE INCORPORATION FOR BUYS/DEPOSITS >>>
-            cost_for_this_transaction_lot = (quantity * actual_tx_price_usd) + fee_usd
-            effective_price_per_unit = cost_for_this_transaction_lot / quantity if quantity > 0 else 0.0 # Price per unit *including* fee
-
-            buy_lots.append({"qty": quantity, "price": effective_price_per_unit})
-            current_quantity += quantity
-            total_cost_basis += cost_for_this_transaction_lot # Add full cost (value + fee)
-
-        elif tx_type == "SELL" or tx_type == "WITHDRAWAL":
-            sell_qty = quantity
-            current_quantity -= sell_qty
-
-            while sell_qty > 0 and buy_lots:
-                oldest_buy = buy_lots[0]
-                # oldest_buy["price"] is the effective_price_per_unit from its acquisition (already includes its buy fee)
-
-                if oldest_buy["qty"] <= sell_qty:
-                    qty_removed_from_lot = oldest_buy["qty"]
-                    cost_basis_removed = qty_removed_from_lot * oldest_buy["price"]
-                    total_cost_basis -= cost_basis_removed
-                    sell_qty -= qty_removed_from_lot
-                    buy_lots.popleft()
-                else:
-                    cost_basis_removed = sell_qty * oldest_buy["price"]
-                    total_cost_basis -= cost_basis_removed
-                    oldest_buy["qty"] -= sell_qty
-                    sell_qty = 0
-
-            if sell_qty > 0:
-                logger.warning(f"{tx_type} of {sell_qty} {row.get("symbol", "N/A")} more than available from history. Cost basis may be affected.")
-
-        total_cost_basis = max(0, total_cost_basis)
-
-    average_cost_basis = total_cost_basis / current_quantity if current_quantity > 0 else 0.0
-    current_quantity = max(0, current_quantity)
-
-    logger.debug(f"FIFO Result for {transactions_df["symbol"].iloc[0] if not transactions_df.empty else "Unknown"}: Qty={current_quantity:.8f}, AvgCost={average_cost_basis:.8f}, TotalCostBasisForAsset={total_cost_basis:.8f}")
-    return current_quantity, average_cost_basis
-
-
-class NetworkUnavailableError(Exception):
-    """Raised when network is unavailable and offline mode should be triggered."""
-    pass
+from .rebalancing_backtester import RebalancingBacktester
+from .rebalancing_logic import get_live_rebalance_suggestions
+from .exporters import ExcelExporter, HtmlExporter, CsvExporter
+from .exceptions import NetworkOperationError, NetworkUnavailableError
 
 
 class CryptoPortfolioTracker:
