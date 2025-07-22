@@ -38,9 +38,6 @@ class ConfigManager:
         if "apis" in self.config and "coingecko" in self.config["apis"]:
             self.config["apis"]["coingecko"]["api_key"] = os.getenv("COINGECKO_API_KEY")
 
-        # Determine testnet status from environment *before* resolving paths
-        self.is_testnet_mode: bool = os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
-
         # If in testnet mode, swap the database path with the testnet path
         if self.is_testnet_mode:
             logging.warning("TESTNET mode active. Switching to testnet database.")
@@ -70,6 +67,12 @@ class ConfigManager:
         self.symbol_mapper = SymbolMapper(self.config)
 
         self._create_directories()
+
+    @property
+    def is_testnet_mode(self):
+        """Tell if """
+        return self.config.get("portfolio", {}).get("testnet_mode", False)
+
 
     def _load_json_config(self) -> Dict[str, Any]:
         """Loads the base configuration from the JSON file."""
@@ -155,3 +158,16 @@ class ConfigManager:
         ]
         for path in paths_to_create:
             path.mkdir(parents=True, exist_ok=True)
+
+    def save_config(self):
+        """Persist the current config dictionary to the config file."""
+        try:
+            with open(self.config_file_path, "w") as f:
+                # Remove sensitive data from config.
+                config = self.config
+                del config["main_api_keys"]
+                del config["sub_accounts"]
+
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            raise RuntimeError(f"Failed to save config: {e}")

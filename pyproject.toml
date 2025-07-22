@@ -42,6 +42,7 @@ dependencies = [
     "setuptools<81", # Build compatibility
     "streamlit>=1.47.0",
     "kaleido>=1.0.0",
+    "psutil>=7.0.0",
 ]
 
 # Development dependencies

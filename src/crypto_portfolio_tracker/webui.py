@@ -11,11 +11,12 @@ import streamlit as st
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-from jinja2 import Environment, FileSystemLoader
+
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.dates as mdates
+from jinja2 import Environment, FileSystemLoader
 
 from crypto_portfolio_tracker import trading_strategies
 from crypto_portfolio_tracker.config import ConfigManager
@@ -212,8 +213,7 @@ class PortfolioDashboard:
                 "💰 Trade",
                 "🧪 Backtest",
                 "🗄️ Database",
-                "⚙️ Configuration",
-                "🔧 System Status"
+                "⚙️ Settings & Status",
             ]
         )
 
@@ -269,279 +269,463 @@ class PortfolioDashboard:
             st.error(f"Failed to save snapshot: {str(e)}")
 
     def display_metrics(self, metrics):
+        """
+        Displays key portfolio metrics in a professional grid layout using st.metric.
+        """
         if not metrics:
             st.info("No portfolio metrics available. Please sync first.")
             return
 
-        # st.markdown("### 📊 Portfolio Summary")
-        st.write(f"**Timestamp:** {metrics.get('timestamp', '')}")
-        st.write(f"**Database:** {metrics.get('database', 'portfolio.db')}")
-        st.write(f"**Total Portfolio Value:** {format_usd(metrics.get('total_value_usd', 0))}")
-        st.write(f"**Spot & Earn Value:** {format_usd(metrics.get('spot_earn_value_usd', 0))}")
-        st.write(f"**Futures Wallet Value:** {format_usd(metrics.get('futures_value_usd', 0))}")
-        st.write(f"**Funding Wallet Value:** {format_usd(metrics.get('funding_value_usd', 0))}")
-        st.write(f"**Total Invested Capital:** {format_usd(metrics.get('total_invested_capital', 0))}")
-        st.write(f"**Overall P/L:** {format_usd(metrics.get('overall_pl_usd', 0))} ({format_percent(metrics.get('overall_pl_percent', 0))})")
-        st.write(f"**Total Cost Basis (FIFO):** {format_usd(metrics.get('total_cost_basis_usd', 0))}")
-        st.write(f"**Unrealized P/L (FIFO):** {format_usd(metrics.get('unrealized_pl_usd', 0))} ({format_percent(metrics.get('unrealized_pl_percent', 0))})")
+        # --- Row 1: Top-Level Metrics ---
         st.markdown("---")
+        st.markdown("#### 📊 Overall Performance")
+        col1, col2, col3, col4, col5 = st.columns(5)
 
+        with col1:
+            st.metric(
+                label="Total Invested Capital",
+                value=format_usd(metrics.get('total_invested_capital', 0)),
+                help="The total amount of USD you have put into the portfolio."
+            )
+
+        with col2:
+            st.metric(
+                label="Total Cost Basis",
+                value=format_usd(metrics.get('total_cost_basis_usd', 0)),
+                help="The total amount of USD you have put into the portfolio from FIFO."
+            )
+
+        with col3:
+            st.metric(
+                label="Total Portfolio Value",
+                value=format_usd(metrics.get('total_value_usd', 0)),
+                help="Current portfolio total value."
+            )
+
+        with col4:
+            st.metric(
+                label="Overall P/L",
+                value=format_usd(metrics.get('overall_pl_usd', 0)),
+                delta=format_percent(metrics.get('overall_pl_percent', 0)),
+                help="Profit/Loss based on Total Invested Capital."
+            )
+
+        with col5:
+            st.metric(
+                label="Unrealized P/L (FIFO)",
+                value=format_usd(metrics.get('unrealized_pl_usd', 0)),
+                delta=format_percent(metrics.get('unrealized_pl_percent', 0)),
+                help="Profit/Loss based on FIFO Cost Basis."
+            )
+
+        st.markdown("---") # Visual separator
+
+        # --- Row 2: Value Breakdown ---
+        st.markdown("#### 💳 Wallet & Capital Breakdown")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                label="Spot & Earn Value",
+                value=format_usd(metrics.get('spot_earn_value_usd', 0))
+            )
+
+        with col2:
+            st.metric(
+                label="Futures Wallet Value",
+                value=format_usd(metrics.get('futures_value_usd', 0))
+            )
+
+        with col3:
+            st.metric(
+                label="Funding Wallet Value",
+                value=format_usd(metrics.get('funding_value_usd', 0))
+            )
+
+        st.markdown("---") # Visual separator
+
+        # --- Holdings DataFrames ---
+        # The dataframes are already well-structured, so we'll keep them as is.
         # All Holdings
         st.markdown("#### 🗂️ All Holdings")
-        if isinstance(metrics["holdings_df"], str):
+        if isinstance(metrics.get("holdings_df"), str):
             all_df = parse_df_string(metrics["holdings_df"])
         else:
-            all_df = metrics["holdings_df"]
-        st.dataframe(build_holdings_table(all_df, alloc_col="allocation"), use_container_width=True)
+            all_df = metrics.get("holdings_df")
+        if all_df is not None:
+            st.dataframe(build_holdings_table(all_df, alloc_col="allocation"), use_container_width=True)
+        else:
+            st.info("No holdings data available.")
 
         # Core Holdings
         st.markdown("#### 🎯 Core Holdings (Alloc. = % of core portfolio value)")
-        if isinstance(metrics["core_holdings_df"], str):
+        if isinstance(metrics.get("core_holdings_df"), str):
             core_df = parse_df_string(metrics["core_holdings_df"])
         else:
-            core_df = metrics["core_holdings_df"]
-        st.dataframe(build_holdings_table(core_df, alloc_col="core_allocation"), use_container_width=True)
+            core_df = metrics.get("core_holdings_df")
+        if core_df is not None:
+            st.dataframe(build_holdings_table(core_df, alloc_col="core_allocation"), use_container_width=True)
+        else:
+            st.info("No core holdings data available.")
 
         # Other Holdings
         st.markdown("#### 📈 Other Holdings (Alloc. = % of total portfolio value)")
-        if isinstance(metrics["other_holdings_df"], str):
+        if isinstance(metrics.get("other_holdings_df"), str):
             other_df = parse_df_string(metrics["other_holdings_df"])
         else:
-            other_df = metrics["other_holdings_df"]
-        st.dataframe(build_holdings_table(other_df, alloc_col="allocation"), use_container_width=True)
+            other_df = metrics.get("other_holdings_df")
+        if other_df is not None:
+            st.dataframe(build_holdings_table(other_df, alloc_col="allocation"), use_container_width=True)
+        else:
+            st.info("No other holdings data available.")
 
         # Futures Wallet Summary
         st.markdown("#### 💹 Futures Wallet Summary")
         if metrics.get("futures_balances"):
             fut_df = pd.DataFrame(metrics["futures_balances"])
             fut_clean = clean_futures_balances(fut_df)
-            if fut_clean is not None:
+            if fut_clean is not None and not fut_clean.empty:
                 st.dataframe(fut_clean, use_container_width=True)
             else:
-                st.info("No balances found.")
+                st.info("No futures balances found.")
         else:
-            st.info("No balances found.")
+            st.info("No futures balances found.")
 
         # Funding Wallet Summary
         st.markdown("#### 💰 Funding Wallet Summary")
         if metrics.get("funding_balances"):
             fund_df = pd.DataFrame(metrics["funding_balances"])
             fund_clean = clean_funding_balances(fund_df)
-            if fund_clean is not None:
+            if fund_clean is not None and not fund_clean.empty:
                 st.dataframe(fund_clean, use_container_width=True)
             else:
-                st.info("No balances found.")
+                st.info("No funding balances found.")
         else:
-            st.info("No balances found.")
+            st.info("No funding balances found.")
 
     def render_home_page(self):
-        import io
-        from pathlib import Path
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        import plotly.express as px
-        import plotly.graph_objects as go
-
         tracker = self.initialize_tracker()
         st.markdown("## 🏠 Home")
 
-        tracker = self.initialize_tracker()
         metrics = st.session_state.get("portfolio_metrics")
         if not metrics:
             st.info("No portfolio metrics available. Please run a full sync first.")
+            if st.button("🔄 Run Full Sync Now"):
+                self.run_full_sync()
+                st.rerun()
             return
 
-        holdings_df = metrics.get("holdings_df")
+        # --- Load data required for the home page ---
+        holdings_df = parse_df_string(metrics.get("holdings_df")) if isinstance(metrics.get("holdings_df"), str) else metrics.get("holdings_df")
         target_allocation = self.config_manager.config.get("target_allocation", {})
-        snapshots = None
         try:
             snapshots = tracker.db_manager.get_all_snapshots()
+            if snapshots is not None and not snapshots.empty:
+                snapshots['timestamp'] = pd.to_datetime(snapshots['timestamp'])
         except Exception:
             snapshots = None
 
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        # --- Create a cleaner tab layout ---
+        tab_perf, tab_viz, tab_tax, tab_log, tab_export = st.tabs([
             "📊 Performance",
-            "📝 Trade Log",
+            "📈 Visualizations",
             "🧾 Tax Report",
-            "📂 View Exports",
-            "🟣 Allocation Pie",
-            "🟡 Allocation Comparison",
-            "🟢 P/L by Asset",
-            "🔵 Value Over Time"
+            "📝 Trade Log",
+            "📂 View Exports"
         ])
 
-        # --- 1. Portfolio Performance ---
-        with tab1:
+        # --- 1. Portfolio Performance Tab ---
+        with tab_perf:
             st.header("📊 Portfolio Performance")
-            if st.button("🔄 Calculate Portfolio Metrics"):
-                if not st.session_state.offline_mode:
-                    with st.spinner("Calculating portfolio metrics..."):
-                        metrics = asyncio.run(tracker.calculate_portfolio_metrics())
-                        st.session_state.portfolio_metrics = metrics
-                        st.success("Portfolio metrics calculated!")
-                else:
-                    st.error("Portfolio metrics calculation unavailable in offline mode")
-            if not metrics:
-                st.info("No portfolio metrics available. Please run a full sync first.")
-            else:
-                self.display_metrics(metrics)
-                st.info("For a full, professional report, use the export buttons below.")
-                export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
-                export_dir.mkdir(parents=True, exist_ok=True)
-                if st.button("Export to Excel"):
+            self.display_metrics(metrics) # Using the improved metric card layout
+
+            st.markdown("---")
+            st.info("For a full, professional report, use the export buttons below.")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Export to Excel", use_container_width=True):
                     tracker.export_to_excel(metrics)
                     st.success("Excel report exported!")
-                if st.button("Export to HTML"):
+            with col2:
+                if st.button("Export to HTML", use_container_width=True):
                     tracker.export_to_html(metrics)
                     st.success("HTML report exported!")
 
-        # --- 2. Trade Log ---
-        with tab2:
+        # --- 5. Visualizations Tab ---
+        with tab_viz:
+            st.header("📈 Visualizations")
+            chart_options = [
+                "Portfolio Allocation (Pie Chart)",
+                "Current vs. Target Allocation",
+                "Unrealized P/L by Asset",
+                "Portfolio Value Over Time"
+            ]
+            chart_choice = st.selectbox("Select a chart to display:", chart_options)
+            st.markdown("---")
+
+            if chart_choice == "Portfolio Allocation (Pie Chart)":
+                if holdings_df is not None and not holdings_df.empty:
+                    pie_df = holdings_df.copy()
+                    pie_df = pie_df[pie_df["value_usd"] > 0]
+                    # Plotly chart for interactivity
+                    fig_plotly = px.pie(
+                        pie_df,
+                        names="symbol",
+                        values="value_usd",
+                        title="Portfolio Allocation by Value",
+                        hole=0.4
+                    )
+                    st.plotly_chart(fig_plotly, use_container_width=True)
+                    # Matplotlib chart for universal PNG download
+                    fig, ax = plt.subplots()
+                    ax.pie(pie_df["value_usd"], labels=pie_df["symbol"], autopct='%1.1f%%', startangle=90)
+                    ax.set_title("Portfolio Allocation by Value")
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", bbox_inches="tight")
+                    buf.seek(0)
+                    st.download_button(
+                        "Download Pie Chart (PNG, universal)",
+                        buf,
+                        file_name="portfolio_allocation_pie.png",
+                        mime="image/png"
+                    )
+                    plt.close(fig)
+                else:
+                    st.info("No holdings data available for allocation pie chart.")
+
+            elif chart_choice == "Current vs. Target Allocation":
+                st.subheader("Current vs. Target Allocation")
+                if holdings_df is not None and not holdings_df.empty and target_allocation:
+                    current_alloc = holdings_df.set_index('symbol')['allocation'] * 100
+                    target_alloc = pd.Series(target_allocation) * 100
+                    comparison_df = pd.DataFrame({
+                        'Current (%)': current_alloc,
+                        'Target (%)': target_alloc
+                    }).fillna(0)
+                    # Plotly chart for interactivity
+                    fig_plotly = go.Figure()
+                    fig_plotly.add_trace(go.Bar(
+                        x=comparison_df.index,
+                        y=comparison_df['Current (%)'],
+                        name='Current (%)',
+                        marker_color='indigo'
+                    ))
+                    fig_plotly.add_trace(go.Bar(
+                        x=comparison_df.index,
+                        y=comparison_df['Target (%)'],
+                        name='Target (%)',
+                        marker_color='orange'
+                    ))
+                    fig_plotly.update_layout(
+                        barmode='group',
+                        title="Current vs. Target Portfolio Allocation",
+                        xaxis_title="Asset",
+                        yaxis_title="Allocation (%)"
+                    )
+                    st.plotly_chart(fig_plotly, use_container_width=True)
+                    # Matplotlib chart for universal PNG download
+                    fig, ax = plt.subplots()
+                    width = 0.35
+                    x = range(len(comparison_df.index))
+                    ax.bar([i - width/2 for i in x], comparison_df['Current (%)'], width=width, label='Current (%)', color='indigo')
+                    ax.bar([i + width/2 for i in x], comparison_df['Target (%)'], width=width, label='Target (%)', color='orange')
+                    ax.set_xticks(list(x))
+                    ax.set_xticklabels(comparison_df.index, rotation=45)
+                    ax.set_ylabel("Allocation (%)")
+                    ax.set_title("Current vs. Target Portfolio Allocation")
+                    ax.legend()
+                    fig.tight_layout()
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", bbox_inches="tight")
+                    buf.seek(0)
+                    st.download_button(
+                        "Download Allocation Comparison (PNG, universal)",
+                        buf,
+                        file_name="allocation_comparison_bar.png",
+                        mime="image/png"
+                    )
+                    plt.close(fig)
+                else:
+                    st.info("No data available for allocation comparison chart.")
+
+            elif chart_choice == "Unrealized P/L by Asset":
+                st.subheader("Unrealized Profit/Loss (P/L) by Asset")
+                if holdings_df is not None and not holdings_df.empty and "unrealized_pl_usd" in holdings_df.columns:
+                    pl_df = holdings_df.set_index('symbol')["unrealized_pl_usd"].sort_values()
+                    colors = ['red' if x < 0 else 'green' for x in pl_df]
+                    # Plotly chart for interactivity
+                    fig_plotly = go.Figure([go.Bar(
+                        x=pl_df.index,
+                        y=pl_df.values,
+                        marker_color=colors
+                    )])
+                    fig_plotly.update_layout(
+                        title="Unrealized P/L by Asset",
+                        xaxis_title="Asset",
+                        yaxis_title="Unrealized P/L (USD)"
+                    )
+                    st.plotly_chart(fig_plotly, use_container_width=True)
+                    # Matplotlib chart for universal PNG download
+                    fig, ax = plt.subplots()
+                    bar_colors = ['green' if v >= 0 else 'red' for v in pl_df.values]
+                    ax.bar(pl_df.index, pl_df.values, color=bar_colors)
+                    ax.set_ylabel("Unrealized P/L (USD)")
+                    ax.set_title("Unrealized P/L by Asset")
+                    ax.axhline(0, color='black', linewidth=0.8)
+                    ax.tick_params(axis='x', rotation=45)  # <-- Use this line
+                    fig.tight_layout()
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", bbox_inches="tight")
+                    buf.seek(0)
+                    st.download_button(
+                        "Download P/L Chart (PNG, universal)",
+                        buf,
+                        file_name="pl_by_asset_bar.png",
+                        mime="image/png"
+                    )
+                    plt.close(fig)
+                else:
+                    st.info("No P/L data available for this chart.")
+
+            elif chart_choice == "Portfolio Value Over Time":
+                st.subheader("Portfolio Value Over Time")
+                if snapshots is not None and not snapshots.empty:
+                    snapshots = snapshots.copy()
+                    snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
+                    snapshots = snapshots.dropna(subset=["timestamp"])
+                    snapshots = snapshots[snapshots["timestamp"].dt.year > 2000]  # Filter out weird old dates
+
+                    # Drop duplicate timestamps, keeping the last entry for each timestamp
+                    snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
+
+                    # Debug output (optional, for development)
+                    # st.write("Snapshot Data Preview", snapshots.head(20))
+                    # st.write("Unique timestamps:", snapshots["timestamp"].nunique(), "Total rows:", len(snapshots))
+                    # duplicates = snapshots[snapshots.duplicated(subset=["timestamp"], keep=False)]
+                    # if not duplicates.empty:
+                    #     st.warning("Duplicate timestamps found in snapshots!")
+                    #     st.dataframe(duplicates)
+
+                    # Plotly chart for interactivity
+                    fig_plotly = px.line(
+                        snapshots,
+                        x="timestamp",
+                        y="total_value_usd",
+                        title="Portfolio Value Over Time",
+                        markers=True,
+                        labels={"total_value_usd": "Total Value (USD)", "timestamp": "Date"}
+                    )
+                    fig_plotly.update_xaxes(
+                        tickformat="%Y-%m-%d",  # Format as date
+                        ticklabelmode="period"
+                    )
+                    st.plotly_chart(fig_plotly, use_container_width=True)
+                    # Matplotlib chart for universal PNG download
+                    fig, ax = plt.subplots()
+                    ax.plot(snapshots["timestamp"], snapshots["total_value_usd"], marker='o')
+                    ax.set_xlabel("Date")
+                    ax.set_ylabel("Total Value (USD)")
+                    ax.set_title("Portfolio Value Over Time")
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                    fig.autofmt_xdate()
+                    fig.tight_layout()
+                    buf = io.BytesIO()
+                    fig.savefig(buf, format="png", bbox_inches="tight")
+                    buf.seek(0)
+                    st.download_button(
+                        "Download Value History (PNG, universal)",
+                        buf,
+                        file_name="portfolio_value_history.png",
+                        mime="image/png"
+                    )
+                    plt.close(fig)
+                else:
+                    st.info("No snapshot data available for value history chart.")
+
+        # --- 3. Tax Report Tab ---
+        with tab_tax:
+            st.header("🧾 Tax Report")
+            db_manager = tracker.db_manager
+            try:
+                tx_df = db_manager.get_all_transactions()
+                if tx_df.empty:
+                    st.info("No transactions found to generate a report.")
+                else:
+                    tax_df = calculate_fifo_realized_gains(tx_df)
+                    if tax_df.empty:
+                        st.info("No taxable events (sales) found.")
+                    else:
+                        tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            year = st.selectbox("Year", ["All"] + sorted(tax_df["year"].unique().astype(str)), key="tax_year")
+                        with col2:
+                            asset = st.selectbox("Asset", ["All"] + sorted(tax_df["symbol"].unique()), key="tax_asset")
+
+                        filtered = tax_df.copy()
+                        if year != "All":
+                            filtered = filtered[filtered["year"].astype(str) == year]
+                        if asset != "All":
+                            filtered = filtered[filtered["symbol"] == asset]
+
+                        st.dataframe(filtered, use_container_width=True) # Display raw data first
+
+                        st.markdown("#### Summary of Realized Gains")
+                        summary = filtered.groupby("symbol").agg(
+                            total_gain_usd=("gain_usd", "sum"),
+                            total_proceeds_usd=("proceeds_usd", "sum"),
+                            total_cost_basis_usd=("cost_basis_usd", "sum")
+                        ).reset_index()
+                        st.dataframe(summary, use_container_width=True)
+
+                        st.markdown("---")
+                        export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+                        export_dir.mkdir(parents=True, exist_ok=True)
+                        if st.button("Export Full Tax Report to Excel"):
+                            filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                            tax_df.to_excel(export_dir / filename, index=False)
+                            st.success(f"Excel tax report exported as {filename}!")
+            except Exception as e:
+                st.error(f"Failed to generate tax report: {e}")
+
+        # --- 2. Trade Log Tab ---
+        with tab_log:
             st.header("📝 Trade Log")
             db_manager = tracker.db_manager
             try:
                 tx_df = db_manager.get_all_transactions()
-            except Exception as e:
-                st.error(f"Failed to load transactions: {e}")
-                tx_df = pd.DataFrame()
-            if tx_df.empty:
-                st.info("No transactions found.")
-            else:
-                # Clean up columns for display
-                col_map = {
-                    "timestamp": "Date/Time",
-                    "symbol": "Asset",
-                    "type": "Type",
-                    "quantity": "Quantity",
-                    "price": "Price (USD)",
-                    "fee_usd": "Fee (USD)",
-                    "side": "Side",
-                    "notes": "Notes",
-                    "source": "Trade Source",
-                }
-                desired_order = [
-                    "Date/Time", "Asset", "Type", "Side", "Quantity", "Price (USD)",
-                    "Fee (USD)", "Trade Source", "Notes"
-                ]
-                drop_cols = [col for col in ["id", "asset_id"] if col in tx_df.columns]
-                display_df = tx_df.drop(columns=drop_cols, errors="ignore")
-                display_df = display_df.rename(columns=col_map)
-
-                # Explicitly set column order for display
-                ordered_cols = [col for col in desired_order if col in display_df.columns]
-                display_df = display_df[ordered_cols]
-
-                display_df = display_df.reset_index(drop=True)
-                st.dataframe(display_df)
-                st.download_button("Download Trade Log (CSV)", tx_df.to_csv(index=False), "trade_log.csv")
-
-        # --- 4. Tax Report ---
-        with tab3:
-            st.header("🧾 Tax Report")
-            try:
-                tx_df = db_manager.get_all_transactions()
-            except Exception as e:
-                st.error(f"Failed to load transactions: {e}")
-                tx_df = pd.DataFrame()
-            if tx_df.empty:
-                st.info("No transactions found.")
-            else:
-                tax_df = calculate_fifo_realized_gains(tx_df)
-                if tax_df.empty:
-                    st.info("No taxable events found.")
+                if tx_df.empty:
+                    st.info("No transactions found.")
                 else:
-                    tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        year = st.selectbox("Year", ["All"] + sorted(tax_df["year"].unique().astype(str)), key="tax_year")
-                    with col2:
-                        asset = st.selectbox("Asset", ["All"] + sorted(tax_df["symbol"].unique()), key="tax_asset")
-                    filtered = tax_df.copy()
-                    if year != "All":
-                        filtered = filtered[filtered["year"].astype(str) == year]
-                    if asset != "All":
-                        filtered = filtered[filtered["symbol"] == asset]
-                    tax_col_map = {
-                        "date": "Date",
-                        "symbol": "Asset",
-                        "quantity": "Quantity",
-                        "proceeds_usd": "Proceeds (USD)",
-                        "cost_basis_usd": "Cost Basis (USD)",
-                        "gain_usd": "Realized Gain (USD)",
-                        "year": "Year"
+                    # Clean up columns for display
+                    col_map = {
+                        "timestamp": "Date/Time", "symbol": "Asset", "type": "Type",
+                        "quantity": "Quantity", "price": "Price (USD)", "fee_usd": "Fee (USD)",
+                        "side": "Side", "notes": "Notes", "source": "Trade Source",
                     }
-                    filtered = filtered.rename(columns=tax_col_map)
-                    for col in ["Proceeds (USD)", "Cost Basis (USD)", "Realized Gain (USD)"]:
-                        if col in filtered.columns:
-                            filtered[col] = filtered[col].map(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
-                    if "Quantity" in filtered.columns:
-                        filtered["Quantity"] = filtered["Quantity"].map(lambda x: f"{x:,.6f}" if pd.notnull(x) else "")
-                    st.dataframe(filtered)
-                    st.markdown("#### Summary")
-                    # 1. Group and aggregate on raw numeric columns
-                    summary = tax_df.copy()
-                    if year != "All":
-                        summary = summary[summary["year"].astype(str) == year]
-                    if asset != "All":
-                        summary = summary[summary["symbol"] == asset]
+                    desired_order = [
+                        "Date/Time", "Asset", "Type", "Side", "Quantity", "Price (USD)",
+                        "Fee (USD)", "Trade Source", "Notes"
+                    ]
+                    drop_cols = [col for col in ["id", "asset_id"] if col in tx_df.columns]
+                    display_df = tx_df.drop(columns=drop_cols, errors="ignore").rename(columns=col_map)
 
-                    summary = summary.groupby(["year", "symbol"]).agg(
-                        total_gain_usd=("gain_usd", "sum"),
-                        total_proceeds_usd=("proceeds_usd", "sum"),
-                        total_cost_basis_usd=("cost_basis_usd", "sum"),
-                        total_quantity=("quantity", "sum"),
-                    ).reset_index()
+                    ordered_cols = [col for col in desired_order if col in display_df.columns]
+                    display_df = display_df[ordered_cols].reset_index(drop=True)
 
-                    # 2. Format the summary for display
-                    summary = summary.rename(columns={
-                        "year": "Year",
-                        "symbol": "Asset",
-                        "total_gain_usd": "Total Realized Gain (USD)",
-                        "total_proceeds_usd": "Total Proceeds (USD)",
-                        "total_cost_basis_usd": "Total Cost Basis (USD)",
-                        "total_quantity": "Total Quantity"
-                    })
-                    for col in ["Total Realized Gain (USD)", "Total Proceeds (USD)", "Total Cost Basis (USD)"]:
-                        summary[col] = summary[col].map(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
-                    if "Total Quantity" in summary.columns:
-                        summary["Total Quantity"] = summary["Total Quantity"].map(lambda x: f"{x:,.6f}" if pd.notnull(x) else "")
+                    st.dataframe(display_df, use_container_width=True)
+                    st.download_button("Download Trade Log (CSV)", tx_df.to_csv(index=False), "trade_log.csv")
+            except Exception as e:
+                st.error(f"Failed to load transactions: {e}")
 
-                    st.dataframe(summary)
-                    st.info("For a full, professional tax report, use the export buttons below.")
-                    export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
-                    export_dir.mkdir(parents=True, exist_ok=True)
-                    if st.button("Export Tax Report to Excel"):
-                        # Remove timezone info from all datetime columns
-                        for col in tax_df.select_dtypes(include=["datetimetz"]).columns:
-                            tax_df[col] = tax_df[col].dt.tz_localize(None)
-                        filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                        tax_df.to_excel(export_dir / filename, index=False)
-                        st.success(f"Excel tax report exported as {filename}!")
-                    if st.button("Export Tax Report to HTML"):
-                        filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-                        template_path = Path(__file__).parent / "templates"
-                        env = Environment(loader=FileSystemLoader(template_path))
-                        template = env.get_template("tax_report_template.html")
-                        html_content = template.render(
-                            tax_table=tax_df.to_html(index=False, classes='table table-striped'),
-                            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        )
-                        with open(export_dir / filename, "w") as f:
-                            f.write(html_content)
-                        st.success(f"HTML tax report exported as {filename}!")
-
-        # --- 5. View Exported Data ---
-        with tab4:
+        # --- 4. View Exports Tab ---
+        with tab_export:
             st.header("📂 View Exported Data")
             export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
             export_dir.mkdir(parents=True, exist_ok=True)
 
-            # Filter out trend report exports
-            files = sorted(
-                [f for f in export_dir.glob("*.*") if not f.name.startswith("trend_report_")],
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
+            files = sorted([f for f in export_dir.glob("*.*")], key=lambda x: x.stat().st_mtime, reverse=True)
 
             if not files:
                 st.info("No exported files found.")
@@ -549,241 +733,39 @@ class PortfolioDashboard:
                 file_names = [f.name for f in files]
                 selected_file = st.selectbox("Select Exported File", file_names)
                 file_path = export_dir / selected_file
-                st.markdown(f"**File:** `{selected_file}`")
 
                 # --- Preview logic ---
-                previewed = False
-                if selected_file.endswith(".csv"):
-                    try:
-                        df = pd.read_csv(file_path)
+                try:
+                    if selected_file.endswith((".csv", ".xlsx")):
+                        df = pd.read_csv(file_path) if selected_file.endswith(".csv") else pd.read_excel(file_path)
                         st.dataframe(df)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview CSV: {e}")
-                elif selected_file.endswith(".xlsx"):
-                    try:
-                        df = pd.read_excel(file_path)
-                        st.dataframe(df)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview Excel: {e}")
-                elif selected_file.endswith(".html"):
-                    try:
-                        with open(file_path, "r") as f:
+                    elif selected_file.endswith(".html"):
+                        with open(file_path, "r", encoding="utf-8") as f:
                             html = f.read()
                         st.components.v1.html(html, height=600, scrolling=True)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview HTML: {e}")
-                elif selected_file.endswith(".json"):
-                    try:
-                        import json
-                        with open(file_path, "r") as f:
+                    elif selected_file.endswith(".json"):
+                        with open(file_path, "r", encoding="utf-8") as f:
                             data = json.load(f)
                         st.json(data)
-                        previewed = True
-                    except Exception as e:
-                        st.error(f"Failed to preview JSON: {e}")
-                else:
-                    st.info("Preview not supported for this file type.")
+                    else:
+                        st.info("Preview not supported for this file type.")
+                except Exception as e:
+                    st.error(f"Failed to preview file: {e}")
 
-                # --- Buttons below preview ---
+                # --- Action Buttons ---
+                st.markdown("---")
                 col1, col2 = st.columns(2)
                 with col1:
                     with open(file_path, "rb") as f:
-                        st.download_button("Download", f, file_name=selected_file, use_container_width=True)
+                        st.download_button("Download File", f, file_name=selected_file, use_container_width=True)
                 with col2:
-                    if st.button("Delete", key=f"delete_{selected_file}", use_container_width=True):
+                    if st.button("Delete File", key=f"delete_{selected_file}", use_container_width=True, type="primary"):
                         try:
                             file_path.unlink()
                             st.success(f"Deleted {selected_file}")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed to delete: {e}")
-
-        # --- 1. Portfolio Allocation Pie Chart ---
-        with tab5:
-            st.subheader("Portfolio Allocation (by Value)")
-            if holdings_df is not None and not holdings_df.empty:
-                pie_df = holdings_df.copy()
-                pie_df = pie_df[pie_df["value_usd"] > 0]
-                # Plotly chart for interactivity
-                fig_plotly = px.pie(
-                    pie_df,
-                    names="symbol",
-                    values="value_usd",
-                    title="Portfolio Allocation by Value",
-                    hole=0.4
-                )
-                st.plotly_chart(fig_plotly, use_container_width=True)
-                # Matplotlib chart for universal PNG download
-                fig, ax = plt.subplots()
-                ax.pie(pie_df["value_usd"], labels=pie_df["symbol"], autopct='%1.1f%%', startangle=90)
-                ax.set_title("Portfolio Allocation by Value")
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight")
-                buf.seek(0)
-                st.download_button(
-                    "Download Pie Chart (PNG, universal)",
-                    buf,
-                    file_name="portfolio_allocation_pie.png",
-                    mime="image/png"
-                )
-                plt.close(fig)
-            else:
-                st.info("No holdings data available for allocation pie chart.")
-
-        # --- 2. Current vs. Target Allocation Bar Chart ---
-        with tab6:
-            st.subheader("Current vs. Target Allocation")
-            if holdings_df is not None and not holdings_df.empty and target_allocation:
-                current_alloc = holdings_df.set_index('symbol')['allocation'] * 100
-                target_alloc = pd.Series(target_allocation) * 100
-                comparison_df = pd.DataFrame({
-                    'Current (%)': current_alloc,
-                    'Target (%)': target_alloc
-                }).fillna(0)
-                # Plotly chart for interactivity
-                fig_plotly = go.Figure()
-                fig_plotly.add_trace(go.Bar(
-                    x=comparison_df.index,
-                    y=comparison_df['Current (%)'],
-                    name='Current (%)',
-                    marker_color='indigo'
-                ))
-                fig_plotly.add_trace(go.Bar(
-                    x=comparison_df.index,
-                    y=comparison_df['Target (%)'],
-                    name='Target (%)',
-                    marker_color='orange'
-                ))
-                fig_plotly.update_layout(
-                    barmode='group',
-                    title="Current vs. Target Portfolio Allocation",
-                    xaxis_title="Asset",
-                    yaxis_title="Allocation (%)"
-                )
-                st.plotly_chart(fig_plotly, use_container_width=True)
-                # Matplotlib chart for universal PNG download
-                fig, ax = plt.subplots()
-                width = 0.35
-                x = range(len(comparison_df.index))
-                ax.bar([i - width/2 for i in x], comparison_df['Current (%)'], width=width, label='Current (%)', color='indigo')
-                ax.bar([i + width/2 for i in x], comparison_df['Target (%)'], width=width, label='Target (%)', color='orange')
-                ax.set_xticks(list(x))
-                ax.set_xticklabels(comparison_df.index, rotation=45)
-                ax.set_ylabel("Allocation (%)")
-                ax.set_title("Current vs. Target Portfolio Allocation")
-                ax.legend()
-                fig.tight_layout()
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight")
-                buf.seek(0)
-                st.download_button(
-                    "Download Allocation Comparison (PNG, universal)",
-                    buf,
-                    file_name="allocation_comparison_bar.png",
-                    mime="image/png"
-                )
-                plt.close(fig)
-            else:
-                st.info("No data available for allocation comparison chart.")
-
-        # --- 3. Unrealized P/L by Asset Bar Chart ---
-        with tab7:
-            st.subheader("Unrealized Profit/Loss (P/L) by Asset")
-            if holdings_df is not None and not holdings_df.empty and "unrealized_pl_usd" in holdings_df.columns:
-                pl_df = holdings_df.set_index('symbol')["unrealized_pl_usd"].sort_values()
-                colors = ['red' if x < 0 else 'green' for x in pl_df]
-                # Plotly chart for interactivity
-                fig_plotly = go.Figure([go.Bar(
-                    x=pl_df.index,
-                    y=pl_df.values,
-                    marker_color=colors
-                )])
-                fig_plotly.update_layout(
-                    title="Unrealized P/L by Asset",
-                    xaxis_title="Asset",
-                    yaxis_title="Unrealized P/L (USD)"
-                )
-                st.plotly_chart(fig_plotly, use_container_width=True)
-                # Matplotlib chart for universal PNG download
-                fig, ax = plt.subplots()
-                bar_colors = ['green' if v >= 0 else 'red' for v in pl_df.values]
-                ax.bar(pl_df.index, pl_df.values, color=bar_colors)
-                ax.set_ylabel("Unrealized P/L (USD)")
-                ax.set_title("Unrealized P/L by Asset")
-                ax.axhline(0, color='black', linewidth=0.8)
-                ax.tick_params(axis='x', rotation=45)  # <-- Use this line
-                fig.tight_layout()
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight")
-                buf.seek(0)
-                st.download_button(
-                    "Download P/L Chart (PNG, universal)",
-                    buf,
-                    file_name="pl_by_asset_bar.png",
-                    mime="image/png"
-                )
-                plt.close(fig)
-            else:
-                st.info("No P/L data available for this chart.")
-
-        # --- 4. Portfolio Value Over Time Line Chart ---
-        with tab8:
-            st.subheader("Portfolio Value Over Time")
-            if snapshots is not None and not snapshots.empty:
-                snapshots = snapshots.copy()
-                snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
-                snapshots = snapshots.dropna(subset=["timestamp"])
-                snapshots = snapshots[snapshots["timestamp"].dt.year > 2000]  # Filter out weird old dates
-
-                # Drop duplicate timestamps, keeping the last entry for each timestamp
-                snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
-
-                # Debug output (optional, for development)
-                # st.write("Snapshot Data Preview", snapshots.head(20))
-                # st.write("Unique timestamps:", snapshots["timestamp"].nunique(), "Total rows:", len(snapshots))
-                # duplicates = snapshots[snapshots.duplicated(subset=["timestamp"], keep=False)]
-                # if not duplicates.empty:
-                #     st.warning("Duplicate timestamps found in snapshots!")
-                #     st.dataframe(duplicates)
-
-                # Plotly chart for interactivity
-                fig_plotly = px.line(
-                    snapshots,
-                    x="timestamp",
-                    y="total_value_usd",
-                    title="Portfolio Value Over Time",
-                    markers=True,
-                    labels={"total_value_usd": "Total Value (USD)", "timestamp": "Date"}
-                )
-                fig_plotly.update_xaxes(
-                    tickformat="%Y-%m-%d",  # Format as date
-                    ticklabelmode="period"
-                )
-                st.plotly_chart(fig_plotly, use_container_width=True)
-                # Matplotlib chart for universal PNG download
-                fig, ax = plt.subplots()
-                ax.plot(snapshots["timestamp"], snapshots["total_value_usd"], marker='o')
-                ax.set_xlabel("Date")
-                ax.set_ylabel("Total Value (USD)")
-                ax.set_title("Portfolio Value Over Time")
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-                fig.autofmt_xdate()
-                fig.tight_layout()
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight")
-                buf.seek(0)
-                st.download_button(
-                    "Download Value History (PNG, universal)",
-                    buf,
-                    file_name="portfolio_value_history.png",
-                    mime="image/png"
-                )
-                plt.close(fig)
-            else:
-                st.info("No snapshot data available for value history chart.")
 
     def render_market_trends(self):
         st.markdown("## 📈 Market Trends")
@@ -1086,7 +1068,7 @@ class PortfolioDashboard:
                     st.success(f"Deleted {selected_export.name}")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Failed to delete: {str(e)}")
+                    st.error(f"Failed to delete: {e}")
 
         # Preview panel
         if st.session_state.preview_file:
@@ -1587,53 +1569,33 @@ class PortfolioDashboard:
             else:
                 st.success("✅ SIMULATION MODE")
 
-        # Trading Mode Selection
+        # Trading Mode Selection with Tabs
         st.markdown("### 🎯 Select Trading Mode")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button(" Manual Trade", use_container_width=True, type="primary"):
+
+        # Create tabs
+        tab1, tab2 = st.tabs(["📝 Manual Trade", "🤖 Live Strategy"])
+
+        with tab1:
+            # Set trading mode when this tab is active
+            if st.session_state.trading_mode != "manual":
                 st.session_state.trading_mode = "manual"
-                st.rerun()
-        with col2:
-            if st.button("🤖 Live Strategy", use_container_width=True, type="primary"):
-                st.session_state.trading_mode = "strategy"
-                st.rerun()
+                # Clear strategy-related data when switching to manual
+                st.session_state.strategy_signals = None
+                if "trading_results" in st.session_state and st.session_state.trading_results:
+                    st.session_state.trading_results = None
 
-        # Render appropriate trading interface
-        if st.session_state.trading_mode == "manual":
             self._render_manual_trading()
-        elif st.session_state.trading_mode == "strategy":
-            self._render_live_strategy_trading()
-        else:
-            # Show trading overview
-            st.markdown("### 📊 Trading Overview")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("#### 📝 Manual Trading")
-                st.markdown("""
-                - Place individual BUY/SELL orders
-                - Specify exact amounts and assets
-                - Full control over trade parameters
-                - Real-time market execution
-                """)
-                
-            with col2:
-                st.markdown("#### 🤖 Live Strategy Trading")
-                st.markdown("""
-                - Automated signal generation
-                - Strategy-based trade execution
-                - Multi-asset portfolio analysis
-                - Account-specific strategies
-                """)
 
-        if st.session_state.trading_mode != "manual":
-            st.session_state.trading_results = None
-            st.session_state.manual_trade_data = {}
-        if st.session_state.trading_mode != "strategy":
-            st.session_state.trading_results = None
-            st.session_state.strategy_signals = None
+        with tab2:
+            # Set trading mode when this tab is active
+            if st.session_state.trading_mode != "strategy":
+                st.session_state.trading_mode = "strategy"
+                # Clear manual trading data when switching to strategy
+                st.session_state.manual_trade_data = {}
+                if "trading_results" in st.session_state and st.session_state.trading_results:
+                    st.session_state.trading_results = None
+
+            self._render_live_strategy_trading()
 
     def _render_manual_trading(self):
         """Renders the manual trading interface."""
@@ -3177,13 +3139,606 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             else:
                 st.warning("Backup directory not found.")
 
-    def render_configuration(self):
-        st.markdown("## ⚙️ Configuration")
-        st.info("Configuration settings would be displayed here")
+    def render_settings_and_status(self):
+        import os
+        import psutil
+        import platform
+        import getpass
+        import json
+        import re
+        from pathlib import Path
+        from datetime import datetime
 
-    def render_system_status(self):
-        st.markdown("## 🔧 System Status")
-        st.info("System status and API connection info would be displayed here")
+        st.markdown("## ⚙️ Settings & System Status")
+
+        tab_config, tab_status = st.tabs(["⚙️ Configuration", "🔧 System Status"])
+
+        # --- Configuration Tab ---
+        with tab_config:
+            st.header("⚙️ Configuration")
+            config = self.config_manager.config
+
+            # Configuration file locations
+            st.markdown("---")
+            st.subheader(f"📁 Configuration locations")
+            st.success(f"📁 Config file: `{self.config_manager.config_file_path}`\n\n")
+            st.success(f"📁 Environment file: `{self.config_manager.env_path}`")
+            st.markdown("---")
+
+            # Create responsive columns for configuration sections
+            col_portfolio, col_api = st.columns(2)
+
+             # --- Portfolio Settings ---
+            with col_portfolio:
+                with st.container():
+                    st.subheader("💼 Portfolio Settings")
+
+                    with st.expander("💰 Trading Configuration", expanded=False):
+                        min_trade_usd = config.get("portfolio", {}).get("minimum_trade_usd", 5.0)
+                        new_min_trade_usd = st.number_input(
+                            "💵 Minimum Trade (USD)",
+                            min_value=1.0, max_value=10000.0, value=float(min_trade_usd),
+                            step=1.0,
+                            help="💵 Minimum USD value for trades. Smaller trades are ignored."
+                        )
+
+                    with st.expander("⚙️ Trading Mode", expanded=False):
+                        live_enabled_config = config.get("portfolio", {}).get("live_trading_enabled", False)
+                        new_live = st.toggle(
+                            "🔴 Enable Live Trading",
+                            value=live_enabled_config,
+                            help="🔴 Enable real trades; otherwise, trades are simulated (dry run)."
+                        )
+
+                        testnet_config = config.get("portfolio", {}).get("testnet_mode", False)
+                        new_testnet = st.toggle(
+                            "🧪 Enable Binance Testnet Mode",
+                            value=testnet_config,
+                            help="🧪 Switch between Binance mainnet and testnet."
+                        )
+
+                    with st.expander("💱 Currency Settings", expanded=False):
+                        p2p_fiat = config.get("portfolio", {}).get("p2p_fiat_currency", "USD")
+                        new_p2p_fiat = st.text_input(
+                            "💱 P2P Fiat Currency",
+                            value=p2p_fiat,
+                            help="💱 Fiat currency code (e.g., USD, EUR, PHP) for P2P trades."
+                        )
+
+                        crypto_quotes = config.get("portfolio", {}).get("crypto_quotes", [])
+                        new_crypto_quotes = st.text_input(
+                            "₿ Crypto Quotes (comma-separated)",
+                            value=", ".join(crypto_quotes),
+                            help="₿ Crypto quote symbols (e.g., BTC, ETH, USDT), comma-separated."
+                        )
+
+                        stablecoins = config.get("portfolio", {}).get("stablecoin_symbols", ["USDT"])
+                        new_stablecoins = st.text_input(
+                            "🟢 Stablecoin Symbols (comma-separated)",
+                            value=", ".join(stablecoins),
+                            help="🟢 Stablecoin symbols (e.g., USDT, USDC), comma-separated."
+                        )
+
+                    # Save Portfolio Settings
+                    st.markdown("---")
+                    if st.button("💾 Save Portfolio Settings", use_container_width=True, type="primary"):
+                        try:
+                            config["portfolio"]["minimum_trade_usd"] = new_min_trade_usd
+                            config["portfolio"]["live_trading_enabled"] = new_live
+                            config["portfolio"]["testnet_mode"] = new_testnet
+                            config["portfolio"]["p2p_fiat_currency"] = new_p2p_fiat.strip().upper()
+                            config["portfolio"]["crypto_quotes"] = [s.strip().upper() for s in new_crypto_quotes.split(",") if s.strip()]
+                            config["portfolio"]["stablecoin_symbols"] = [s.strip().upper() for s in new_stablecoins.split(",") if s.strip()]
+                            self.config_manager.save_config()
+                            st.success("✅ Portfolio settings updated and applied!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to save portfolio settings: {str(e)}")
+
+            # --- API Settings ---
+            with col_api:
+                with st.container():
+                    st.subheader("🔌 API Settings")
+
+                    with st.expander("⏱️ Timeout Settings", expanded=False):
+                        coingecko_timeout = config.get("apis", {}).get("coingecko", {}).get("timeout", 30)
+                        binance_timeout = config.get("apis", {}).get("binance", {}).get("timeout", 60)
+
+                        new_cg_timeout = st.number_input(
+                            "CoinGecko Timeout (s)",
+                            min_value=5, max_value=120, value=coingecko_timeout,
+                            key="cg_timeout",
+                            help="⏰ Maximum time (in seconds) to wait for a response from CoinGecko API."
+                        )
+                        new_bi_timeout = st.number_input(
+                            "Binance Timeout (s)",
+                            min_value=5, max_value=120, value=binance_timeout,
+                            key="bi_timeout",
+                            help="⏰ Maximum time (in seconds) to wait for a response from Binance API."
+                        )
+
+                    with st.expander("⚡ Performance Settings", expanded=False):
+                        binance_recv_window = config.get("apis", {}).get("binance", {}).get("recv_window", 20000)
+                        new_bi_recv_window = st.number_input(
+                            "Binance Recv Window (ms)",
+                            min_value=1000, max_value=120000, value=binance_recv_window,
+                            step=1000, key="bi_recv_window",
+                            help="📡 Binance API recvWindow parameter (ms). Increase if timestamp errors occur."
+                        )
+
+                        binance_delay = config.get("apis", {}).get("binance", {}).get("request_delay_ms", 500)
+                        coingecko_delay = config.get("apis", {}).get("coingecko", {}).get("request_delay_ms", 1500)
+
+                        new_bi_delay = st.number_input(
+                            "Binance Request Delay (ms)",
+                            min_value=0, max_value=10000, value=binance_delay,
+                            step=100, key="bi_delay",
+                            help="⚡ Delay (ms) between Binance API requests to avoid rate limits."
+                        )
+                        new_cg_delay = st.number_input(
+                            "CoinGecko Request Delay (ms)",
+                            min_value=0, max_value=10000, value=coingecko_delay,
+                            step=100, key="cg_delay",
+                            help="⚡ Delay (ms) between CoinGecko API requests to avoid rate limits."
+                        )
+
+                    with st.expander("📅 Historical Data Settings", expanded=False):
+                        st.markdown("**Data Lookback Periods**")
+                        lookback = config.get("history_lookback_days", {})
+                        lookback_types = [
+                            ("trades", 90, "💼"), ("deposits", 90, "💰"), ("withdrawals", 90, "💸"),
+                            ("p2p_buys", 90, "🤝"), ("internal_transfers", 90, "🔄"),
+                            ("spot_futures_transfers", 90, "📈"), ("spot_convert_history", 90, "🔄"),
+                            ("simple_earn_rewards", 90, "💎"), ("simple_earn_subscriptions", 90, "📊"),
+                            ("simple_earn_redemptions", 90, "💰"), ("dividend_history", 90, "📈"),
+                            ("staking_history", 90, "🏦")
+                        ]
+
+                        new_lookback = {}
+                        for key, default, emoji in lookback_types:
+                            display_name = f"{emoji} {key.replace('_', ' ').title()}"
+                            new_lookback[key] = st.number_input(
+                                display_name,
+                                min_value=1, max_value=3650, value=int(lookback.get(key, default)),
+                                key=f"lookback_{key}",
+                                help=f"📅 Days of {key.replace('_', ' ')} history to fetch from API."
+                            )
+
+                    # Save API Settings with improved styling
+                    st.markdown("---")
+                    if st.button("💾 Save API Settings", use_container_width=True, type="primary"):
+                        try:
+                            config["apis"]["coingecko"]["timeout"] = new_cg_timeout
+                            config["apis"]["binance"]["timeout"] = new_bi_timeout
+                            config["apis"]["binance"]["recv_window"] = new_bi_recv_window
+                            config["apis"]["binance"]["request_delay_ms"] = new_bi_delay
+                            config["apis"]["coingecko"]["request_delay_ms"] = new_cg_delay
+                            config["history_lookback_days"] = new_lookback
+                            self.config_manager.save_config()
+                            st.success("✅ API settings updated and applied!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to save API settings: {str(e)}")
+
+            col_trend, col_logging = st.columns(2)
+
+            # --- Logging Settings ---
+            with col_logging:
+                with st.container():
+                    st.subheader("📝 Logging Settings")
+
+                    with st.expander("📊 Log Configuration", expanded=False):
+                        log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+                        level_icons = {"DEBUG": "🔍", "INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
+                        current_level = config.get("logging", {}).get("level", "INFO")
+
+                        new_level = st.selectbox(
+                            "📊 Log Level",
+                            log_levels,
+                            index=log_levels.index(current_level),
+                            format_func=lambda x: f"{level_icons.get(x, '')} {x}",
+                            key="log_level",
+                            help="📊 Set verbosity of logs. DEBUG is most verbose, CRITICAL is least."
+                        )
+
+                        file_config = config.get("logging", {}).get("file_config", {})
+                        file_enabled = file_config.get("enabled", True)
+                        new_file_enabled = st.toggle(
+                            "📄 Enable File Logging",
+                            value=file_enabled,
+                            key="file_logging_toggle",
+                            help="📄 Write logs to a file for persistent storage."
+                        )
+
+                        log_path = file_config.get("path", "logs/portfolio_tracker.log")
+                        new_log_path = st.text_input(
+                            "📁 Log File Path",
+                            value=log_path,
+                            key="log_file_path",
+                            help="📁 Path to store log file. Ensure directory is writable."
+                        )
+
+                        console_config = config.get("logging", {}).get("console_config", {})
+                        console_enabled = console_config.get("enabled", True)
+                        new_console_enabled = st.toggle(
+                            "🖥️ Enable Console Logging",
+                            value=console_enabled,
+                            key="console_logging_toggle",
+                            help="🖥️ Output logs to console for real-time monitoring."
+                        )
+
+                    with st.expander("👀 Log Preview", expanded=False):
+                        preview_lines = st.number_input(
+                            "📄 Log Preview Lines",
+                            min_value=1, max_value=100, value=10,
+                            key="log_preview_lines",
+                            help="📄 Number of recent log lines to display in preview."
+                        )
+
+                        if os.path.exists(log_path):
+                            try:
+                                with open(log_path, "r") as f:
+                                    lines = f.readlines()[-preview_lines:]
+                                if lines:
+                                    st.code("".join(lines), language="text")
+                                else:
+                                    st.info("📄 Log file is empty")
+                            except Exception as e:
+                                st.error(f"❌ Failed to read log file: {e}")
+                        else:
+                            st.info("📄 Log file not found")
+
+                    # Save Logging Settings
+                    st.markdown("---")
+                    # col_save, col_clear = st.columns(2)
+                    # with col_save:
+                    if st.button("💾 Save Logging Settings", use_container_width=True, type="primary"):
+                        try:
+                            # Validate log file path
+                            log_path_obj = Path(new_log_path).parent
+                            log_path_obj.mkdir(parents=True, exist_ok=True)
+                            if not os.access(log_path_obj, os.W_OK):
+                                st.error("❌ Log file directory is not writable!")
+                            else:
+                                config["logging"]["level"] = new_level
+                                config["logging"]["file_config"]["enabled"] = new_file_enabled
+                                config["logging"]["file_config"]["path"] = new_log_path
+                                config["logging"]["console_config"]["enabled"] = new_console_enabled
+                                self.config_manager.save_config()
+                                self.setup_logging(level_override=new_level)
+                                st.success(f"✅ Logging settings updated! Level: {level_icons.get(new_level, '')} {new_level}")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to save logging settings: {str(e)}")
+
+            # --- Trend Analyzer Settings ---
+            with col_trend:
+                with st.container():
+                    st.subheader("📈 Trend Analyzer")
+                    trend_config = config.get("trend_analyzer", {})
+
+                    with st.expander("₿ Cryptocurrencies", expanded=False):
+                        cryptocurrencies = trend_config.get("cryptocurrencies", [])
+                        new_cryptocurrencies = st.text_input(
+                            "₿ Cryptocurrencies (comma-separated)",
+                            value=", ".join(cryptocurrencies),
+                            key="trend_cryptos",
+                            help="₿ Cryptocurrencies to analyze (e.g., BTC, ETH, SOL)."
+                        )
+
+                    with st.expander("📊 RSI Settings", expanded=False):
+                        rsi_period = trend_config.get("rsi_period", 14)
+                        new_rsi_period = st.number_input(
+                            "⏱️ RSI Period",
+                            min_value=1, max_value=50, value=rsi_period,
+                            key="rsi_period",
+                            help="⏱️ Period for Relative Strength Index calculation."
+                        )
+
+                        rsi_oversold = trend_config.get("rsi_oversold", 30)
+                        new_rsi_oversold = st.number_input(
+                            "📉 RSI Oversold Threshold",
+                            min_value=0, max_value=100, value=rsi_oversold,
+                            key="rsi_oversold",
+                            help="📉 RSI value below which an asset is considered oversold."
+                        )
+
+                        rsi_overbought = trend_config.get("rsi_overbought", 70)
+                        new_rsi_overbought = st.number_input(
+                            "📈 RSI Overbought Threshold",
+                            min_value=0, max_value=100, value=rsi_overbought,
+                            key="rsi_overbought",
+                            help="📈 RSI value above which an asset is considered overbought."
+                        )
+
+                    with st.expander("⏰ Timeframe Settings", expanded=False):
+                        timeframe_settings = trend_config.get("timeframe_settings", {})
+                        timeframe_icons = {"long_term": "📅", "swing": "📊", "day": "⚡"}
+
+                        for timeframe in ["long_term", "swing", "day"]:
+                            # Ensure default settings exist
+                            if timeframe not in timeframe_settings:
+                                timeframe_settings[timeframe] = {
+                                    "period": "1y" if timeframe == "long_term" else "90d" if timeframe == "swing" else "7d",
+                                    "sma_short_window": 10,
+                                    "sma_long_window": 30
+                                }
+
+                            settings = timeframe_settings[timeframe]
+                            current_period = settings.get("period", "1y" if timeframe == "long_term" else "90d" if timeframe == "swing" else "7d")
+
+                            with st.expander(f"{timeframe_icons.get(timeframe, '📊')} {timeframe.replace('_', ' ').title()}", expanded=False):
+                                new_period = st.text_input(
+                                    f"⏰ Period",
+                                    value=current_period,
+                                    key=f"timeframe_{timeframe}_period",
+                                    help="⏰ Period for analysis (e.g., 4y for years, 60d for days, 3mo for months)."
+                                )
+
+                                col_sma1, col_sma2 = st.columns(2)
+                                with col_sma1:
+                                    new_sma_short = st.number_input(
+                                        f"📊 SMA Short",
+                                        min_value=1, max_value=200,
+                                        value=settings.get("sma_short_window", 10),
+                                        key=f"timeframe_{timeframe}_sma_short",
+                                        help="📊 Short-term Simple Moving Average window."
+                                    )
+                                with col_sma2:
+                                    new_sma_long = st.number_input(
+                                        f"📈 SMA Long",
+                                        min_value=1, max_value=200,
+                                        value=settings.get("sma_long_window", 30),
+                                        key=f"timeframe_{timeframe}_sma_long",
+                                        help="📈 Long-term Simple Moving Average window."
+                                    )
+
+                                timeframe_settings[timeframe] = {
+                                    "period": new_period.strip(),
+                                    "sma_short_window": new_sma_short,
+                                    "sma_long_window": new_sma_long
+                                }
+
+                    # Validation and Save
+                    validation_errors = []
+
+                    if new_rsi_oversold >= new_rsi_overbought:
+                        validation_errors.append("RSI Oversold must be less than RSI Overbought!")
+
+                    for timeframe, settings in timeframe_settings.items():
+                        period = settings.get("period", "").strip()
+                        if not period:
+                            validation_errors.append(f"Period for {timeframe} cannot be empty!")
+                        elif not re.match(r"^\d+(y|d|mo)$", period):
+                            validation_errors.append(f"Invalid period format for {timeframe}: Use Xy, Xd, or Xmo")
+
+                        if settings["sma_short_window"] >= settings["sma_long_window"]:
+                            validation_errors.append(f"Short SMA must be less than Long SMA for {timeframe}!")
+
+                    if validation_errors:
+                        for error in validation_errors:
+                            st.error(f"❌ {error}")
+
+                    st.markdown("---")
+                    if st.button("💾 Save Trend Analyzer Settings", use_container_width=True, type="primary", disabled=bool(validation_errors)):
+                        try:
+                            config["trend_analyzer"]["cryptocurrencies"] = [s.strip().upper() for s in new_cryptocurrencies.split(",") if s.strip()]
+                            config["trend_analyzer"]["rsi_period"] = new_rsi_period
+                            config["trend_analyzer"]["rsi_oversold"] = new_rsi_oversold
+                            config["trend_analyzer"]["rsi_overbought"] = new_rsi_overbought
+                            config["trend_analyzer"]["timeframe_settings"] = timeframe_settings
+                            self.config_manager.save_config()
+                            st.success("✅ Trend Analyzer settings updated and applied!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Failed to save trend analyzer settings: {str(e)}")
+
+            # --- Import/Export Config ---
+            st.markdown("---")
+            st.subheader("📁 Import/Export Configuration")
+
+            col_export, col_import = st.columns(2)
+
+            with col_export:
+                with st.expander("📤 Export Configuration", expanded=False):
+                    export_dir = config.get("exports", {}).get("path", "data/exports")
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    default_export_path = Path(export_dir) / f"config_export_{timestamp}.json"
+
+                    export_path = st.text_input(
+                        "📁 Export Path",
+                        value=str(default_export_path),
+                        help="📁 Path to save the exported JSON config."
+                    )
+
+                    if st.button("📤 Export Configuration", use_container_width=True):
+                        try:
+                            export_config = config.copy()
+                            # Remove sensitive data
+                            export_config.pop("main_api_keys", None)
+                            export_config.pop("sub_accounts", None)
+
+                            export_path_obj = Path(export_path)
+                            export_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+                            with open(export_path_obj, "w") as f:
+                                json.dump(export_config, f, indent=2)
+
+                            st.success(f"✅ Configuration exported to `{export_path_obj}`")
+                        except Exception as e:
+                            st.error(f"❌ Failed to export configuration: {str(e)}")
+
+            with col_import:
+                with st.expander("📥 Import Configuration", expanded=False):
+                    uploaded_file = st.file_uploader(
+                        "📥 Upload Configuration (JSON)",
+                        type="json",
+                        help="📥 Upload a previously exported configuration file"
+                    )
+
+                    if uploaded_file:
+                        try:
+                            new_config = json.load(uploaded_file)
+
+                            # Validation
+                            default_config = self.config_manager.config
+                            required_keys = {key: type(value) for key, value in default_config.items()
+                                           if key not in ["main_api_keys", "sub_accounts"]}
+
+                            validation_passed = True
+                            validation_messages = []
+
+                            # Validate structure
+                            for key, expected_type in required_keys.items():
+                                if key not in new_config:
+                                    validation_messages.append(f"❌ Missing required key: '{key}'")
+                                    validation_passed = False
+                                elif not isinstance(new_config[key], expected_type):
+                                    validation_messages.append(f"❌ Invalid type for '{key}': expected {expected_type.__name__}")
+                                    validation_passed = False
+
+                            # Display validation results
+                            if validation_passed:
+                                st.success("✅ Configuration file is valid!")
+
+                                # Preview configuration
+                                with st.expander("👀 Preview Configuration", expanded=False):
+                                    st.json(new_config)
+
+                                confirm_import = st.checkbox(
+                                    "⚠️ Confirm Import (will overwrite current config)",
+                                    help="⚠️ This will replace your current settings with the imported configuration."
+                                )
+
+                                if confirm_import and st.button("📥 Apply Configuration", use_container_width=True, type="primary"):
+                                    try:
+                                        # Preserve sensitive data
+                                        new_config["main_api_keys"] = config.get("main_api_keys", {})
+                                        new_config["sub_accounts"] = config.get("sub_accounts", {})
+
+                                        config.update(new_config)
+                                        self.config_manager.save_config()
+
+                                        st.success("✅ Configuration imported successfully! Please restart the application.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Failed to apply configuration: {str(e)}")
+                            else:
+                                st.error("❌ Configuration file validation failed:")
+                                for msg in validation_messages:
+                                    st.error(msg)
+
+                        except json.JSONDecodeError as e:
+                            st.error(f"❌ Invalid JSON file: {str(e)}")
+                        except Exception as e:
+                            st.error(f"❌ Failed to process configuration file: {str(e)}")
+
+        # --- System Status Tab ---
+        with tab_status:
+            st.header("🔧 System Status")
+            st.markdown("---")
+
+            # Create responsive columns for status sections
+            col_system, col_services = st.columns(2)
+
+            # --- System Information Column ---
+            with col_system:
+                with st.container():
+                    st.subheader("🖥️ System Information")
+
+                    # Application Info Expander
+                    with st.expander("📱 Application Details", expanded=True):
+                        app_metrics = {
+                            "Version": config.get("version", "Unknown"),
+                            "User": getpass.getuser(),
+                            "Python": platform.python_version(),
+                            "OS": platform.platform(terse=True),
+                            "System Boot": datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        for label, value in app_metrics.items():
+                            st.text(f"{label}: {value}")
+
+                    # System Resources Expander
+                    with st.expander("📊 System Resources", expanded=True):
+                        res_col_cpu, res_col_ram, res_col_disk = st.columns(3)
+                        with res_col_cpu:
+                            cpu_percent = psutil.cpu_percent(interval=1)
+                            st.metric("🖥️ CPU", f"{cpu_percent:.1f}%")
+                        with res_col_ram:
+                            ram_info = psutil.virtual_memory()
+                            st.metric("💾 RAM", f"{ram_info.percent}%", f"{ram_info.used / (1024**3):.1f} GB")
+                        with res_col_disk:
+                            disk_info = psutil.disk_usage('/')
+                            st.metric("💿 Disk", f"{disk_info.percent}%", f"{disk_info.used / (1024**3):.1f} GB")
+
+            # --- Services & Storage Column ---
+            with col_services:
+                with st.container():
+                    st.subheader("🔌 Services & Storage")
+
+                    # API Status Expander
+                    with st.expander("🔗 API Status", expanded=True):
+                        if self.tracker.binance_client:
+                            try:
+                                self.tracker.binance_client.ping()
+                                st.success("✅ Binance API: Connected")
+                            except Exception as e:
+                                st.error(f"❌ Binance API: Connection failed")
+                        else:
+                            st.warning("⚠️ Binance API: Not connected")
+
+                        # Other API info
+                        test_id = "BTC"
+                        prices = self.tracker._get_current_prices([test_id])
+                        price = prices.get(test_id)
+                        if price:
+                            st.success(f"🦎 CoinGecko: Available")
+                        else:
+                            st.warning(f"❌ CoinGecko: Not Available")
+                        st.info("📈 YFinance: API available")
+
+
+                    # Database & Storage Expander
+                    with st.expander("💾 Database & Storage", expanded=True):
+                        db_path = self.tracker.db_manager.db_path
+                        if os.path.exists(db_path):
+                            db_size_kb = os.path.getsize(db_path) / 1024
+                            db_modified = datetime.fromtimestamp(os.path.getmtime(db_path))
+                            st.success(f"Database: `{os.path.basename(db_path)}`")
+                            st.text(f"Size: {db_size_kb:.1f} KB")
+                            st.text(f"Last Modified: {db_modified.strftime('%Y-%m-%d %H:%M:%S')}")
+                        else:
+                            st.error("❌ Database file not found")
+
+                        st.markdown("---")
+                        export_dir = config.get("exports", {}).get("path", "data/exports/")
+                        cache_dir = config.get("cache", {}).get("path", "data/cache")
+                        st.info(f"📁 Export Path: `{export_dir}`")
+                        st.info(f"🗂️ Cache Path: `{cache_dir}`")
+
+            # --- Logging Status (Full Width) ---
+            st.markdown("---")
+            with st.expander("📝 Logging Status", expanded=False):
+                log_path = config.get("logging", {}).get("file_config", {}).get("path", "logs/portfolio_tracker.log")
+
+                log_level = config.get("logging", {}).get("level", "INFO")
+                level_icons = {"DEBUG": "🔍", "INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
+                icon = level_icons.get(log_level, "📝")
+                st.info(f"**Current Log Level:** {icon} {log_level}")
+                st.info(f"**Log File Path:** `{log_path}`")
+
+                if os.path.exists(log_path):
+                    try:
+                        with open(log_path, "r") as f:
+                            lines = f.readlines()[-15:] # Increased lines for better context
+                        if lines:
+                            st.code("".join(lines), language="log")
+                        else:
+                            st.info("📄 Log file is empty.")
+                    except Exception as e:
+                        st.error(f"❌ Failed to read log file: {e}")
+                else:
+                    st.warning("📄 Log file not found at the configured path.")
 
     def run(self):
         """Main application runner"""
@@ -3199,8 +3754,7 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             "💰 Trade": self.render_trading,
             "🧪 Backtest": self.render_backtesting,
             "🗄️ Database": self.render_data_management,
-            "⚙️ Configuration": self.render_configuration,
-            "🔧 System Status": self.render_system_status
+            "⚙️ Settings & Status": self.render_settings_and_status,  # <--- NEW
         }
         if selected_page in page_mapping:
             page_mapping[selected_page]()
