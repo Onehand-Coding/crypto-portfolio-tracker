@@ -2,7 +2,6 @@
 Configuration Management Module
 Handles loading configuration from environment variables, files, and defaults.
 """
-
 import os
 import json
 import logging
@@ -18,7 +17,6 @@ class ConfigManager:
     Manages application configuration by loading non-sensitive settings
     from a JSON file and sensitive secrets from environment variables.
     """
-
     def __init__(self, config_path: Optional[str] = None):
         """Initialize and load all configurations."""
         current_dir = Path(__file__).parent
@@ -38,13 +36,12 @@ class ConfigManager:
         if "apis" in self.config and "coingecko" in self.config["apis"]:
             self.config["apis"]["coingecko"]["api_key"] = os.getenv("COINGECKO_API_KEY")
 
-        # If in testnet mode, swap the database path with the testnet path
+        # If in testnet mode, swap the database path with the testnet path. Currently handled by database manager.
         if self.is_testnet_mode:
-            logging.warning("TESTNET mode active. Switching to testnet database.")
-            db_config = self.config.get("database", {})
-            testnet_db_path = db_config.get("testnet_path")
+            logging.info("TESTNET mode active. Switching to testnet database.")
+            testnet_db_path = self.config.get("database", {}).get("testnet_path")
             if testnet_db_path:
-                db_config["path"] = testnet_db_path
+                logging.info("Testnet DB found.")
             else:
                 logging.warning("Testnet mode is active, but no 'testnet_path' found in database config.")
 
@@ -72,7 +69,6 @@ class ConfigManager:
     def is_testnet_mode(self):
         """Tell if """
         return self.config.get("portfolio", {}).get("testnet_mode", False)
-
 
     def _load_json_config(self) -> Dict[str, Any]:
         """Loads the base configuration from the JSON file."""

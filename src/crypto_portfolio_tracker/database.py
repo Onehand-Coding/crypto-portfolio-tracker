@@ -14,8 +14,13 @@ class DatabaseManager:
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize database manager"""
+
+        # --- Setup database based on wether in testnet mode or not. ---
         self.logger = logging.getLogger(__name__)
-        self.db_path = Path(config.get("database", {}).get("path", "data/portfolio.db"))
+        if not config.get("portfolio",{}).get("testnet_mode", False):
+            self.db_path = Path(config.get("database", {}).get("path", "data/portfolio.db"))
+        else:
+            self.db_path = Path(config.get("database", {}).get("testnet_path", "data/testnet_portfolio.db"))
         self.db_config = config.get("database", {}) # Store the 'database' sub-dictionary
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
