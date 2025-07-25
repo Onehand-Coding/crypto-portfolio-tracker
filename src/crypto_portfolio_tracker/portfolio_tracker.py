@@ -43,6 +43,16 @@ from .rebalancing_logic import get_live_rebalance_suggestions
 from .exporters import ExcelExporter, HtmlExporter, CsvExporter
 from .exceptions import NetworkOperationError, NetworkUnavailableError
 
+from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional
+
+@dataclass
+class TradeResult:
+    success: bool
+    messages: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+    data: Dict[str, Any] = field(default_factory=dict)
+
 
 class CryptoPortfolioTracker:
     """Main class for the crypto portfolio tracker."""
@@ -140,6 +150,23 @@ class CryptoPortfolioTracker:
         except Exception as e:
             # Other errors (bad API key, etc.) should not trigger offline mode
             raise
+
+    def _sync_binance_client_time(self, client: Client, context: str = "general"):
+        """
+        Reusable utility to synchronize the given Binance client's clock with the server.
+        """
+        if not client:
+            self.logger.warning(f"Cannot sync time: Binance client for '{context}' is not available.")
+            return
+        try:
+            self.logger.info(f"Synchronizing time for {context}...")
+            server_time = client.get_server_time()['serverTime']
+            local_time = int(time.time() * 1000)
+            time_offset = server_time - local_time
+            client._server_time_offset = time_offset
+            self.logger.info(f"Time synchronized for {context}. New offset: {time_offset}ms.")
+        except Exception as e:
+            self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
 
     def _get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """
@@ -410,89 +437,6 @@ class CryptoPortfolioTracker:
             self.logger.error(f"Could not fetch symbol info for {symbol}: {e}")
             return None
 
-    def _print_wallet_summary(self, title: str, balances: List[Dict[str, Any]], balance_key: str, asset_key: str = 'asset'):
-        """
-        Helper function to print a formatted summary for a given wallet,
-        handling empty lists and lists with only zero balances gracefully.
-        """
-        LINE_WIDTH = 115
-        print("\n" + f"--- {title} ---".center(LINE_WIDTH))
-
-        # First, create a new list containing only assets with a non-zero balance.
-        # This handles both empty lists and lists with only zero-balance assets.
-        non_zero_balances = []
-        if balances: # Ensure balances is not None
-            for item in balances:
-                balance = float(item.get(balance_key, 0.0))
-                if balance > 1e-8:
-                    non_zero_balances.append(item)
-
-        # Now, check if our new list is empty.
-        if not non_zero_balances:
-            print("No balances found.".center(LINE_WIDTH))
-            return
-
-        # If we have non-zero balances, print the header and the rows.
-        header = f"{"Asset":<15} {"Balance":<20}"
-        print(header)
-        print("-" * len(header))
-
-        for item in non_zero_balances:
-            balance = float(item.get(balance_key, 0.0))
-            asset = item.get(asset_key, 'N/A')
-            print(f"{asset:<15} {balance:<20,.8g}")
-
-    def _restore_database_interactive(self):
-        """Handles the interactive process of restoring a database."""
-        print("\n--- Restoring Database from Backup ---")
-        backups = self.db_manager.list_backups()
-
-        if not backups:
-            print("❌ No backup files found in the 'data/db_backups/' directory.")
-            return
-
-        print("Available backups (newest first):")
-        for i, backup_file in enumerate(backups):
-            # Show relative path for cleaner output
-            try:
-                relative_path = backup_file.relative_to(self.config_manager.project_root)
-            except ValueError:
-                relative_path = backup_file # Fallback to absolute path if not relative
-            print(f"  {i + 1}. {relative_path}")
-
-        try:
-            selection_str = input(f"\nEnter the number of the backup to restore (or press Enter to cancel): ").strip()
-            if not selection_str:
-                print("Restore cancelled.")
-                return
-
-            selection_idx = int(selection_str) - 1
-            if not 0 <= selection_idx < len(backups):
-                print("❌ Invalid selection.")
-                return
-
-            selected_backup = backups[selection_idx]
-            print("\n" + "="*50)
-            print("🚨 WARNING: THIS IS A DESTRUCTIVE ACTION 🚨")
-            print("The current database will be permanently overwritten.")
-            print(f"You are about to restore from:\n  -> {selected_backup.name}")
-            print("="*50)
-
-            confirm = input("Type 'RESTORE' to proceed: ")
-            if confirm == "RESTORE":
-                print("Restoring database...")
-                success = self.db_manager.restore_from_backup(selected_backup)
-                if success:
-                    print("\n✅ Restore successful.")
-                    print("‼️ PLEASE RESTART THE APPLICATION to load the restored database.")
-                else:
-                    print("❌ Restore failed. The original database was not modified. Check logs.")
-            else:
-                print("🛑 Restore cancelled. No changes were made.")
-
-        except (ValueError, IndexError):
-            print("❌ Invalid input.")
-
     def _adjust_quantity_to_lot_size(self, symbol: str, quantity: float) -> Optional[float]:
         """Rounds the quantity down to the nearest valid step size for the LOT_SIZE filter."""
         filters = self._get_symbol_filters(symbol)
@@ -633,39 +577,19 @@ class CryptoPortfolioTracker:
             self.logger.error(f"An unexpected error occurred executing directional trade for {symbol}: {e}", exc_info=True)
             print(f"❌ Unexpected Error for {symbol}: {e}")
 
-    def _sync_binance_client_time(self, client: Client, context: str = "general"):
-        """
-        Reusable utility to synchronize the given Binance client's clock with the server.
-        """
-        if not client:
-            self.logger.warning(f"Cannot sync time: Binance client for '{context}' is not available.")
-            return
-        try:
-            self.logger.info(f"Synchronizing time for {context}...")
-            server_time = client.get_server_time()['serverTime']
-            local_time = int(time.time() * 1000)
-            time_offset = server_time - local_time
-            client._server_time_offset = time_offset
-            self.logger.info(f"Time synchronized for {context}. New offset: {time_offset}ms.")
-        except Exception as e:
-            self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
-
-    async def _execute_rebalancing_trades(self, suggestions_df, earn_balances, interactive, auto_confirm=False):
-        """
-        Executes rebalancing trades, enforcing minimum trade size and updating
-        simulated balances after each trade to enable sequential funding.
-        Can run in bulk or interactive (one-by-one) mode.
-        """
+    async def execute_rebalancing_trades_core(self, suggestions_df, earn_balances, interactive, auto_confirm=False) -> TradeResult:
+        result = TradeResult(success=False)
+        trades_executed_count = 0
         if suggestions_df.empty or "Signal" not in suggestions_df.columns:
-            print("No rebalancing suggestions to execute.")
-            return
+            result.messages.append("No rebalancing suggestions to execute.")
+            return result
 
         trades_to_execute = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])]
         trades_to_execute = trades_to_execute.sort_values(by=["Signal", "Drift (pts)"], ascending=[False, True])
 
         if trades_to_execute.empty:
-            print("\n✅ No BUY or SELL actions suggested. Nothing to execute.")
-            return
+            result.messages.append("\n✅ No BUY or SELL actions suggested. Nothing to execute.")
+            return result
 
         portfolio_config = self.config.get("portfolio", {})
         min_trade_usd = portfolio_config.get("minimum_trade_usd", 10.0)
@@ -683,33 +607,33 @@ class CryptoPortfolioTracker:
                 self.logger.error(f"Could not fetch balance for {symbol}: {e}")
                 simulated_balances[symbol] = 0.0
 
-        print("\n" + "="*80)
+        result.messages.append("\n" + "="*80)
         if is_live:
-            print("🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴")
+            result.messages.append("🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴")
         else:
-            print("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡🟡🟡")
-        print("="*80)
+            result.messages.append("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡��🟡")
+        result.messages.append("="*80)
 
         items_to_process = []
         if not interactive:
             if auto_confirm:
                 items_to_process = list(trades_to_execute.iterrows())
             else:
-                print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-                print(trades_to_execute[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
-                print("="*80)
+                result.messages.append("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
+                result.messages.append(trades_to_execute[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
+                result.messages.append("="*80)
                 confirm = input("Type EXECUTE ALL to proceed with all trades listed above: ")
                 if confirm == "EXECUTE ALL":
                     self.logger.info("User confirmed bulk trade execution.")
                     items_to_process = list(trades_to_execute.iterrows())
                 else:
-                    print("🛑 Bulk trade execution cancelled by user."); return
+                    result.messages.append("🛑 Bulk trade execution cancelled by user."); return result
         else:
-            print("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
+            result.messages.append("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
             for index, row in trades_to_execute.iterrows():
-                print("\n" + "-"*80)
-                print("🚨 PROPOSED TRADE - PLEASE REVIEW CAREFULLY 🚨")
-                print(pd.DataFrame([row])[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
+                result.messages.append("\n" + "-"*80)
+                result.messages.append("🚨 PROPOSED TRADE - PLEASE REVIEW CAREFULLY 🚨")
+                result.messages.append(pd.DataFrame([row])[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
                 try:
                     confirm_one = input(f"Approve this trade for {row["Symbol"]}? Type YES to confirm: ").upper().strip()
                     if confirm_one == "YES":
@@ -717,13 +641,12 @@ class CryptoPortfolioTracker:
                         items_to_process.append((index, row))
                     else:
                         self.logger.info(f"User skipped trade for {row["Symbol"]}.")
-                        print(f"Skipping trade for {row["Symbol"]}.")
+                        result.messages.append(f"Skipping trade for {row["Symbol"]}.")
                 except KeyboardInterrupt:
-                    print("\n🛑 Trade execution cancelled by user."); return
-            print("="*80)
-            print(f"Executing {len(items_to_process)} approved trade(s)...")
+                    result.messages.append("\n🛑 Trade execution cancelled by user."); return result
+            result.messages.append("="*80)
+            result.messages.append(f"Executing {len(items_to_process)} approved trade(s)...")
 
-        trades_executed_count = 0
         for _, row in items_to_process:
             symbol = row["Symbol"]
             signal = row["Signal"]
@@ -732,143 +655,132 @@ class CryptoPortfolioTracker:
             coin_quantity = row.get("action_coin_quantity", 0.0)
 
             if usd_value < min_trade_usd:
-                print(f"\n⚠️ SKIPPING {signal} for {symbol}: Suggested trade value (~${usd_value:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                result.messages.append(f"\n⚠️ SKIPPING {signal} for {symbol}: Suggested trade value (~${usd_value:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
                 continue
 
             try:
                 if signal == "SELL":
                     if coin_quantity > simulated_balances.get(symbol, 0.0):
-                        print(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({coin_quantity:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
+                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({coin_quantity:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
                         continue
 
                     adjusted_quantity = self._adjust_quantity_to_lot_size(trade_ticker, coin_quantity)
                     if adjusted_quantity is None or adjusted_quantity <= 0:
-                        print(f"⚠️ SKIPPING SELL for {symbol}: Adjusted quantity is zero or invalid after applying lot size rules.")
+                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol}: Adjusted quantity is zero or invalid after applying lot size rules.")
                         continue
 
                     current_price = self._get_current_prices([symbol]).get(symbol, 0)
                     final_notional_value = adjusted_quantity * current_price
                     if final_notional_value < min_trade_usd:
-                        print(f"⚠️ SKIPPING SELL for {symbol}: Final trade value (~${final_notional_value:,.2f}) is below minimum of ${min_trade_usd:,.2f} after applying exchange rules.")
+                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol}: Final trade value (~${final_notional_value:,.2f}) is below minimum of ${min_trade_usd:,.2f} after applying exchange rules.")
                         continue
 
                     if not self._redeem_from_earn_if_needed(asset=symbol, required_amount=adjusted_quantity, is_live=is_live):
-                        print(f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure.")
+                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure.")
                         continue
 
-                    print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
+                    result.messages.append(f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
                     if is_live:
                         try:
-                            print("🚀 PLACING LIVE ORDER...")
+                            result.messages.append("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}")
-                            print(f"✅ LIVE SELL ORDER PLACED.")
+                            result.messages.append(f"✅ LIVE SELL ORDER PLACED.")
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             simulated_balances[symbol] -= adjusted_quantity
                             simulated_balances["USDT"] += float(order.get("cummulativeQuoteQty", 0.0))
                             self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances["USDT"]:.2f}")
                             trades_executed_count += 1
                         except BinanceAPIException as e:
-                            print(f"❌ LIVE SELL FAILED for {symbol}: {e}")
+                            result.errors.append(f"❌ LIVE SELL FAILED for {symbol}: {e}")
                             self.logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
                     else:
-                        print("✅ (Dry Run) Trade was not placed.")
+                        result.messages.append("✅ (Dry Run) Trade was not placed.")
 
                 elif signal == "BUY":
                     if usd_value > simulated_balances.get("USDT", 0.0):
-                        print(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get("USDT", 0.0):,.2f}).")
+                        result.messages.append(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get("USDT", 0.0):,.2f}).")
                         continue
 
                     if not self._redeem_from_earn_if_needed(asset="USDT", required_amount=usd_value, is_live=is_live):
-                        print(f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check.")
+                        result.messages.append(f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check.")
                         continue
 
-                    print(f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}...")
+                    result.messages.append(f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}...")
                     if is_live:
                         try:
-                            print("🚀 PLACING LIVE ORDER...")
+                            result.messages.append("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}")
-                            print(f"✅ LIVE BUY ORDER PLACED.")
+                            result.messages.append(f"✅ LIVE BUY ORDER PLACED.")
                             self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
                             simulated_balances["USDT"] -= float(order.get("cummulativeQuoteQty", 0.0))
                             simulated_balances[symbol] = simulated_balances.get(symbol, 0.0) + float(order.get("executedQty", 0.0))
                             self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances["USDT"]:.2f}")
                             trades_executed_count += 1
                         except BinanceAPIException as e:
-                            print(f"❌ LIVE BUY FAILED for {symbol}: {e}")
+                            result.errors.append(f"❌ LIVE BUY FAILED for {symbol}: {e}")
                             self.logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
                     else:
-                        print("✅ (Dry Run) Trade was not placed.")
+                        result.messages.append("✅ (Dry Run) Trade was not placed.")
 
             except Exception as e:
                 self.logger.error(f"An unexpected error occurred executing trade for {symbol}: {e}", exc_info=True)
-                print(f"❌ Unexpected Error for {symbol}: {e}")
+                result.errors.append(f"❌ Unexpected Error for {symbol}: {e}")
 
         if trades_executed_count > 0:
-            print(f"\n🎉 Rebalancing execution complete. {trades_executed_count} trade(s) processed.")
+            result.messages.append(f"\n🎉 Rebalancing execution complete. {trades_executed_count} trade(s) processed.")
         else:
-            print("\nNo trades were executed.")
+            result.messages.append("\nNo trades were executed.")
+        result.success = trades_executed_count > 0
+        result.data["trades_executed"] = trades_executed_count
+        return result
 
-    async def _execute_manual_trade(self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live):
-        """Internal method to execute a validated manual trade."""
+    async def execute_manual_trade_core(self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live) -> TradeResult:
+        result = TradeResult(success=False)
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
-
         try:
             if trade_type == "BUY":
                 usdt_to_spend = amount if is_quote_qty else 0
                 if not is_quote_qty:
-                    # If buying a coin quantity, we need to estimate the USDT value
                     prices = self._get_current_prices([symbol])
                     if not prices.get(symbol):
-                        print(f"❌ Could not fetch price for {symbol} to calculate trade value.")
-                        return
+                        result.errors.append(f"Could not fetch price for {symbol} to calculate trade value.")
+                        return result
                     usdt_to_spend = amount * prices[symbol]
-
                 if usdt_to_spend < min_trade_usd:
-                    print(f"⚠️ SKIPPING BUY for {symbol}: Required value (~${usdt_to_spend:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
-                    return
-
-                print(f"\nPreparing MARKET BUY for {symbol}...")
+                    result.errors.append(f"SKIPPING BUY for {symbol}: Required value (~${usdt_to_spend:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                    return result
+                result.messages.append(f"Preparing MARKET BUY for {symbol}...")
                 if is_live:
-                    print("🚀 PLACING LIVE ORDER...")
                     order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usdt_to_spend:.2f}")
-                    print(f"✅ LIVE BUY ORDER PLACED.")
-                    self.logger.info(f"LIVE MANUAL BUY ORDER PLACED: {order}")
+                    result.messages.append(f"LIVE BUY ORDER PLACED: {order}")
+                    result.data["order"] = order
                 else:
-                    print("✅ (Dry Run) BUY Trade was not placed.")
-
+                    result.messages.append(f"(Dry Run) BUY Trade was not placed.")
+                result.success = True
             elif trade_type == "SELL":
                 coin_quantity_to_sell = amount if not is_quote_qty else 0
                 if is_quote_qty:
-                    # If selling for a USDT amount, we need to estimate the coin quantity
                     prices = self._get_current_prices([symbol])
                     if not prices.get(symbol) or prices[symbol] == 0:
-                        print(f"❌ Could not fetch price for {symbol} to calculate quantity.")
-                        return
+                        result.errors.append(f"Could not fetch price for {symbol} to calculate quantity.")
+                        return result
                     coin_quantity_to_sell = amount / prices[symbol]
-
-                # We must adjust the final coin quantity to match exchange rules (LOT_SIZE)
                 adjusted_quantity = self._adjust_quantity_to_lot_size(trade_ticker, coin_quantity_to_sell)
                 if adjusted_quantity is None or adjusted_quantity <= 0:
-                    print(f"⚠️ SKIPPING SELL for {symbol}: Quantity is zero or invalid after applying exchange lot size rules.")
-                    return
-
-                print(f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
+                    result.errors.append(f"SKIPPING SELL for {symbol}: Quantity is zero or invalid after applying exchange lot size rules.")
+                    return result
+                result.messages.append(f"Preparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
                 if is_live:
-                    print("🚀 PLACING LIVE ORDER...")
                     order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}")
-                    print(f"✅ LIVE SELL ORDER PLACED.")
-                    self.logger.info(f"LIVE MANUAL SELL ORDER PLACED: {order}")
+                    result.messages.append(f"LIVE SELL ORDER PLACED: {order}")
+                    result.data["order"] = order
                 else:
-                    print("✅ (Dry Run) SELL Trade was not placed.")
-
-            print("\n💡 Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade.")
-
-        except BinanceAPIException as e:
-            print(f"❌ LIVE TRADE FAILED for {symbol}: {e}")
-            self.logger.error(f"LIVE MANUAL TRADE FAILED for {symbol}: {e}")
+                    result.messages.append(f"(Dry Run) SELL Trade was not placed.")
+                result.success = True
+            result.messages.append("Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade.")
         except Exception as e:
-            self.logger.error(f"An unexpected error occurred during manual trade for {symbol}: {e}", exc_info=True)
-            print(f"❌ Unexpected Error for {symbol}: {e}")
+            result.errors.append(f"Unexpected Error for {symbol}: {e}")
+        return result
 
     async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
         """
@@ -1021,62 +933,6 @@ class CryptoPortfolioTracker:
         self.logger.info("Successfully calculated consolidated portfolio metrics.")
         return metrics
 
-    async def view_trends(self):
-        """
-        Provides an interactive menu to view cryptocurrency trend analysis reports.
-        """
-        try:
-            analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
-            print("✅ Trend Analyzer initialized with centralized config.")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize CryptoTrendAnalyzer: {e}", exc_info=True)
-            print("❌ Error: Could not initialize the Trend Analyzer. Please check the logs.")
-            return
-
-        while True:
-            print("\n--- 📈 Crypto Trend Analysis ---\n")
-            print("Select the timeframe for the analysis:")
-            print("1. Long-term (4 Years)")
-            print("2. Swing (3 Months)")
-            print("3. Day (1 Month)")
-
-            try:
-                choice_str = input("Select option (1-3): ").strip()
-                if not choice_str:
-                    return
-                if not choice_str.isdigit() or int(choice_str) not in range(1, 4):
-                    print("❌ Invalid input. Please enter a number between 1 and 3.")
-                    continue
-                choice = int(choice_str)
-            except ValueError:
-                print("❌ Invalid input. Please enter a number.")
-                continue
-
-            timeframe = None
-            if choice == 1: timeframe = "long_term"
-            elif choice == 2: timeframe = "swing"
-            elif choice == 3: timeframe = "day"
-            elif choice == 4: break
-
-            if timeframe:
-                print(f"\n🔄 Generating {timeframe.replace("_", " ")} trend report...")
-                try:
-                    report = await analyzer.generate_report(timeframe)
-
-                    if report:
-                        self.print_trend_report(report)
-                        export_choice = input("\nDo you want to export this report? (y/n): ").lower()
-                        if export_choice == "y":
-                            self.export_trend_report(report, timeframe)
-                    else:
-                        print(f"❌ Could not generate the {timeframe} trend report. See logs for details.")
-
-                except Exception as e:
-                    self.logger.error(f"An error occurred during report generation for timeframe '{timeframe}': {e}", exc_info=True)
-                    print(f"❌ An unexpected error occurred. Please check the logs.")
-
-                input("\n✅ Press Enter to continue...")
-
     async def sync_data(self):
         """
         Orchestrates the Gather, Enrich, and Process pipeline, now intelligently
@@ -1176,489 +1032,6 @@ class CryptoPortfolioTracker:
         """Runs the full async data sync and then calculates metrics."""
         await self.sync_data()
         return await self.calculate_portfolio_metrics()
-
-    async def run_rebalancing_backtest(self):
-        """
-        Handles the user flow for running the rebalancing backtest.
-        """
-        print("\n--- ⚖️ Rebalancing Strategy Backtesting Mode ---")
-        try:
-            backtester = RebalancingBacktester(config=self.config)
-
-            initial_capital_str = input("Enter initial capital for simulation (default: 10000): ")
-            initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
-
-            period = ""
-            while True:
-                period_str = input("Enter backtest period (e.g., 2y, 3y, 5y - default: 3y): ").strip().lower()
-                if not period_str:
-                    period = "3y"  # Default value
-                    break
-                # Regex to validate format like "1d", "6m", "5y"
-                if re.match(r"^\d+[dmy]$", period_str):
-                    period = period_str
-                    break
-                else:
-                    print("❌ Invalid format. Please use a number followed by 'd', 'm', or 'y' (e.g., '90d', '6m', '3y').")
-
-            backtester.run(initial_capital=initial_capital, period=period)
-
-        except Exception as e:
-            self.logger.error(f"An error occurred during rebalancing backtest: {e}", exc_info=True)
-            print(f"❌ An unexpected error occurred: {e}")
-
-    async def run_manual_trade_session(self):
-        """Runs an interactive session for placing a manual trade."""
-        print("\n--- TRADE Manual Trading ---")
-        is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
-        if not is_live:
-            print("🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run).")
-        else:
-            print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
-
-        # 1. Get Trade Type
-        trade_type = ""
-        while trade_type not in ["BUY", "SELL"]:
-            trade_type = input("Choose action [BUY / SELL]: ").upper().strip()
-            if not trade_type:
-                print("Returning to main menu...")
-                return
-
-        # 2. Get Asset
-        symbol = input("Enter asset symbol (e.g., BTC): ").upper().strip()
-        if not symbol:
-            print("Returning to main menu...")
-            return
-        trade_ticker = f"{symbol}USDT"
-
-        # 3. Get Amount
-        amount_str_input = input(f"Enter amount to {trade_type} (e.g., '0.1 {symbol}'): ").upper().strip()
-        if not amount_str_input:
-            print("Returning to main menu...")
-            return
-
-        is_quote_qty = "USDT" in amount_str_input
-        try:
-            # Extract numbers from the string
-            numeric_part = re.search(r"[\d\.]+", amount_str_input).group(0)
-            amount = float(numeric_part)
-        except (AttributeError, ValueError):
-            print("❌ Invalid amount format. Could not parse number.")
-            return
-
-        # 4. Confirmation
-        print("\n" + "="*50)
-        print("🚨 PLEASE CONFIRM THE FOLLOWING MARKET ORDER 🚨")
-        print(f"   Action: {trade_type}")
-        print(f"   Asset:  {symbol}")
-        if is_quote_qty:
-            print(f"   Amount: {amount:,.2f} USDT")
-        else:
-            print(f"   Amount: {amount:,.8g} {symbol}")
-        print("="*50)
-
-        confirm = input("Type 'EXECUTE' to confirm: ").strip()
-
-        if confirm == "EXECUTE":
-            await self._execute_manual_trade(trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live)
-        else:
-            print("🛑 Trade cancelled by user.")
-
-    async def run_rebalance_and_execute(self):
-        """
-        Orchestrates the process of getting rebalancing suggestions and allows users
-        to execute them all at once or one-by-one.
-        """
-        self.logger.info("Starting automated rebalancing process...")
-        print("\n--- ⚖️ Automated Rebalancing ---")
-
-        # 1. Get Suggestions
-        print("🔄 Generating rebalancing suggestions...")
-        suggestions_df = await self.get_core_portfolio_rebalance_suggestions_technical()
-
-        if suggestions_df is None or suggestions_df.empty:
-            print("\n✅ No rebalancing suggestions available at this time.")
-            self.logger.info("No rebalancing suggestions generated. Exiting process.")
-            return
-
-        # 2. Calculate TOTAL available USDT (Spot + Earn)
-        total_usdt_balance = 0
-        try:
-            # Fetch Spot Balance
-            spot_balance = float(self.binance_client.get_asset_balance(asset="USDT").get("free", 0.0))
-            total_usdt_balance += spot_balance
-
-            # Fetch Earn Balance (if not in testnet mode)
-            if not self.config_manager.is_testnet_mode:
-                earn_positions = self.fetcher.fetch_simple_earn_balances(pd.DataFrame([{"symbol": "USDT"}]))
-                earn_balance = earn_positions.get("USDT", 0.0)
-                total_usdt_balance += earn_balance
-
-        except Exception as e:
-            self.logger.error(f"Could not fetch total USDT balance for display: {e}")
-
-        # 3. Print Suggestions for Review (passing the USDT balance to the printer)
-        self.print_rebalance_suggestions(suggestions_df, available_usdt=total_usdt_balance)
-
-        # 4. Check for actionable signals before showing execution prompts
-        actionable_trades = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])]
-        if actionable_trades.empty:
-            print("\n✅ Your portfolio is balanced. No rebalancing needed at this time.")
-            return
-
-        # 4. Add interactive execution choice
-        while True:
-            action = input(
-                "Type EXECUTE ALL or EXECUTE for one-by-one confirmation: "
-            ).upper().strip()
-
-            if not action:
-                print("Returning to main menu...")
-                return
-
-            elif action in ["EXECUTE ALL", "EXECUTE"]:
-                self.logger.info("Preparing for rebalance execution...")
-                self._sync_binance_client_time(self.binance_client, context="rebalancing")
-
-                # Determine mode and proceed to fetch balances and execute
-                interactive_mode = (action == "EXECUTE")
-
-                # Fetch Earn balances ONLY if not in testnet mode
-                earn_balances = {}
-                if not self.config_manager.is_testnet_mode:
-                    print("Verifying balances in Spot and Earn wallets...")
-                    spot_balances_df = self.fetch_binance_balances()
-                    earn_balances = self.fetcher.fetch_simple_earn_balances(spot_balances_df)
-                else:
-                    print("🟡 TESTNET MODE: Skipping Earn wallet check.")
-
-                # Pass everything to the Executor with the chosen mode
-                await self._execute_rebalancing_trades(suggestions_df, earn_balances, interactive=interactive_mode, auto_confirm=True)
-                return # Exit after execution attempt
-
-            else:
-                print("Invalid command. Please choose from EXECUTE ALL, EXECUTE.")
-
-    async def run_trading_strategy_backtest(self):
-        """
-        Handles the user flow for running a directional strategy backtest,
-        dynamically discovering and allowing strategies to configure themselves.
-        """
-        print("\n--- 🧪 Directional Strategy Backtesting Mode ---")
-
-        try:
-            analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
-            backtester = StrategyBacktester(config=self.config, analyzer=analyzer)
-        except Exception as e:
-            self.logger.error(f"Failed to initialize backtesting components: {e}", exc_info=True)
-            return
-
-        # Discover and select a strategy
-        available_strategies = {
-            name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
-            if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy
-        }
-        if not available_strategies:
-            print("❌ No strategy classes found in 'src/trading_strategies.py'."); return
-
-        print("\nAvailable Strategies:")
-        strategy_list = list(available_strategies.keys())
-        for i, name in enumerate(strategy_list):
-            print(f"  {i+1}. {name}")
-
-        strategy_to_run = None
-        while strategy_to_run is None:
-            try:
-                choice_str = input(f"Select the strategy to backtest (1-{len(strategy_list)}): ").strip()
-                if not choice_str: return
-                choice = int(choice_str) - 1
-                if 0 <= choice < len(strategy_list):
-                    strategy_name = strategy_list[choice]
-                    strategy_class = available_strategies[strategy_name]
-                    print(f"\nConfiguring strategy: {strategy_name}")
-
-                    user_params = {}
-                    if hasattr(strategy_class, "get_user_params"):
-                         user_params = strategy_class.get_user_params()
-
-                    strategy_to_run = strategy_class(analyzer=analyzer, **user_params)
-                else:
-                    print("❌ Invalid selection.")
-            except (ValueError, IndexError):
-                print("❌ Invalid input. Please enter a number from the list.")
-
-        if not strategy_to_run: return
-        print(f"\nSelected Strategy: {strategy_to_run.name}")
-
-        # Determine the data interval for the strategy
-        valid_intervals = strategy_to_run.valid_intervals
-        interval = None
-        if len(valid_intervals) == 1:
-            interval = valid_intervals[0]
-            print(f"INFO: This strategy uses the '{interval}' data interval by default.")
-        elif len(valid_intervals) > 1:
-            print("\nSelect a valid data interval for this strategy:")
-            for i, iv in enumerate(valid_intervals): print(f"  {i+1}. {iv}")
-            while interval is None:
-                try:
-                    interval_choice_str = input(f"Select interval (1-{len(valid_intervals)}): ").strip()
-                    selected_idx = int(interval_choice_str) - 1
-                    if 0 <= selected_idx < len(valid_intervals): interval = valid_intervals[selected_idx]
-                    else: print("❌ Invalid selection.")
-                except (ValueError, IndexError): print("❌ Invalid input.")
-
-        if interval is None: interval = "1d"
-        print(f"Using data interval: {interval}")
-
-        # Select the coin to test
-        available_coins = self.config.get("trend_analyzer", {}).get("cryptocurrencies", [])
-        if not available_coins:
-            self.logger.info("Trend analyzer coin list is empty, automatically using coins from target_allocation.")
-            target_coins = self.config.get("target_allocation", {}).keys()
-            available_coins = [f"{coin.upper()}-USD" for coin in target_coins]
-        if not available_coins:
-            print("❌ No cryptocurrencies found in 'target_allocation' or 'trend_analyzer' config section."); return
-
-        available_coins.sort()
-        print("\nCoins available for backtesting:")
-        num_coins = len(available_coins)
-        cols = 3
-        for i in range(0, num_coins, cols):
-            row = "  ";
-            for j in range(cols):
-                if i + j < num_coins: row += f"{i+j+1:2d}. {available_coins[i+j]:<15}"
-            print(row)
-
-        symbol_to_test = None
-        while symbol_to_test is None:
-            choice = input("\nEnter the symbol or number of the coin to backtest: ").strip()
-            if choice.isdigit():
-                try:
-                    choice_index = int(choice) - 1
-                    if 0 <= choice_index < num_coins: symbol_to_test = available_coins[choice_index]
-                    else: print(f"❌ Invalid number. Please enter a number between 1 and {num_coins}.")
-                except ValueError: print("❌ Invalid input.")
-            else:
-                yf_ticker_choice = f"{choice.upper()}-USD"
-                if yf_ticker_choice in available_coins: symbol_to_test = yf_ticker_choice
-                else: print(f"❌ Symbol '{choice}' not found. Please choose from the list.")
-
-        print(f"\nSelected coin for backtest: {symbol_to_test}")
-
-        try:
-            initial_capital_str = input("Enter initial capital (default: 10000): ")
-            initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
-            period_str = input("Enter backtest period (e.g., '3y', '60d', default: '3y'): ")
-            period = period_str if period_str else "3y"
-
-            if "m" in interval and "y" in period:
-                print("⚠️ WARNING: yfinance limits minute data to the last 60 days.")
-                print(f"Adjusting backtest period from '{period}' to '60d'.")
-                period = "60d"
-            elif "h" in interval and "y" in period and int(period.replace("y", "")) > 2:
-                 print("⚠️ WARNING: yfinance limits hourly data to the last 730 days (2 years).")
-                 print(f"Adjusting backtest period from '{period}' to '729d'.")
-                 period = "729d"
-
-        except ValueError:
-            print("❌ Invalid capital amount. Using default values."); initial_capital = 10000.0; period = "3y"
-
-        await backtester.run(strategy=strategy_to_run, symbol=symbol_to_test, initial_capital=initial_capital, period=period, interval=interval)
-        backtester.generate_report()
-
-    async def run_live_strategy(self):
-        """
-        Master workflow for running a directional strategy for live signal generation and execution.
-        """
-        print("\n--- 🤖 Live Trading Strategy Runner ---")
-
-        # 1. Select Account
-        accounts = [{"name": "Main Account", "type": "main", **self.config.get("main_api_keys", {})}]
-        sub_accounts = self.config.get("sub_accounts", [])
-        for sub in sub_accounts:
-            # Infer account type from name
-            if "swing" in sub["name"].lower():
-                sub["type"] = "swing"
-            elif "day" in sub["name"].lower():
-                sub["type"] = "day"
-            else:
-                sub["type"] = "main" # Default if not specified
-            accounts.append(sub)
-
-
-        if not any(acc.get("binance_key") for acc in accounts):
-            print("❌ No API keys found for any account. Cannot run live strategies.")
-            return
-
-        print("\nSelect account to trade on:")
-        for i, acc in enumerate(accounts):
-            print(f"  {i+1}. {acc["name"]} (Type: {acc.get("type", "N/A")})")
-
-        selected_account = None
-        while selected_account is None:
-            choice_str = input(f"Select account (1-{len(accounts)}): ").strip()
-            if not choice_str:
-                print("Returning to main menu...")
-                return
-
-            try:
-                choice = int(choice_str) - 1
-                if 0 <= choice < len(accounts):
-                    selected_account = accounts[choice]
-                else:
-                    print("❌ Invalid selection.")
-            except (ValueError, IndexError):
-                print("❌ Invalid input.")
-
-        print(f"\nTrading on account: {selected_account["name"]}")
-        live_client = self._init_binance_client(
-            api_key=selected_account.get("binance_key"),
-            api_secret=selected_account.get("binance_secret")
-        )
-        if not live_client:
-            print(f"❌ Failed to initialize Binance client for account: {selected_account["name"]}. Check API keys.")
-            return
-
-        # 2. Select and Configure Strategy based on account type
-        all_strategies = {name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass) if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy}
-
-        account_type = selected_account.get("type")
-        available_strategies = {}
-        if account_type == "main":
-            available_strategies = all_strategies
-        elif account_type == "swing":
-            available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ["swing", "general"]}
-        elif account_type == "day":
-             available_strategies = {k: v for k, v in all_strategies.items() if v.strategy_type in ["day", "general"]}
-
-        if not available_strategies:
-            print(f"❌ No suitable strategies found for an account of type '{account_type}'.")
-            return
-
-        print("\nAvailable Strategies:")
-        strategy_list = list(available_strategies.keys())
-        for i, name in enumerate(strategy_list):
-            print(f"  {i+1}. {name}")
-
-        strategy_class = None
-        user_params = {}
-        strategy_name = ""
-        while strategy_class is None:
-            choice_str = input(f"Select strategy to run (1-{len(strategy_list)}): ").strip()
-            if not choice_str:
-                print("Returning to main menu...")
-                return
-
-            try:
-                choice = int(choice_str) - 1
-                if 0 <= choice < len(strategy_list):
-                    strategy_name = strategy_list[choice]
-                    strategy_class = available_strategies[strategy_name]
-                    print(f"\nConfiguring strategy: {strategy_name}")
-                    if hasattr(strategy_class, 'get_user_params'):
-                        user_params = strategy_class.get_user_params()
-                else:
-                    print("❌ Invalid selection.")
-            except (ValueError, IndexError):
-                print("❌ Invalid input.")
-
-        # Create a temporary instance just to get the name for the print message
-        temp_strategy_for_name = strategy_class(analyzer=None, **user_params)
-        print(f"\n🔄 Running '{temp_strategy_for_name.name}' to generate live signals...")
-
-        # 3. Generate Signals for all portfolio assets
-        target_coins = list(self.config.get("target_allocation", {}).keys())
-        signals_to_execute = []
-        analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=live_client)
-
-        for coin in target_coins:
-            yf_ticker = f"{coin}-USD"
-            analyzer.set_symbol(yf_ticker)
-            state_key = f"{selected_account["name"]}_{strategy_name}_{coin}"
-            previous_state = self.strategy_states.get(state_key)
-
-            strategy_instance = strategy_class(
-                analyzer=analyzer,
-                state=previous_state,
-                **user_params
-            )
-
-            interval = strategy_instance.valid_intervals[0]
-            # Use a shorter period for live trading to be faster
-            period = "7d" if "m" in interval or "h" in interval else "1y"
-            data = await analyzer.fetch_crypto_data_async(yf_ticker, period=period, interval=interval)
-
-            if data is None or data.empty:
-                self.logger.warning(f"Could not fetch data for {yf_ticker}, cannot generate signal.")
-                continue
-
-            signal, size, reason = await strategy_instance.generate_signal(data)
-            self.strategy_states[state_key] = strategy_instance.get_state()
-
-            if signal in ["BUY", "SELL"]:
-                signals_to_execute.append({"Symbol": coin, "Signal": signal, "Size": size, "Reason": reason})
-
-        self._save_strategy_state()
-
-        # 4. Present Trades and Ask for Execution
-        if not signals_to_execute:
-            print("\n✅ Analysis complete. No new BUY or SELL signals generated by the strategy.")
-            return
-
-        is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
-        is_testnet = self.config.get("apis", {}).get("binance", {}).get("testnet", False)
-
-        print("\n" + "="*80)
-        print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-        print("="*80)
-
-        if is_testnet:
-            print("🟡🟡🟡 NOTE: Connected to TESTNET. No real funds will be used. 🟡🟡🟡")
-
-        if is_live:
-            print("🔴🔴🔴 WARNING: Live Trading is ENABLED. Real orders will be placed. 🔴🔴🔴")
-        else:
-            print("🟡🟡🟡 NOTE: Live Trading is DISABLED. This is a DRY RUN. 🟡🟡🟡")
-
-        print("="*80)
-        for trade in signals_to_execute:
-            print(f"-> {trade["Signal"]} {trade["Symbol"]} (Reason: {trade["Reason"]})")
-        print("="*80)
-
-        try:
-            confirm = input("Type 'EXECUTE' to proceed with the trades listed above: ")
-            if confirm != "EXECUTE":
-                print("🛑 Trade execution cancelled by user.")
-                return
-        except KeyboardInterrupt:
-            print("\n🛑 Trade execution cancelled by user.")
-            return
-
-        # 5. Execute Trades
-        for trade in signals_to_execute:
-            self._execute_directional_trade(trade, live_client)
-
-    def run_backup_and_restore_session(self):
-        """Orchestrates creating a backup or restoring from one."""
-        print("\n--- 🗄️ Database Backup & Restore ---\n")
-        print("1. Create a new database backup")
-        print("2. Restore from an existing backup")
-        print("Press Enter to return to the main menu.")
-
-        choice = input("Select an option: ").strip()
-
-        if choice == '1':
-            print("\n💾 Creating database backup...")
-            backup_path = self.db_manager.backup_database()
-            if backup_path:
-                print(f"✅ Backup successful.")
-            else:
-                print("❌ Backup failed. Please check the logs for details.")
-        elif choice == '2':
-            self._restore_database_interactive()
-        else:
-            print("Returning to main menu...")
-            return
 
     def fetch_binance_balances(self) -> pd.DataFrame:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
@@ -1782,241 +1155,10 @@ class CryptoPortfolioTracker:
         if holdings_df is not None: self.visualizer.generate_all_charts(holdings_df, metrics, target_alloc, pd.DataFrame())
         else: self.logger.warning("No holdings data for chart generation.")
 
-    def print_portfolio_summary(self, metrics: Dict[str, Any]):
-        """Prints a consolidated summary of the portfolio, including a breakdown of all wallet values."""
-        LINE_WIDTH = 115
-        print("\n" + "="*LINE_WIDTH)
-        print("📊 CONSOLIDATED PORTFOLIO SUMMARY")
-        print("="*LINE_WIDTH)
-
-        if "error" in metrics:
-            print(f"❌ Could not generate summary: {metrics['error']}")
-            print("="*LINE_WIDTH)
-            return
-
-        timestamp = metrics.get("timestamp", datetime.datetime.now())
-        print(f"Timestamp:                   {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-        db_path = self.config.get("database", {}).get("path", "N/A")
-        db_name = Path(db_path).name
-        if self.config_manager.is_testnet_mode:
-            print(f"Database:                    {db_name} (TESTNET MODE)")
-        else:
-            print(f"Database:                    {db_name}")
-
-        print("-" * LINE_WIDTH)
-        print(f"TOTAL PORTFOLIO VALUE:       ${metrics.get('total_value_usd', 0):,.2f}")
-        print("-" * LINE_WIDTH)
-
-        # --- Breakdown of Total Portfolio Value ---
-        print("Wallet Value Breakdown:")
-        print(f"  Spot & Earn Value:         ${metrics.get('spot_earn_value_usd', 0):,.2f}")
-        print(f"  Futures Wallet Value:      ${metrics.get('futures_value_usd', 0):,.2f}")
-        print(f"  Funding Wallet Value:      ${metrics.get('funding_value_usd', 0):,.2f}")
-        print("-" * LINE_WIDTH)
-
-        total_invested = metrics.get("total_invested_capital", 0)
-        overall_pl_usd = metrics.get("overall_pl_usd", 0)
-        overall_pl_pct = metrics.get("overall_pl_percent", 0)
-        color_overall = "\033[92m" if overall_pl_usd >= 0 else "\033[91m"
-        color_end = "\033[0m"
-
-        print("Performance vs. Invested capital:")
-        print(f"Total Invested Capital:      ${total_invested:,.2f}")
-        print(f"Overall P/L:                 {color_overall}${overall_pl_usd:,.2f} ({overall_pl_pct:.2f}%){color_end}")
-
-        print("-" * LINE_WIDTH)
-
-        print("Performance vs. Rolling cost basis (Spot/Earn only):")
-        print(f"Total Cost Basis (FIFO):     ${metrics.get('total_cost_basis_usd', 0):,.2f}")
-
-        pl_usd = metrics.get("unrealized_pl_usd", 0)
-        pl_pct = metrics.get("unrealized_pl_percent", 0)
-        color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
-
-        print(f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}")
-
-        # Print Core Holdings Table
-        core_holdings_df = metrics.get("core_holdings_df")
-        if core_holdings_df is not None and not core_holdings_df.empty:
-            print("\n" + "--- 🎯 Core Portfolio Holdings (Used for Rebalancing) ---".center(LINE_WIDTH))
-            header = f'{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Core Alloc.":<15} {"Total Alloc.":<10}'
-            print(header)
-            print("-" * len(header))
-            for _, row in core_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
-                row_pl_usd = row.get("unrealized_pl_usd", 0)
-                row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
-                core_alloc_str = f'{row.get("core_allocation", 0) * 100:.2f}%'
-                total_alloc_str = f'{row.get("allocation", 0) * 100:.2f}%'
-                print(
-                    f'{row.get("symbol", "N/A"):<11} '
-                    f'{row.get("total_quantity", 0):<15,.8g} '
-                    f'{row.get("spot_quantity", 0):<15,.8g} '
-                    f'{row.get("earn_quantity", 0):<15,.8g} '
-                    f'${row.get("value_usd", 0):<14,.2f} '
-                    f'${row.get("cost_basis_total", 0):<14,.2f} '
-                    f'{row_color_start}${row_pl_usd:<14,.2f}{color_end} '
-                    f'{core_alloc_str:<15} '
-                    f'{total_alloc_str:<10}'
-                )
-
-        # Print Other Holdings Table
-        other_holdings_df = metrics.get("other_holdings_df")
-        if other_holdings_df is not None and not other_holdings_df.empty:
-            print("\n" + "--- 📈 Other Holdings ---".center(LINE_WIDTH))
-            header = f'{"Asset":<11} {"Total Qty":<15} {"Spot Qty":<15} {"Earn Qty":<15} {"Value (USD)":<15} {"Cost Basis":<15} {"P/L (USD)":<15} {"Total Alloc.":<10}'
-            print(header)
-            print("-" * len(header))
-            for _, row in other_holdings_df.sort_values(by="value_usd", ascending=False).iterrows():
-                row_pl_usd = row.get("unrealized_pl_usd", 0)
-                row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
-                total_alloc_str = f'{row.get("allocation", 0) * 100:.2f}%'
-                print(
-                    f'{row.get("symbol", "N/A"):<11} '
-                    f'{row.get("total_quantity", 0):<15,.8g} '
-                    f'{row.get("spot_quantity", 0):<15,.8g} '
-                    f'{row.get("earn_quantity", 0):<15,.8g} '
-                    f'${row.get("value_usd", 0):<14,.2f} '
-                    f'${row.get("cost_basis_total", 0):<14,.2f} '
-                    f'{row_color_start}${row_pl_usd:<14,.2f}{color_end} '
-                    f'{total_alloc_str:<10}'
-                )
-            print("="*len(header))
-
-        # --- Print Individual Wallet Summaries ---
-        futures_balances = metrics.get("futures_balances")
-        self._print_wallet_summary("Futures Wallet Summary", futures_balances, 'balance')
-
-        funding_balances = metrics.get("funding_balances")
-        self._print_wallet_summary("Funding Wallet Summary", funding_balances, 'free')
-
-    def print_trend_report(self, report: Dict[str, Any]):
-        """Prints a formatted trend analysis report to the console."""
-        if not report:
-            print("\n--- No Trend Report Data ---")
-            return
-
-        print("\n" + "="*80)
-        print(f"📈 TREND ANALYSIS REPORT ({report.get("timeframe", "N/A").upper()})")
-        print(f"Timestamp: {report.get("timestamp")}")
-        print("="*80)
-
-        summary = report.get("market_summary", {})
-        print("\n--- 🌍 Market Summary ---")
-        print(f"Coins Analyzed: {summary.get("total_coins", "N/A")}")
-        print(f"Most Common Condition: {summary.get("most_common_condition", "N/A")}")
-        print(f"Bullish Coins: {summary.get("bull_count", 0)} | Bearish Coins: {summary.get("bear_count", 0)}")
-
-        btc = report.get("benchmark_analysis", {})
-        if btc:
-            print(f"\n--- 🎯 Benchmark Analysis: {btc.get("symbol", "N/A")} ---")
-            print(f"  Price: ${btc.get("current_price", 0):,.2f} ({btc.get("price_change_pct", 0):+.2f}%) | RSI: {btc.get("rsi", 0):.2f}")
-            print(f"  Support: ${btc.get("support_level", 0):,.2f} | Resistance: ${btc.get("resistance_level", 0):,.2f}")
-            print(f"  Active Conditions: {", ".join(btc.get("active_conditions", ["None"]))}")
-
-        print("\n--- 🪙 Coin-by-Coin Analysis ---")
-        for symbol, analysis in report.get("coin_analyses", {}).items():
-            if symbol == btc.get("symbol"): continue # Skip printing benchmark again
-
-            print(f"\n➡️ {symbol}")
-            print(f"  Price: ${analysis.get("current_price", 0):,.2f} ({analysis.get("price_change_pct", 0):+.2f}%) | RSI: {analysis.get("rsi", 0):.2f}")
-            print(f"  Support: ${analysis.get("support_level", 0):,.2f} | Resistance: ${analysis.get("resistance_level", 0):,.2f}")
-            print(f"  Active Conditions: {", ".join(analysis.get("active_conditions", ["None"]))}")
-
-        print("\n" + "="*80)
-
-    def print_rebalance_suggestions(self, suggestions_df: Optional[pd.DataFrame], available_usdt: Optional[float] = None):
-        """Prints the rebalancing suggestions in a formatted way."""
-        if suggestions_df is None or suggestions_df.empty:
-            print("No rebalancing suggestions available.")
-            return
-
-        # Sort the DataFrame before printing for a logical display
-        signal_order = {"SELL": 0, "BUY": 1, "HOLD": 2}
-        suggestions_df["signal_order"] = suggestions_df["Signal"].map(signal_order)
-        suggestions_df = suggestions_df.sort_values(by=["signal_order", "Drift (pts)"], ascending=[True, True])
-        suggestions_df = suggestions_df.drop(columns=["signal_order"])
-
-        print("\n" + "="*88)
-        print("⚖️  REBALANCING SUGGESTIONS (Multi-Timeframe Analysis)")
-        print("="*88)
-
-        # Calculate and display the total value of the core portfolio being rebalanced
-        total_core_value = suggestions_df["Current Value (USD)"].sum()
-        print("-" * 88)
-        print(f"💰 Core Portfolio Value: ${total_core_value:,.2f}")
-
-        # Display the USDT balance inside the header if it was provided
-        if available_usdt is not None:
-            print(f"💰 Available USDT (Spot + Earn): ${available_usdt:,.2f}")
-            print("-" * 88)
-
-        for _, row in suggestions_df.iterrows():
-            signal = row["Signal"]
-            if signal == "SELL": color_code = "\033[91m"
-            elif signal == "BUY": color_code = "\033[92m"
-            else: color_code = "\033[93m"
-            reset_code = "\033[0m"
-
-            signal_icon = {"SELL": "🔴", "BUY": "🟢", "HOLD": "🟡"}.get(signal, "⚪️")
-
-            print(f"{color_code}{signal_icon} {row["Symbol"]:<7}| Signal: {signal:<4}{reset_code}")
-            print(f"   Allocation: {row["Current %"]:.2f}% (Target: {row["Target %"]:.1f}%) | Drift: {row["Drift (pts)"]:.2f} pts | Value: ${row["Current Value (USD)"]:,.2f}")
-
-            price_str = f"${row["TA_Price"]:,.2f}".ljust(12)
-            support_str = f"${row.get("Support", 0.0):,.2f}"
-            resistance_str = f"${row.get("Resistance", 0.0):,.2f}"
-
-            print(f"   Price: {price_str} | Support: {support_str} | Resistance: {resistance_str}")
-
-            print(f"   Long-Term Trend: {row["TA_Conditions"]}")
-
-            print(f"   Action: {row["Suggested Action Detail"]}")
-
-            if row.name != suggestions_df.index[-1]:
-                print("-" * 54)
-        print("="*88)
-
-    def print_configuration(self):
-        """Prints a security-redacted version of the current configuration."""
-        print("\n" + "="*50 + "\n⚙️ Current Configuration\n" + "="*50)
-
-        # Use deepcopy to ensure we don"t accidentally modify the live config object
-        safe_config = copy.deepcopy(self.config)
-
-        # Redact main API keys
-        if "main_api_keys" in safe_config:
-            safe_config["main_api_keys"] = {k: "********" for k in safe_config["main_api_keys"]}
-
-        # --- Redact sub-account keys as well ---
-        if "sub_accounts" in safe_config:
-            for account in safe_config["sub_accounts"]:
-                if "binance_key" in account:
-                    account["binance_key"] = "********"
-                if "binance_secret" in account:
-                    account["binance_secret"] = "********"
-
-        print(json.dumps(safe_config, indent=2))
-        print("="*50)
-
     def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get("holdings_df"))
     def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get("holdings_df"))
     def export_csv_backup(self): self.csv_exporter.export(transactions_df=self.db_manager.get_all_transactions(), holdings_df=self.db_manager.get_holdings())
     def cleanup_old_data(self): self.db_manager.cleanup_old_data()
-
-    def test_connections(self):
-        """Test connections to Binance and CoinGecko."""
-        if self.binance_client:
-            try: self.binance_client.ping(); print("✅ Binance Connection: SUCCESS")
-            except Exception as e: print(f"❌ Binance Connection: FAILED ({e})")
-        else: print("⚠️ Binance Connection: SKIPPED (Failed to Initialize Client/No API keys)")
-
-        test_id = "BTC"
-        prices = self._get_current_prices([test_id])
-        price = prices.get(test_id)
-
-        if price: print(f"✅ CoinGecko Connection: SUCCESS ({test_id.upper()} price: ${price})")
-        else: print("❌ CoinGecko Connection: FAILED")
-        print("-" * 30)
 
     def save_snapshot(self, metrics: Dict[str, Any]):
         """Wrapper to save a portfolio snapshot using data from calculated metrics."""

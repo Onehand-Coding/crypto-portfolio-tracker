@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
 import io
 import os
 import json
@@ -213,7 +214,7 @@ class PortfolioDashboard:
                 "💰 Trade",
                 "🧪 Backtest",
                 "🗄️ Database",
-                "⚙️ Settings & Status",
+                "⚙️ Settings",
             ]
         )
 
@@ -657,27 +658,36 @@ class PortfolioDashboard:
                         st.info("No taxable events (sales) found.")
                     else:
                         tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            year = st.selectbox("Year", ["All"] + sorted(tax_df["year"].unique().astype(str)), key="tax_year")
-                        with col2:
-                            asset = st.selectbox("Asset", ["All"] + sorted(tax_df["symbol"].unique()), key="tax_asset")
 
-                        filtered = tax_df.copy()
-                        if year != "All":
-                            filtered = filtered[filtered["year"].astype(str) == year]
-                        if asset != "All":
-                            filtered = filtered[filtered["symbol"] == asset]
+                        # Rename columns for user-friendliness
+                        tax_df_renamed = tax_df.rename(columns={
+                            "date": "Date",
+                            "symbol": "Asset",
+                            "quantity": "Quantity",
+                            "proceeds_usd": "Proceeds (USD)",
+                            "cost_basis_usd": "Cost Basis (USD)",
+                            "gain_usd": "Gain/Loss (USD)",
+                            "year": "Year"
+                        })
 
-                        st.dataframe(filtered, use_container_width=True) # Display raw data first
+                        st.dataframe(tax_df_renamed, use_container_width=True)
 
                         st.markdown("#### Summary of Realized Gains")
-                        summary = filtered.groupby("symbol").agg(
+                        summary = tax_df.groupby("symbol").agg(
                             total_gain_usd=("gain_usd", "sum"),
                             total_proceeds_usd=("proceeds_usd", "sum"),
                             total_cost_basis_usd=("cost_basis_usd", "sum")
                         ).reset_index()
-                        st.dataframe(summary, use_container_width=True)
+
+                        # Rename columns for summary
+                        summary_renamed = summary.rename(columns={
+                            "symbol": "Asset",
+                            "total_gain_usd": "Total Gain/Loss (USD)",
+                            "total_proceeds_usd": "Total Proceeds (USD)",
+                            "total_cost_basis_usd": "Total Cost Basis (USD)"
+                        })
+
+                        st.dataframe(summary_renamed, use_container_width=True)
 
                         st.markdown("---")
                         export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
@@ -1093,6 +1103,7 @@ class PortfolioDashboard:
                 st.rerun()
 
     def render_rebalancing(self):
+        import asyncio
         st.markdown("## ⚖️ Portfolio Rebalancing")
 
         # Initialize session state
@@ -1171,15 +1182,19 @@ class PortfolioDashboard:
         
         with col1:
             st.markdown("#### 📊 Current Allocation")
-            metrics = st.session_state.rebalance_metrics
-            if metrics and "core_holdings_df" in metrics:
-                core_df = metrics["core_holdings_df"]
-                # Create a more compact view for status
-                status_df = core_df[['symbol', 'core_allocation', 'value_usd']].copy()
-                status_df['core_allocation'] = (status_df['core_allocation'] * 100).round(2)
-                status_df.columns = ['Asset', 'Current %', 'Value (USD)']
-                status_df['Value (USD)'] = status_df['Value (USD)'].apply(lambda x: f"${x:,.2f}")
-                st.dataframe(status_df, use_container_width=True, hide_index=True)
+            suggestions_df = st.session_state.rebalance_suggestions
+            if suggestions_df is not None and not suggestions_df.empty:
+                # Build the status table from suggestions for uniformity
+                alloc_table = suggestions_df[[
+                    'Symbol', 'Current %', 'Target %', 'Drift (pts)', 'Current Value (USD)'
+                ]].copy()
+                alloc_table['Current %'] = alloc_table['Current %'].round(2)
+                alloc_table['Target %'] = alloc_table['Target %'].round(2)
+                alloc_table['Drift (pts)'] = alloc_table['Drift (pts)'].round(2)
+                alloc_table['Current Value (USD)'] = alloc_table['Current Value (USD)'].apply(lambda x: f"${x:,.2f}")
+                alloc_table.columns = ['Asset', 'Current %', 'Target %', 'Drift (pts)', 'Value (USD)']
+                st.dataframe(alloc_table, use_container_width=True, hide_index=True)
+                st.caption("Allocations are shown as a percentage of your core portfolio (assets being rebalanced).")
             else:
                 st.info("Portfolio analysis required")
         
@@ -1429,47 +1444,28 @@ class PortfolioDashboard:
                         status_text.text("🚀 Executing trades...")
                         
                         # Run execution
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        try:
-                            import io, sys
-                            old_stdout = sys.stdout
-                            sys.stdout = mystdout = io.StringIO()
-                            
-                            loop.run_until_complete(
-                                tracker._execute_rebalancing_trades(
+                        import asyncio
+                        result = asyncio.run(
+                            tracker.execute_rebalancing_trades_core(
                                     filtered_df,
                                     earn_balances,
                                     interactive=False,
                                     auto_confirm=True
                                 )
                             )
-                            
-                            sys.stdout = old_stdout
-                            execution_output = mystdout.getvalue()
-                            
-                            progress_bar.progress(100)
-                            status_text.text("✅ Execution completed!")
-                            
-                            # Enhanced results formatting
-                            st.session_state.rebalance_results = f"""
-    === REBALANCING EXECUTION COMPLETED ===
-    Executed {len(accepted_suggestions)} trade(s)
+                        output = "\n".join(result.messages)
+                        if result.success:
+                            st.session_state.rebalance_results = f"""=== REBALANCING EXECUTION COMPLETED ===
+Executed {result.data.get('trades_executed', 0)} trade(s)
     Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-    {execution_output}
+{output}
     === END EXECUTION LOG ===
                             """
-                            
-                        except Exception as e:
-                            progress_bar.progress(100)
-                            status_text.text("❌ Execution failed!")
-                            st.session_state.rebalance_results = f"❌ **Execution Error**: {str(e)}\n\nPlease check your settings and try again."
-                        finally:
-                            loop.close()
                     else:
-                        st.session_state.rebalance_results = "ℹ️ No trades were selected for execution."
-                    
+                            st.session_state.rebalance_results = f"❌ Rebalancing failed:\n" + "\n".join(result.errors)
+                    progress_bar.progress(100)
+                    status_text.text("✅ Execution completed!" if result.success else "❌ Execution failed!")
                 except Exception as e:
                     progress_bar.progress(100)
                     status_text.text("❌ Setup failed!")
@@ -1533,11 +1529,12 @@ class PortfolioDashboard:
                 """)
 
     def render_trading(self):
+        # (Removed debug: session state at start of trading page render)
         st.markdown("## 💰 Trading")
-        
+
         # Initialize session state
         if "trading_mode" not in st.session_state:
-            st.session_state.trading_mode = None
+            st.session_state.trading_mode = "manual"
         if "trading_results" not in st.session_state:
             st.session_state.trading_results = None
         if "trading_executing" not in st.session_state:
@@ -1550,9 +1547,9 @@ class PortfolioDashboard:
         # Check live trading status
         is_live = self.config_manager.config.get("portfolio", {}).get("live_trading_enabled", False)
         is_testnet = self.config_manager.is_testnet_mode
-        
+
         # Trading Status Banner
-        col1, col2, col3 = st.columns([1, 2, 1])
+        col1, col2, col3 = st.columns(3)
         with col1:
             if is_live:
                 st.error(" LIVE TRADING ENABLED")
@@ -1569,38 +1566,36 @@ class PortfolioDashboard:
             else:
                 st.success("✅ SIMULATION MODE")
 
-        # Trading Mode Selection with Tabs
+        # Trading Mode Selection with Radio
         st.markdown("### 🎯 Select Trading Mode")
+        mode = st.radio(
+            "Choose trading mode:",
+            ["📝 Manual Trade", "🤖 Live Strategy"],
+            index=0 if st.session_state.trading_mode == "manual" else 1,
+            key="trading_mode_radio",
+            horizontal=True
+        )
 
-        # Create tabs
-        tab1, tab2 = st.tabs(["📝 Manual Trade", "🤖 Live Strategy"])
-
-        with tab1:
-            # Set trading mode when this tab is active
+        if mode == "📝 Manual Trade":
             if st.session_state.trading_mode != "manual":
                 st.session_state.trading_mode = "manual"
-                # Clear strategy-related data when switching to manual
                 st.session_state.strategy_signals = None
-                if "trading_results" in st.session_state and st.session_state.trading_results:
-                    st.session_state.trading_results = None
-
             self._render_manual_trading()
-
-        with tab2:
-            # Set trading mode when this tab is active
+        else:
             if st.session_state.trading_mode != "strategy":
                 st.session_state.trading_mode = "strategy"
-                # Clear manual trading data when switching to strategy
                 st.session_state.manual_trade_data = {}
                 if "trading_results" in st.session_state and st.session_state.trading_results:
                     st.session_state.trading_results = None
-
             self._render_live_strategy_trading()
 
-    def _render_manual_trading(self):
-        """Renders the manual trading interface."""
-        st.markdown("### 📝 Manual Trading")
+        # --- Always show debug output at the end of the trading page ---
+        # (Removed debug output at the end of the trading page)
+        pass
 
+    def _render_manual_trading(self):
+        # (Removed debug: session state at start of manual trading render)
+        st.markdown("### 📝 Manual Trading")
         # Fetch and display available USDT balance
         usdt_balance = None
         tracker = self.initialize_tracker()
@@ -1614,21 +1609,67 @@ class PortfolioDashboard:
             st.success(f"${usdt_balance:,.2f}")
         else:
             st.info("USDT balance unavailable.")
-        
-        # Gather core coins
+
+        # --- SHOW EXECUTION RESULTS IF AVAILABLE ---
+        if st.session_state.trading_results:
+            st.markdown("### 📋 Execution Results")
+            st.code(st.session_state.trading_results, language="text")
+            # Post-execution actions
+            if "EXECUTION COMPLETED" in st.session_state.trading_results:
+                st.success("✅ **Trade executed successfully!**")
+                st.markdown("### 🔄 Portfolio Update")
+                st.info("💡 **Recommendation**: After executing a trade, it's a good practice to sync your portfolio to see the updated balances and positions.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
+                        self._sync_portfolio_and_reset()
+                with col2:
+                    if st.button("🆕 New Trade", type="secondary", use_container_width=True):
+                        st.session_state.trading_results = None
+                        st.session_state.manual_trade_data = {}
+                        st.rerun()
+                with st.expander("💡 Post-Trade Tips", expanded=False):
+                    st.markdown("""
+                    **After executing a trade:**
+                    - 🔄 **Sync Portfolio**: Update your portfolio data to see new balances
+                    - 📊 **Check Dashboard**: Use the sidebar to navigate to Dashboard for updated portfolio metrics
+                    - 📈 **Monitor Performance**: Track how the trade affects your portfolio
+                    - 💾 **Save Snapshot**: Consider saving a portfolio snapshot for record keeping
+
+                    **Next Steps:**
+                    - Use the sidebar "🔄 Sync Portfolio" button for a full portfolio update
+                    - Visit the Dashboard to see your updated portfolio summary
+                    - Check the Rebalancing page to see if any rebalancing is now needed
+                    """)
+            elif "Error" in st.session_state.trading_results:
+                st.error("❌ **Trade execution failed**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Try Again", type="primary", use_container_width=True):
+                        st.session_state.trading_results = None
+                        st.session_state.manual_trade_data = {}
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Cancel", type="secondary", use_container_width=True):
+                        st.session_state.trading_results = None
+                        st.session_state.manual_trade_data = {}
+                        st.rerun()
+            return  # <-- Prevents showing confirmation or form
+
+        # --- SHOW TRADE CONFIRMATION IF DATA IS STORED ---
+        if st.session_state.manual_trade_data:
+            self._show_trade_confirmation()
+            return  # <-- Prevents showing the form
+
+        # --- OTHERWISE, SHOW THE TRADE FORM ---
+        # (PASTE YOUR FORM CODE HERE)
         core_coins = list(self.config_manager.config.get("target_allocation", {}).keys())
         core_coins_upper = [c.upper() for c in core_coins]
-
-        # Get all available symbols from local mappings (JSON)
         symbol_mapper = self.config_manager.symbol_mapper
         all_symbols = list(symbol_mapper.get_all_mappings().keys())
-
-        # If local mappings are empty, fallback to master list from CoinGecko
         if not all_symbols:
             all_coin_dicts = symbol_mapper._fetch_master_coins_list()
             all_symbols = [coin['symbol'].upper() for coin in all_coin_dicts if 'symbol' in coin]
-
-        # Remove duplicates, prioritize core coins
         non_core_symbols = sorted(set(all_symbols) - set(core_coins_upper))
         coin_options = core_coins_upper + non_core_symbols
 
@@ -1655,23 +1696,15 @@ class PortfolioDashboard:
                 help="Check if the amount is in USDT, uncheck if in asset units"
             )
         
-        # Dynamic button with real-time validation
         st.markdown("---")
-        
-        # Check if form is valid
         is_valid = bool(symbol and amount_input)
-        
-        # Dynamic button text
         button_text = f"🚀 {trade_type} {symbol if symbol else 'ASSET'}"
-        
-        # Execute button
         if st.button(
             button_text,
             type="primary",
             disabled=not is_valid,
             use_container_width=True
         ):
-            # Store trade data in session state for confirmation
             st.session_state.manual_trade_data = {
                 "trade_type": trade_type,
                 "symbol": symbol,
@@ -1680,70 +1713,12 @@ class PortfolioDashboard:
             }
             st.rerun()
         
-        # Show validation feedback
         if not symbol:
             st.warning("⚠️ Please enter an asset symbol")
         if not amount_input:
             st.warning("⚠️ Please enter an amount")
         if symbol and amount_input:
             st.success("✅ Form is ready for submission")
-        
-        # Show trade confirmation if data is stored
-        if st.session_state.manual_trade_data:
-            self._show_trade_confirmation()
-        
-        # Show execution results if available
-        if st.session_state.trading_results:
-            st.markdown("### 📋 Execution Results")
-            st.code(st.session_state.trading_results, language="text")
-            
-            # Post-execution actions
-            if "EXECUTION COMPLETED" in st.session_state.trading_results:
-                st.success("✅ **Trade executed successfully!**")
-                
-                # Suggest portfolio sync
-                st.markdown("### 🔄 Portfolio Update")
-                st.info("💡 **Recommendation**: After executing a trade, it's a good practice to sync your portfolio to see the updated balances and positions.")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
-                        self._sync_portfolio_and_reset()
-                with col2:
-                    if st.button("🆕 New Trade", type="secondary", use_container_width=True):
-                        # Reset to initial state for new trade
-                        st.session_state.trading_results = None
-                        st.session_state.manual_trade_data = {}
-                        st.rerun()
-                
-                # Show helpful tips
-                with st.expander("💡 Post-Trade Tips", expanded=False):
-                    st.markdown("""
-                    **After executing a trade:**
-                    - 🔄 **Sync Portfolio**: Update your portfolio data to see new balances
-                    - 📊 **Check Dashboard**: Use the sidebar to navigate to Dashboard for updated portfolio metrics
-                    - 📈 **Monitor Performance**: Track how the trade affects your portfolio
-                    - 💾 **Save Snapshot**: Consider saving a portfolio snapshot for record keeping
-                    
-                    **Next Steps:**
-                    - Use the sidebar "🔄 Sync Portfolio" button for a full portfolio update
-                    - Visit the Dashboard to see your updated portfolio summary
-                    - Check the Rebalancing page to see if any rebalancing is now needed
-                    """)
-            
-            elif "Error" in st.session_state.trading_results:
-                st.error("❌ **Trade execution failed**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🔄 Try Again", type="primary", use_container_width=True):
-                        st.session_state.trading_results = None
-                        st.session_state.manual_trade_data = {}
-                        st.rerun()
-                with col2:
-                    if st.button("❌ Cancel", type="secondary", use_container_width=True):
-                        st.session_state.trading_results = None
-                        st.session_state.manual_trade_data = {}
-                        st.rerun()
 
     def _show_trade_confirmation(self):
         """Shows the trade confirmation interface."""
@@ -1782,62 +1757,73 @@ class PortfolioDashboard:
                 st.rerun()
 
     def _confirm_manual_trade(self, trade_type, symbol, amount_input, is_quote_qty):
-        """Confirms and executes the manual trade."""
         st.session_state.trading_executing = True
-        
-        with st.spinner(f"Executing {trade_type} order for {symbol}..."):
-            try:
-                tracker = self.initialize_tracker()
-                is_live = self.config_manager.config.get("portfolio", {}).get("live_trading_enabled", False)
-                
-                # Parse amount
-                import re
-                numeric_part = re.search(r"[\d\.]+", amount_input)
-                if not numeric_part:
-                    st.error("❌ Invalid amount format. Please enter a valid number.")
-                    return
-                
-                amount = float(numeric_part.group(0))
-                trade_ticker = f"{symbol}USDT"
-                
-                # Execute the trade
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+        try:
+            with st.spinner(f"Executing {trade_type} order for {symbol}..."):
                 try:
-                    import io, sys
-                    old_stdout = sys.stdout
-                    sys.stdout = mystdout = io.StringIO()
-                    
-                    loop.run_until_complete(
-                        tracker._execute_manual_trade(
+                    tracker = self.initialize_tracker()
+                    is_live = self.config_manager.config.get("portfolio", {}).get("live_trading_enabled", False)
+                    # Parse amount
+                    import re
+                    numeric_part = re.search(r"[\d\.]+", amount_input)
+                    if not numeric_part:
+                        st.error("❌ Invalid amount format. Please enter a valid number.")
+                        # Set debug output even on error
+                        st.session_state.trade_debug_output = {
+                            "error": "Invalid amount format",
+                            "params": {
+                                "trade_type": trade_type,
+                                "symbol": symbol,
+                                "amount_input": amount_input,
+                                "is_quote_qty": is_quote_qty,
+                            }
+                        }
+                        return
+                    amount = float(numeric_part.group(0))
+                    trade_ticker = f"{symbol}USDT"
+                    import asyncio
+                    result = asyncio.run(
+                        tracker.execute_manual_trade_core(
                             trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
                         )
                     )
+                    # Set debug output with result
+                    st.session_state.trade_debug_output = {
+                        "result": result,
+                        "params": {
+                            "trade_type": trade_type,
+                            "symbol": symbol,
+                            "trade_ticker": trade_ticker,
+                            "amount": amount,
+                            "is_quote_qty": is_quote_qty,
+                            "is_live": is_live,
+                        }
+                    }
+                    output = "\n".join(result.messages)
+                    if result.success:
+                        st.session_state.trading_results = f"=== MANUAL TRADE EXECUTION COMPLETED ===\n{output}\n=== END EXECUTION LOG ==="
+                    else:
+                        st.session_state.trading_results = f"❌ Trade failed:\n" + "\n".join(result.errors)
                     
-                    sys.stdout = old_stdout
-                    execution_output = mystdout.getvalue()
-                    
-                    st.session_state.trading_results = f"""
-=== MANUAL TRADE EXECUTION COMPLETED ===
-Trade: {trade_type} {amount} {symbol if not is_quote_qty else 'USDT'}
-Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-
-{execution_output}
-=== END EXECUTION LOG ===
-                    """
+                    # CRITICAL: Clear manual_trade_data so results are shown instead of confirmation
+                    st.session_state.manual_trade_data = {}
                     
                 except Exception as e:
+                    st.session_state.trade_debug_output = {
+                        "exception": str(e),
+                        "params": {
+                            "trade_type": trade_type,
+                            "symbol": symbol,
+                            "amount_input": amount_input,
+                            "is_quote_qty": is_quote_qty,
+                        }
+                    }
                     st.session_state.trading_results = f"❌ **Execution Error**: {str(e)}"
-                finally:
-                    loop.close()
-                    
-            except Exception as e:
-                st.session_state.trading_results = f"❌ **Setup Error**: {str(e)}"
-            finally:
-                st.session_state.trading_executing = False
-                # Clear the trade data after execution
-                st.session_state.manual_trade_data = {}
-                st.rerun()
+                    # CRITICAL: Clear manual_trade_data even on error
+                    st.session_state.manual_trade_data = {}
+        finally:
+            st.session_state.trading_executing = False
+            st.rerun()
 
     def _sync_portfolio_and_reset(self):
         with st.spinner("🔄 Syncing portfolio and updating data..."):
@@ -2149,10 +2135,322 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         st.markdown("## 🧪 Backtesting")
         st.markdown("Test your trading strategies and rebalancing approaches with historical data")
 
-        tab1, tab2 = st.tabs(["🧪 Strategy Backtest", "⚖️ Rebalancing Backtest"])
+        tab1, tab2 = st.tabs(["⚖️ Rebalancing Backtest", "🧪 Strategy Backtest"])
+
+        # --- Rebalancing Backtest Tab ---
+        with tab1:
+            st.header("⚖️ Rebalancing Backtest")
+            st.markdown("Test portfolio rebalancing strategies with customizable drift thresholds and market conditions")
+
+            # Basic Settings Section
+            with st.container():
+                st.subheader("💰 Basic Configuration")
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    initial_capital = st.number_input(
+                        "Initial Capital (USD)",
+                        min_value=100.0,
+                        value=10000.0,
+                        step=500.0,
+                        key="rebalance_initial_capital",
+                        help="Starting capital for the rebalancing backtest"
+                    )
+
+                with col2:
+                    period_options = ["1y", "2y", "3y", "4y", "5y", "Custom"]
+                    selected_period_option = st.selectbox(
+                        "Backtest Period",
+                        period_options,
+                        index=2,  # Default to 3y
+                        key="rebalance_period_dropdown",
+                        help="Historical period for rebalancing analysis"
+                    )
+
+                    if selected_period_option == "Custom":
+                        period = st.text_input(
+                            "Custom Period (e.g., 7y)",
+                            value="6y",
+                            key="rebalance_period_custom",
+                            help="Enter custom period: Xy for years"
+                        )
+                    else:
+                        period = selected_period_option
+
+            # Advanced Parameters Section
+            with st.expander("🔧 Advanced Rebalancing Parameters", expanded=False):
+                # Create tabs within the expander for better organization
+                param_tab1, param_tab2, param_tab3, param_tab4 = st.tabs(["📊 Drift Settings", "💱 Trade Control", "🐻 Market Rules", "🎯 Asset Allocation"])
+
+                with param_tab1:
+                    st.markdown("#### Set allocation drift thresholds that trigger rebalancing")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**🪙 Major Coins (BTC/ETH)**")
+                        majors_drift_threshold = st.slider(
+                            "Drift Threshold (%)",
+                            min_value=1.0, max_value=20.0, value=3.0, step=0.5,
+                            help="Drift threshold for BTC/ETH before rebalancing triggers",
+                            key="majors_drift"
+                        )
+                    with col2:
+                        st.markdown("**🚀 Altcoins**")
+                        alts_drift_threshold = st.slider(
+                            "Drift Threshold (%)",
+                            min_value=1.0, max_value=20.0, value=5.0, step=0.5,
+                            help="Drift threshold for altcoins before rebalancing triggers",
+                            key="alts_drift"
+                        )
+
+                with param_tab2:
+                    st.markdown("#### Control trade aggressiveness during rebalancing")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**🪙 Major Coins (BTC/ETH)**")
+                        majors_sell_multiplier = st.slider(
+                            "Sell Multiplier",
+                            min_value=0.1, max_value=2.0, value=0.5, step=0.1,
+                            help="Portion of overweight amount to sell (0.5 = sell 50%)",
+                            key="majors_sell"
+                        )
+                        majors_buy_multiplier = st.slider(
+                            "Buy Multiplier",
+                            min_value=0.1, max_value=2.0, value=0.75, step=0.1,
+                            help="Portion of underweight amount to buy (0.75 = buy 75%)",
+                            key="majors_buy"
+                        )
+                    with col2:
+                        st.markdown("**🚀 Altcoins**")
+                        alts_sell_multiplier = st.slider(
+                            "Sell Multiplier",
+                            min_value=0.1, max_value=2.0, value=0.5, step=0.1,
+                            help="Portion of overweight amount to sell for altcoins",
+                            key="alts_sell"
+                        )
+                        alts_buy_multiplier = st.slider(
+                            "Buy Multiplier",
+                            min_value=0.1, max_value=2.0, value=1.0, step=0.1,
+                            help="Portion of underweight amount to buy for altcoins",
+                            key="alts_buy"
+                        )
+
+                with param_tab3:
+                    st.markdown("#### Configure market condition responses")
+                    suppress_buys_in_bear = st.checkbox(
+                        "🐻 Suppress Buys in Bear Market",
+                        value=True,
+                        help="Avoid buying during bearish market conditions (except oversold scenarios)"
+                    )
+
+                with param_tab4:
+                    st.markdown("#### Customize your portfolio allocation")
+                    st.info("💡 Modify allocations below or leave as-is to use your default configuration")
+
+                    # Get all available symbols (e.g., from symbol_mapper)
+                    all_symbols = list(self.config_manager.symbol_mapper.get_all_mappings().keys())
+                    default_allocation = self.config_manager.config.get("target_allocation", {})
+
+                    # Use session state to persist custom allocation edits
+                    if "custom_allocation" not in st.session_state or not st.session_state.custom_allocation:
+                        st.session_state.custom_allocation = default_allocation.copy()
+
+                    custom_allocation = st.session_state.custom_allocation
+
+                    # Current assets section
+                    if custom_allocation:
+                        st.markdown("**Current Asset Allocation:**")
+                        assets_to_remove = []
+                        for asset, alloc in list(custom_allocation.items()):
+                            cols = st.columns([2, 2, 1.5, 1])
+                            with cols[0]:
+                                st.markdown(f"**{asset.upper()}**")
+                            with cols[1]:
+                                new_alloc = st.number_input(
+                                    f"Allocation",
+                                    min_value=0.0,
+                                    max_value=100.0,
+                                    value=alloc * 100,
+                                    step=0.1,
+                                    key=f"alloc_{asset}",
+                                    label_visibility="collapsed"
+                                )
+                                custom_allocation[asset] = new_alloc / 100.0
+                            with cols[2]:
+                                st.markdown(f"*{new_alloc:.1f}%*")
+                            with cols[3]:
+                                if st.button("❌", key=f"remove_{asset}", help=f"Remove {asset.upper()}"):
+                                    assets_to_remove.append(asset)
+
+                        for asset in assets_to_remove:
+                            del custom_allocation[asset]
+                            st.rerun()  # Force rerun to update the UI immediately
+
+                    # Add asset functionality - FIXED
+                    st.markdown("---")
+                    st.markdown("**Add New Asset:**")
+                    available_to_add = [s for s in all_symbols if s not in custom_allocation]
+                    if available_to_add:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            add_asset = st.selectbox(
+                                "Select Asset to Add",
+                                ["Select an asset..."] + available_to_add,
+                                key="add_asset_select"
+                            )
+                        with col2:
+                            if st.button("➕ Add", key="add_asset_btn", disabled=(add_asset == "Select an asset...")):
+                                if add_asset and add_asset != "Select an asset...":
+                                    custom_allocation[add_asset] = 0.0  # Default to 0% allocation
+                                    # Reset the selectbox by clearing its value from session state
+                                    if "add_asset_select" in st.session_state:
+                                        st.session_state["add_asset_select"] = "Select an asset..."
+                                    st.rerun()  # Force rerun to update the UI
+                    else:
+                        st.info("All available assets are already in your allocation")
+
+                    # Validation section
+                    st.markdown("---")
+                    total_alloc = sum(custom_allocation.values())
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if abs(total_alloc - 1.0) > 0.001:
+                            st.warning(f"⚠️ Total: {total_alloc:.2%} (must be 100%)")
+                        else:
+                            st.success(f"✅ Total: {total_alloc:.2%}")
+                    with col2:
+                        if st.button("🔄 Reset to Default", key="reset_allocation"):
+                            st.session_state.custom_allocation = default_allocation.copy()
+                            st.rerun()
+
+            # Run Rebalancing Backtest Button
+            st.markdown("---")
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                run_rebalance_backtest = st.button(
+                    "🚀 Run Rebalancing Backtest",
+                    type="primary",
+                    use_container_width=True
+                )
+
+            if run_rebalance_backtest:
+                with st.spinner("🔄 Running rebalancing backtest analysis..."):
+                    try:
+                        # Create custom config with user parameters
+                        custom_config = self.config_manager.config.copy()
+
+                        # Update rebalancing parameters
+                        custom_config["rebalance_technical"] = {
+                            "market_regime_rules": {
+                                "suppress_buys_in_bear": suppress_buys_in_bear
+                            },
+                            "majors": {
+                                "allocation_drift_threshold_pct": majors_drift_threshold,
+                                "sell_percentage_multiplier": majors_sell_multiplier,
+                                "buy_amount_multiplier": majors_buy_multiplier
+                            },
+                            "alts": {
+                                "allocation_drift_threshold_pct": alts_drift_threshold,
+                                "sell_percentage_multiplier": alts_sell_multiplier,
+                                "buy_amount_multiplier": alts_buy_multiplier
+                            }
+                        }
+
+                        # Update target allocation if user customized it
+                        if abs(sum(custom_allocation.values()) - 1.0) < 0.001:
+                            custom_config["target_allocation"] = custom_allocation
+
+                        backtester = RebalancingBacktester(config=custom_config)
+                        backtester.run(initial_capital=initial_capital, period=period)
+
+                        st.success("✅ Rebalancing backtest completed successfully!")
+
+                        # Results Section
+                        if hasattr(backtester, "summary_stats"):
+                            st.markdown("## 📊 Rebalancing Results")
+
+                            # Key metrics in columns
+                            stats = backtester.summary_stats
+                            metric_cols = st.columns(4)
+
+                            with metric_cols[0]:
+                                st.metric(
+                                    "Strategy Return",
+                                    f"{stats['Strategy Total Return']:.1%}",
+                                    delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H"
+                                )
+
+                            with metric_cols[1]:
+                                st.metric(
+                                    "Final Value",
+                                    f"${stats['Final Portfolio Value']:,.0f}",
+                                    delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}"
+                                )
+
+                            with metric_cols[2]:
+                                st.metric(
+                                    "Max Drawdown",
+                                    f"{stats['Maximum Drawdown']:.1%}"
+                                )
+
+                            with metric_cols[3]:
+                                st.metric(
+                                    "Total Trades",
+                                    f"{stats['Total Trades Executed']}"
+                                )
+
+                            # Detailed Results Table
+                            with st.expander("📋 Detailed Performance Metrics", expanded=True):
+                                st.table({
+                                    "Metric": [
+                                        "Initial Capital",
+                                        "Final Portfolio Value",
+                                        "Strategy Total Return",
+                                        "Buy & Hold Return",
+                                        "Strategy Outperformance",
+                                        "Maximum Drawdown",
+                                        "Annualized Volatility",
+                                        "Sharpe Ratio",
+                                        "Total Trades Executed"
+                                    ],
+                                    "Value": [
+                                        f"${stats['Initial Capital']:,.2f}",
+                                        f"${stats['Final Portfolio Value']:,.2f}",
+                                        f"{stats['Strategy Total Return']:.2%}",
+                                        f"{stats['Buy & Hold Return']:.2%}",
+                                        f"{stats['Strategy Outperformance']:+.2%}",
+                                        f"{stats['Maximum Drawdown']:.2%}",
+                                        f"{stats['Annualized Volatility']:.2%}",
+                                        f"{stats['Sharpe Ratio']:.2f}",
+                                        f"{stats['Total Trades Executed']}"
+                                    ]
+                                })
+
+                        # Equity Curve
+                        if hasattr(backtester, "portfolio_value_history"):
+                            st.markdown("### 📈 Portfolio Equity Curve")
+                            if isinstance(backtester.portfolio_value_history, list) and backtester.portfolio_value_history:
+                                # Convert to DataFrame with proper date index
+                                df = pd.DataFrame(backtester.portfolio_value_history)
+                                df['date'] = pd.to_datetime(df['date'])
+                                df = df.set_index('date')
+                                df = df.rename(columns={'value': 'Portfolio Value ($)'})
+
+                                # Create the chart with proper date axis
+                                st.line_chart(df, use_container_width=True)
+
+                        # Trade Log
+                        if hasattr(backtester, "trade_log"):
+                            with st.expander("📝 Rebalancing Trade Log"):
+                                st.code("\n".join(backtester.trade_log), language="text")
+
+                    except Exception as e:
+                        st.error(f"❌ Rebalancing backtest failed: {str(e)}")
+                        st.info("💡 Try adjusting the parameters or check your allocation settings")
 
         # --- Strategy Backtest Tab ---
-        with tab1:
+        with tab2:
             st.header("🧪 Strategy Backtest")
             st.markdown("Select a trading strategy and customize its parameters to test performance against historical data")
 
@@ -2399,475 +2697,6 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                     except Exception as e:
                         st.error(f"❌ Backtest failed: {str(e)}")
                         st.info("💡 Try adjusting the parameters or selecting a different time period")
-
-        # --- Rebalancing Backtest Tab ---
-        with tab2:
-            st.header("⚖️ Rebalancing Backtest")
-            st.markdown("Test portfolio rebalancing strategies with customizable drift thresholds and market conditions")
-
-            # Basic Settings Section
-            with st.container():
-                st.subheader("💰 Basic Configuration")
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    initial_capital = st.number_input(
-                        "Initial Capital (USD)",
-                        min_value=100.0,
-                        value=10000.0,
-                        step=500.0,
-                        key="rebalance_initial_capital",
-                        help="Starting capital for the rebalancing backtest"
-                    )
-
-                with col2:
-                    period_options = ["1y", "2y", "3y", "4y", "5y", "Custom"]
-                    selected_period_option = st.selectbox(
-                        "Backtest Period",
-                        period_options,
-                        index=2,  # Default to 3y
-                        key="rebalance_period_dropdown",
-                        help="Historical period for rebalancing analysis"
-                    )
-
-                    if selected_period_option == "Custom":
-                        period = st.text_input(
-                            "Custom Period (e.g., 7y)",
-                            value="6y",
-                            key="rebalance_period_custom",
-                            help="Enter custom period: Xy for years"
-                        )
-                    else:
-                        period = selected_period_option
-
-            # Advanced Parameters Section
-            with st.expander("🔧 Advanced Rebalancing Parameters", expanded=False):
-                st.markdown("##### 📊 Allocation Drift Thresholds")
-                st.info("Set how much deviation from target allocation triggers rebalancing")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    majors_drift_threshold = st.slider(
-                        "Major Coins Drift Threshold (%)",
-                        min_value=1.0, max_value=20.0, value=3.0, step=0.5,
-                        help="Drift threshold for BTC/ETH before rebalancing triggers"
-                    )
-                with col2:
-                    alts_drift_threshold = st.slider(
-                        "Altcoins Drift Threshold (%)",
-                        min_value=1.0, max_value=20.0, value=5.0, step=0.5,
-                        help="Drift threshold for altcoins before rebalancing triggers"
-                    )
-
-                st.markdown("##### 💱 Trade Aggressiveness")
-                st.info("Control how much of the imbalance to correct in each rebalancing event")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Major Coins (BTC/ETH)**")
-                    majors_sell_multiplier = st.slider(
-                        "Sell Multiplier",
-                        min_value=0.1, max_value=2.0, value=0.5, step=0.1,
-                        help="Portion of overweight amount to sell (0.5 = sell 50%)",
-                        key="majors_sell"
-                    )
-                    majors_buy_multiplier = st.slider(
-                        "Buy Multiplier",
-                        min_value=0.1, max_value=2.0, value=0.75, step=0.1,
-                        help="Portion of underweight amount to buy (0.75 = buy 75%)",
-                        key="majors_buy"
-                    )
-                with col2:
-                    st.markdown("**Altcoins**")
-                    alts_sell_multiplier = st.slider(
-                        "Sell Multiplier",
-                        min_value=0.1, max_value=2.0, value=0.5, step=0.1,
-                        help="Portion of overweight amount to sell for altcoins",
-                        key="alts_sell"
-                    )
-                    alts_buy_multiplier = st.slider(
-                        "Buy Multiplier",
-                        min_value=0.1, max_value=2.0, value=1.0, step=0.1,
-                        help="Portion of underweight amount to buy for altcoins",
-                        key="alts_buy"
-                    )
-
-                st.markdown("##### 🐻 Market Regime Rules")
-                suppress_buys_in_bear = st.checkbox(
-                    "Suppress Buys in Bear Market",
-                    value=True,
-                    help="Avoid buying during bearish market conditions (except oversold scenarios)"
-                )
-
-                st.markdown("##### 🎯 Custom Target Allocation")
-                with st.container():
-                    st.info("💡 Customize allocation or leave as-is to use your default config")
-
-                    # Get current target allocation from config
-                    default_allocation = config.get("target_allocation", {})
-                    custom_allocation = {}
-
-                    # Create a more organized layout for allocation inputs
-                    if default_allocation:
-                        allocation_cols = st.columns(min(3, len(default_allocation)))
-                        for i, (coin, default_pct) in enumerate(default_allocation.items()):
-                            with allocation_cols[i % len(allocation_cols)]:
-                                custom_pct = st.number_input(
-                                    f"{coin.upper()}",
-                                    min_value=0.0,
-                                    max_value=100.0,
-                                    value=default_pct * 100,
-                                    step=1.0,
-                                    key=f"custom_alloc_{coin}",
-                                    help=f"Target allocation percentage for {coin.upper()}"
-                                )
-                                custom_allocation[coin] = custom_pct / 100.0
-
-                        # Allocation validation
-                        total_alloc = sum(custom_allocation.values())
-                        if abs(total_alloc - 1.0) > 0.001:
-                            if total_alloc > 1.0:
-                                st.warning(f"⚠️ Total allocation is {total_alloc:.1%} (over 100%)")
-                            else:
-                                st.warning(f"⚠️ Total allocation is {total_alloc:.1%} (under 100%)")
-                        else:
-                            st.success(f"✅ Total allocation: {total_alloc:.1%}")
-
-            # Run Rebalancing Backtest Button
-            st.markdown("---")
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                run_rebalance_backtest = st.button(
-                    "🚀 Run Rebalancing Backtest",
-                    type="primary",
-                    use_container_width=True
-                )
-
-            if run_rebalance_backtest:
-                with st.spinner("🔄 Running rebalancing backtest analysis..."):
-                    try:
-                        # Create custom config with user parameters
-                        custom_config = config.copy()
-
-                        # Update rebalancing parameters
-                        custom_config["rebalance_technical"] = {
-                            "market_regime_rules": {
-                                "suppress_buys_in_bear": suppress_buys_in_bear
-                            },
-                            "majors": {
-                                "allocation_drift_threshold_pct": majors_drift_threshold,
-                                "sell_percentage_multiplier": majors_sell_multiplier,
-                                "buy_amount_multiplier": majors_buy_multiplier
-                            },
-                            "alts": {
-                                "allocation_drift_threshold_pct": alts_drift_threshold,
-                                "sell_percentage_multiplier": alts_sell_multiplier,
-                                "buy_amount_multiplier": alts_buy_multiplier
-                            }
-                        }
-
-                        # Update target allocation if user customized it
-                        if abs(sum(custom_allocation.values()) - 1.0) < 0.001:
-                            custom_config["target_allocation"] = custom_allocation
-
-                        backtester = RebalancingBacktester(config=custom_config)
-                        backtester.run(initial_capital=initial_capital, period=period)
-
-                        st.success("✅ Rebalancing backtest completed successfully!")
-
-                        # Results Section
-                        if hasattr(backtester, "summary_stats"):
-                            st.markdown("## 📊 Rebalancing Results")
-
-                            # Key metrics in columns
-                            stats = backtester.summary_stats
-                            metric_cols = st.columns(4)
-
-                            with metric_cols[0]:
-                                st.metric(
-                                    "Strategy Return",
-                                    f"{stats['Strategy Total Return']:.1%}",
-                                    delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H"
-                                )
-
-                            with metric_cols[1]:
-                                st.metric(
-                                    "Final Value",
-                                    f"${stats['Final Portfolio Value']:,.0f}",
-                                    delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}"
-                                )
-
-                            with metric_cols[2]:
-                                st.metric(
-                                    "Max Drawdown",
-                                    f"{stats['Maximum Drawdown']:.1%}"
-                                )
-
-                            with metric_cols[3]:
-                                st.metric(
-                                    "Total Trades",
-                                    f"{stats['Total Trades Executed']}"
-                                )
-
-                            # Detailed Results Table
-                            with st.expander("📋 Detailed Performance Metrics", expanded=True):
-                                st.table({
-                                    "Metric": [
-                                        "Initial Capital",
-                                        "Final Portfolio Value",
-                                        "Strategy Total Return",
-                                        "Buy & Hold Return",
-                                        "Strategy Outperformance",
-                                        "Maximum Drawdown",
-                                        "Annualized Volatility",
-                                        "Sharpe Ratio",
-                                        "Total Trades Executed"
-                                    ],
-                                    "Value": [
-                                        f"${stats['Initial Capital']:,.2f}",
-                                        f"${stats['Final Portfolio Value']:,.2f}",
-                                        f"{stats['Strategy Total Return']:.2%}",
-                                        f"{stats['Buy & Hold Return']:.2%}",
-                                        f"{stats['Strategy Outperformance']:+.2%}",
-                                        f"{stats['Maximum Drawdown']:.2%}",
-                                        f"{stats['Annualized Volatility']:.2%}",
-                                        f"{stats['Sharpe Ratio']:.2f}",
-                                        f"{stats['Total Trades Executed']}"
-                                    ]
-                                })
-
-                        # Equity Curve
-                        if hasattr(backtester, "portfolio_value_history"):
-                            st.markdown("### 📈 Portfolio Equity Curve")
-                            if isinstance(backtester.portfolio_value_history, list) and backtester.portfolio_value_history:
-                                # Convert to DataFrame with proper date index
-                                df = pd.DataFrame(backtester.portfolio_value_history)
-                                df['date'] = pd.to_datetime(df['date'])
-                                df = df.set_index('date')
-                                df = df.rename(columns={'value': 'Portfolio Value ($)'})
-
-                                # Create the chart with proper date axis
-                                st.line_chart(df, use_container_width=True)
-
-                        # Trade Log
-                        if hasattr(backtester, "trade_log"):
-                            with st.expander("📝 Rebalancing Trade Log"):
-                                st.code("\n".join(backtester.trade_log), language="text")
-
-                    except Exception as e:
-                        st.error(f"❌ Rebalancing backtest failed: {str(e)}")
-                        st.info("💡 Try adjusting the parameters or check your allocation settings")
-
-    def render_charts(self):
-
-
-        st.markdown("## 📊 Portfolio Charts")
-        st.info("Visualize your portfolio with interactive charts. Select a chart type below.")
-
-        # tracker = self.initialize_tracker()
-        # metrics = st.session_state.get("portfolio_metrics")
-        # if not metrics:
-        #     st.info("No portfolio metrics available. Please run a full sync first.")
-        #     return
-
-        # holdings_df = metrics.get("holdings_df")
-        # target_allocation = self.config_manager.config.get("target_allocation", {})
-        # snapshots = None
-        # try:
-        #     snapshots = tracker.db_manager.get_all_snapshots()
-        # except Exception:
-        #     snapshots = None
-
-        # chart_tabs = st.tabs([
-        #     "🟣 Allocation Pie",
-        #     "🟡 Allocation Comparison",
-        #     "🟢 P/L by Asset",
-        #     "🔵 Value Over Time"
-        # ])
-
-        # # --- 1. Portfolio Allocation Pie Chart ---
-        # with chart_tabs[0]:
-        #     st.subheader("Portfolio Allocation (by Value)")
-        #     if holdings_df is not None and not holdings_df.empty:
-        #         pie_df = holdings_df.copy()
-        #         pie_df = pie_df[pie_df["value_usd"] > 0]
-        #         # Plotly chart for interactivity
-        #         fig_plotly = px.pie(
-        #             pie_df,
-        #             names="symbol",
-        #             values="value_usd",
-        #             title="Portfolio Allocation by Value",
-        #             hole=0.4
-        #         )
-        #         st.plotly_chart(fig_plotly, use_container_width=True)
-        #         # Matplotlib chart for universal PNG download
-        #         fig, ax = plt.subplots()
-        #         ax.pie(pie_df["value_usd"], labels=pie_df["symbol"], autopct='%1.1f%%', startangle=90)
-        #         ax.set_title("Portfolio Allocation by Value")
-        #         buf = io.BytesIO()
-        #         fig.savefig(buf, format="png", bbox_inches="tight")
-        #         buf.seek(0)
-        #         st.download_button(
-        #             "Download Pie Chart (PNG, universal)",
-        #             buf,
-        #             file_name="portfolio_allocation_pie.png",
-        #             mime="image/png"
-        #         )
-        #         plt.close(fig)
-        #     else:
-        #         st.info("No holdings data available for allocation pie chart.")
-
-        # # --- 2. Current vs. Target Allocation Bar Chart ---
-        # with chart_tabs[1]:
-        #     st.subheader("Current vs. Target Allocation")
-        #     if holdings_df is not None and not holdings_df.empty and target_allocation:
-        #         current_alloc = holdings_df.set_index('symbol')['allocation'] * 100
-        #         target_alloc = pd.Series(target_allocation) * 100
-        #         comparison_df = pd.DataFrame({
-        #             'Current (%)': current_alloc,
-        #             'Target (%)': target_alloc
-        #         }).fillna(0)
-        #         # Plotly chart for interactivity
-        #         fig_plotly = go.Figure()
-        #         fig_plotly.add_trace(go.Bar(
-        #             x=comparison_df.index,
-        #             y=comparison_df['Current (%)'],
-        #             name='Current (%)',
-        #             marker_color='indigo'
-        #         ))
-        #         fig_plotly.add_trace(go.Bar(
-        #             x=comparison_df.index,
-        #             y=comparison_df['Target (%)'],
-        #             name='Target (%)',
-        #             marker_color='orange'
-        #         ))
-        #         fig_plotly.update_layout(
-        #             barmode='group',
-        #             title="Current vs. Target Portfolio Allocation",
-        #             xaxis_title="Asset",
-        #             yaxis_title="Allocation (%)"
-        #         )
-        #         st.plotly_chart(fig_plotly, use_container_width=True)
-        #         # Matplotlib chart for universal PNG download
-        #         fig, ax = plt.subplots()
-        #         width = 0.35
-        #         x = range(len(comparison_df.index))
-        #         ax.bar([i - width/2 for i in x], comparison_df['Current (%)'], width=width, label='Current (%)', color='indigo')
-        #         ax.bar([i + width/2 for i in x], comparison_df['Target (%)'], width=width, label='Target (%)', color='orange')
-        #         ax.set_xticks(list(x))
-        #         ax.set_xticklabels(comparison_df.index, rotation=45)
-        #         ax.set_ylabel("Allocation (%)")
-        #         ax.set_title("Current vs. Target Portfolio Allocation")
-        #         ax.legend()
-        #         fig.tight_layout()
-        #         buf = io.BytesIO()
-        #         fig.savefig(buf, format="png", bbox_inches="tight")
-        #         buf.seek(0)
-        #         st.download_button(
-        #             "Download Allocation Comparison (PNG, universal)",
-        #             buf,
-        #             file_name="allocation_comparison_bar.png",
-        #             mime="image/png"
-        #         )
-        #         plt.close(fig)
-        #     else:
-        #         st.info("No data available for allocation comparison chart.")
-
-        # # --- 3. Unrealized P/L by Asset Bar Chart ---
-        # with chart_tabs[2]:
-        #     st.subheader("Unrealized Profit/Loss (P/L) by Asset")
-        #     if holdings_df is not None and not holdings_df.empty and "unrealized_pl_usd" in holdings_df.columns:
-        #         pl_df = holdings_df.set_index('symbol')["unrealized_pl_usd"].sort_values()
-        #         colors = ['red' if x < 0 else 'green' for x in pl_df]
-        #         # Plotly chart for interactivity
-        #         fig_plotly = go.Figure([go.Bar(
-        #             x=pl_df.index,
-        #             y=pl_df.values,
-        #             marker_color=colors
-        #         )])
-        #         fig_plotly.update_layout(
-        #             title="Unrealized P/L by Asset",
-        #             xaxis_title="Asset",
-        #             yaxis_title="Unrealized P/L (USD)"
-        #         )
-        #         st.plotly_chart(fig_plotly, use_container_width=True)
-        #         # Matplotlib chart for universal PNG download
-        #         fig, ax = plt.subplots()
-        #         bar_colors = ['green' if v >= 0 else 'red' for v in pl_df.values]
-        #         ax.bar(pl_df.index, pl_df.values, color=bar_colors)
-        #         ax.set_ylabel("Unrealized P/L (USD)")
-        #         ax.set_title("Unrealized P/L by Asset")
-        #         ax.axhline(0, color='black', linewidth=0.8)
-        #         ax.tick_params(axis='x', rotation=45)  # <-- Use this line
-        #         fig.tight_layout()
-        #         buf = io.BytesIO()
-        #         fig.savefig(buf, format="png", bbox_inches="tight")
-        #         buf.seek(0)
-        #         st.download_button(
-        #             "Download P/L Chart (PNG, universal)",
-        #             buf,
-        #             file_name="pl_by_asset_bar.png",
-        #             mime="image/png"
-        #         )
-        #         plt.close(fig)
-        #     else:
-        #         st.info("No P/L data available for this chart.")
-
-        # # --- 4. Portfolio Value Over Time Line Chart ---
-        # with chart_tabs[3]:
-        #     st.subheader("Portfolio Value Over Time")
-        #     if snapshots is not None and not snapshots.empty:
-        #         snapshots = snapshots.copy()
-        #         snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
-        #         snapshots = snapshots.dropna(subset=["timestamp"])
-        #         snapshots = snapshots[snapshots["timestamp"].dt.year > 2000]  # Filter out weird old dates
-
-        #         # Drop duplicate timestamps, keeping the last entry for each timestamp
-        #         snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
-
-        #         # Debug output (optional, for development)
-        #         st.write("Snapshot Data Preview", snapshots.head(20))
-        #         st.write("Unique timestamps:", snapshots["timestamp"].nunique(), "Total rows:", len(snapshots))
-        #         duplicates = snapshots[snapshots.duplicated(subset=["timestamp"], keep=False)]
-        #         if not duplicates.empty:
-        #             st.warning("Duplicate timestamps found in snapshots!")
-        #             st.dataframe(duplicates)
-
-        #         # Plotly chart for interactivity
-        #         fig_plotly = px.line(
-        #             snapshots,
-        #             x="timestamp",
-        #             y="total_value_usd",
-        #             title="Portfolio Value Over Time",
-        #             markers=True,
-        #             labels={"total_value_usd": "Total Value (USD)", "timestamp": "Date"}
-        #         )
-        #         fig_plotly.update_xaxes(
-        #             tickformat="%Y-%m-%d",  # Format as date
-        #             ticklabelmode="period"
-        #         )
-        #         st.plotly_chart(fig_plotly, use_container_width=True)
-        #         # Matplotlib chart for universal PNG download
-        #         fig, ax = plt.subplots()
-        #         ax.plot(snapshots["timestamp"], snapshots["total_value_usd"], marker='o')
-        #         ax.set_xlabel("Date")
-        #         ax.set_ylabel("Total Value (USD)")
-        #         ax.set_title("Portfolio Value Over Time")
-        #         ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-        #         fig.autofmt_xdate()
-        #         fig.tight_layout()
-        #         buf = io.BytesIO()
-        #         fig.savefig(buf, format="png", bbox_inches="tight")
-        #         buf.seek(0)
-        #         st.download_button(
-        #             "Download Value History (PNG, universal)",
-        #             buf,
-        #             file_name="portfolio_value_history.png",
-        #             mime="image/png"
-        #         )
-        #         plt.close(fig)
-        #     else:
-        #         st.info("No snapshot data available for value history chart.")
 
     def render_data_management(self):
         import pandas as pd
@@ -3149,7 +2978,7 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         from pathlib import Path
         from datetime import datetime
 
-        st.markdown("## ⚙️ Settings & System Status")
+        st.markdown("## ⚙️ Settings")
 
         tab_config, tab_status = st.tabs(["⚙️ Configuration", "🔧 System Status"])
 
@@ -3754,7 +3583,7 @@ Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             "💰 Trade": self.render_trading,
             "🧪 Backtest": self.render_backtesting,
             "🗄️ Database": self.render_data_management,
-            "⚙️ Settings & Status": self.render_settings_and_status,  # <--- NEW
+            "⚙️ Settings": self.render_settings_and_status,
         }
         if selected_page in page_mapping:
             page_mapping[selected_page]()
