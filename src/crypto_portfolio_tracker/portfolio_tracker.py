@@ -2,6 +2,7 @@
 Crypto Portfolio Tracker - Main Class
 Handles API interactions, data processing, analysis, and orchestration.
 """
+
 import os
 import re
 import json
@@ -46,6 +47,7 @@ from .exceptions import NetworkOperationError, NetworkUnavailableError
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
+
 @dataclass
 class TradeResult:
     success: bool
@@ -68,14 +70,16 @@ class CryptoPortfolioTracker:
         # Initialize database with explicit path
         db_path = self.config_manager.get_database_path()
         backup_dir = self.config_manager.get_backup_dir()
-        connection_timeout = self.config.get("database", {}).get("connection_timeout", 30)
+        connection_timeout = self.config.get("database", {}).get(
+            "connection_timeout", 30
+        )
         cleanup_days = self.config.get("database", {}).get("cleanup_days", 90)
 
         self.db_manager = DatabaseManager(
             db_path=db_path,
             backup_dir=backup_dir,
             connection_timeout=connection_timeout,
-            cleanup_days=cleanup_days
+            cleanup_days=cleanup_days,
         )
 
         self.symbol_mappings = self.config_manager.symbol_mapper
@@ -94,15 +98,21 @@ class CryptoPortfolioTracker:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.coingecko_price_cache = Cache(str(self.cache_dir / "coingecko_historical"))
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_historical"))
-        self.fiat_exchange_rate_cache = Cache(str(self.cache_dir / "fiat_exchange_rates"))
+        self.fiat_exchange_rate_cache = Cache(
+            str(self.cache_dir / "fiat_exchange_rates")
+        )
 
         if not self.offline_mode:
             # --- Instantiate our new specialist classes ---
-            self.fetcher = BinanceFetcher(self.binance_client, self.symbol_mappings, self.config)
+            self.fetcher = BinanceFetcher(
+                self.binance_client, self.symbol_mappings, self.config
+            )
         else:
             self.fetcher = None
 
-        self.enricher = PriceEnricher(self.symbol_mappings, self.config, self.coingecko_price_cache)
+        self.enricher = PriceEnricher(
+            self.symbol_mappings, self.config, self.coingecko_price_cache
+        )
         self.excel_exporter = ExcelExporter(self.config)
         self.html_exporter = HtmlExporter(self.config)
         self.csv_exporter = CsvExporter(self.config)
@@ -114,7 +124,9 @@ class CryptoPortfolioTracker:
 
         self.logger.info("Tracker and all components initialized.")
 
-    def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
+    def _init_binance_client(
+        self, api_key: Optional[str] = None, api_secret: Optional[str] = None
+    ) -> Optional[Client]:
         """Initialize and return Binance client with robust session, retries, and time sync."""
 
         if not api_key and not api_secret:
@@ -123,7 +135,9 @@ class CryptoPortfolioTracker:
             api_secret = keys.get("api_secret")
 
         if not api_key or not api_secret:
-            self.logger.warning("Binance API key/secret not found. Binance client disabled.")
+            self.logger.warning(
+                "Binance API key/secret not found. Binance client disabled."
+            )
             return None
 
         try:
@@ -132,12 +146,18 @@ class CryptoPortfolioTracker:
             client_timeout = binance_config.get("timeout", 60)
             recv_window = binance_config.get("recv_window", 20000)
 
-            self.logger.info(f"Initializing Binance client with timeout: {client_timeout}s.")
+            self.logger.info(
+                f"Initializing Binance client with timeout: {client_timeout}s."
+            )
 
-            client = Client(api_key, api_secret, requests_params={"timeout": client_timeout})
+            client = Client(
+                api_key, api_secret, requests_params={"timeout": client_timeout}
+            )
 
             client.RECV_WINDOW = recv_window
-            self.logger.debug(f"Set Binance client recvWindow to {client.RECV_WINDOW}ms.")
+            self.logger.debug(
+                f"Set Binance client recvWindow to {client.RECV_WINDOW}ms."
+            )
 
             # Actively sync time with the server to prevent all recvWindow errors.
             self._sync_binance_client_time(client, context="initialization")
@@ -159,7 +179,9 @@ class CryptoPortfolioTracker:
             self.logger.info("Binance client initialized successfully.")
             return client
         except (ConnectionError, socket.gaierror) as e:
-            raise NetworkUnavailableError("Network unavailable, entering offline mode.") from e
+            raise NetworkUnavailableError(
+                "Network unavailable, entering offline mode."
+            ) from e
         except Exception as e:
             # Other errors (bad API key, etc.) should not trigger offline mode
             raise
@@ -169,17 +191,23 @@ class CryptoPortfolioTracker:
         Reusable utility to synchronize the given Binance client's clock with the server.
         """
         if not client:
-            self.logger.warning(f"Cannot sync time: Binance client for '{context}' is not available.")
+            self.logger.warning(
+                f"Cannot sync time: Binance client for '{context}' is not available."
+            )
             return
         try:
             self.logger.info(f"Synchronizing time for {context}...")
-            server_time = client.get_server_time()['serverTime']
+            server_time = client.get_server_time()["serverTime"]
             local_time = int(time.time() * 1000)
             time_offset = server_time - local_time
             client._server_time_offset = time_offset
-            self.logger.info(f"Time synchronized for {context}. New offset: {time_offset}ms.")
+            self.logger.info(
+                f"Time synchronized for {context}. New offset: {time_offset}ms."
+            )
         except Exception as e:
-            self.logger.error(f"Could not sync time for {context}: {e}. Proceeding with old offset.")
+            self.logger.error(
+                f"Could not sync time for {context}: {e}. Proceeding with old offset."
+            )
 
     def _get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """
@@ -191,19 +219,27 @@ class CryptoPortfolioTracker:
         prices: Dict[str, Optional[float]] = {symbol: 0.0 for symbol in symbols}
         coingecko_config = self.config.get("apis", {}).get("coingecko", {})
 
-        ids_to_fetch = {self.symbol_mappings.get(s.upper()) for s in symbols if self.symbol_mappings.get(s.upper())}
+        ids_to_fetch = {
+            self.symbol_mappings.get(s.upper())
+            for s in symbols
+            if self.symbol_mappings.get(s.upper())
+        }
         if not ids_to_fetch:
             return prices
 
         ids_string = ",".join(list(ids_to_fetch))
-        url = f"{coingecko_config.get("base_url")}/simple/price"
+        url = f"{coingecko_config.get('base_url')}/simple/price"
         params = {"ids": ids_string, "vs_currencies": "usd"}
 
         last_exception = None
-        for attempt in range(3): # Try up to 3 times
+        for attempt in range(3):  # Try up to 3 times
             try:
-                self.logger.debug(f"Fetching current prices for {len(ids_to_fetch)} unique assets...")
-                response = requests.get(url, params=params, timeout=coingecko_config.get("timeout", 30))
+                self.logger.debug(
+                    f"Fetching current prices for {len(ids_to_fetch)} unique assets..."
+                )
+                response = requests.get(
+                    url, params=params, timeout=coingecko_config.get("timeout", 30)
+                )
                 response.raise_for_status()
                 fetched_price_data = response.json()
 
@@ -212,48 +248,68 @@ class CryptoPortfolioTracker:
                     if coin_id in fetched_price_data:
                         prices[symbol] = fetched_price_data[coin_id].get("usd")
 
-                return prices # Return on success
+                return prices  # Return on success
 
             except requests.exceptions.HTTPError as e:
                 last_exception = e
                 if e.response.status_code == 429 and attempt < 2:
-                    self.logger.warning("Rate limited fetching current prices. Waiting 10 seconds before retrying...")
+                    self.logger.warning(
+                        "Rate limited fetching current prices. Waiting 10 seconds before retrying..."
+                    )
                     time.sleep(10)
-                    continue # Go to the next attempt
+                    continue  # Go to the next attempt
                 else:
-                    self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
+                    self.logger.error(
+                        f"Fatal error fetching batch prices from CoinGecko: {e}"
+                    )
                     break
             except requests.exceptions.RequestException as e:
                 last_exception = e
-                self.logger.error(f"Fatal error fetching batch prices from CoinGecko: {e}")
+                self.logger.error(
+                    f"Fatal error fetching batch prices from CoinGecko: {e}"
+                )
                 break
 
         # If we reach here, all retries failed
-        raise NetworkOperationError(f"Failed to fetch current prices from CoinGecko after retries: {last_exception}")
+        raise NetworkOperationError(
+            f"Failed to fetch current prices from CoinGecko after retries: {last_exception}"
+        )
 
-    def _get_coingecko_historical_price(self, coin_id: str, date_str: str) -> Optional[float]:
+    def _get_coingecko_historical_price(
+        self, coin_id: str, date_str: str
+    ) -> Optional[float]:
         """Fetch historical price from CoinGecko for a specific date, using disk cache."""
         if not coin_id or not date_str:
-            self.logger.error("Coin ID or date string is missing for CoinGecko historical price fetch.")
+            self.logger.error(
+                "Coin ID or date string is missing for CoinGecko historical price fetch."
+            )
             return None
 
         cache_key = f"{coin_id}_{date_str}"
         cached_price = self.coingecko_historical_price_disk_cache.get(cache_key)
         if cached_price is not None:
-            self.logger.debug(f"Disk Cache HIT for CoinGecko: {coin_id} on {date_str} -> ${cached_price:.6f}")
+            self.logger.debug(
+                f"Disk Cache HIT for CoinGecko: {coin_id} on {date_str} -> ${cached_price:.6f}"
+            )
             return cached_price
 
-        self.logger.debug(f"Disk Cache MISS for CoinGecko: {coin_id} on {date_str}. Fetching from API.")
+        self.logger.debug(
+            f"Disk Cache MISS for CoinGecko: {coin_id} on {date_str}. Fetching from API."
+        )
 
         base_url = self.coingecko_api.get("base_url")
         timeout = self.coingecko_api.get("timeout", 30)
 
         try:
-            parsed_date = pd.to_datetime(date_str, errors="coerce", dayfirst=True).date()
+            parsed_date = pd.to_datetime(
+                date_str, errors="coerce", dayfirst=True
+            ).date()
             today = datetime.datetime.now(timezone.utc).date()
 
             if parsed_date >= today:
-                self.logger.warning(f"Requested date {date_str} is today or in the future. Fetching previous day's data instead.")
+                self.logger.warning(
+                    f"Requested date {date_str} is today or in the future. Fetching previous day's data instead."
+                )
                 parsed_date = today - timedelta(days=1)
 
             api_date_str = parsed_date.strftime("%d-%m-%Y")
@@ -263,7 +319,9 @@ class CryptoPortfolioTracker:
             self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600)
             return None
 
-        url = f"{base_url}/coins/{coin_id}/history?date={api_date_str}&localization=false"
+        url = (
+            f"{base_url}/coins/{coin_id}/history?date={api_date_str}&localization=false"
+        )
 
         max_retries = 3
         initial_wait_seconds = 60
@@ -281,47 +339,73 @@ class CryptoPortfolioTracker:
                     self.coingecko_historical_price_disk_cache.set(cache_key, price)
                     return float(price)
                 else:
-                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
+                    self.coingecko_historical_price_disk_cache.set(
+                        cache_key, None, expire=3600 * 24
+                    )
                     return None
             except requests.exceptions.HTTPError as e:
                 last_exception = e
                 should_retry = False
                 if e.response.status_code == 429:
                     should_retry = True
-                    self.logger.error(f"Rate limited (429) by CoinGecko for {coin_id} on {api_date_str}.")
+                    self.logger.error(
+                        f"Rate limited (429) by CoinGecko for {coin_id} on {api_date_str}."
+                    )
                 elif e.response.status_code in server_error_codes_to_retry:
                     should_retry = True
-                    self.logger.error(f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {api_date_str}.")
+                    self.logger.error(
+                        f"Server error ({e.response.status_code}) from CoinGecko for {coin_id} on {api_date_str}."
+                    )
 
                 if should_retry and retries_left > 1:
                     wait_time = initial_wait_seconds * (max_retries - retries_left + 1)
-                    self.logger.info(f"Waiting {wait_time}s before retry... ({retries_left-1} retries left)")
+                    self.logger.info(
+                        f"Waiting {wait_time}s before retry... ({retries_left - 1} retries left)"
+                    )
                     time.sleep(wait_time)
                     retries_left -= 1
                 else:
                     if e.response.status_code == 404:
-                        self.logger.warning(f"No historical data found on CoinGecko (404) for {coin_id} on {api_date_str}.")
+                        self.logger.warning(
+                            f"No historical data found on CoinGecko (404) for {coin_id} on {api_date_str}."
+                        )
                     else:
-                        self.logger.error(f"Failed to fetch CoinGecko historical price for {coin_id} on {api_date_str}: {e}", exc_info=True)
-                    self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600*24)
+                        self.logger.error(
+                            f"Failed to fetch CoinGecko historical price for {coin_id} on {api_date_str}: {e}",
+                            exc_info=True,
+                        )
+                    self.coingecko_historical_price_disk_cache.set(
+                        cache_key, None, expire=3600 * 24
+                    )
                     return None
             except Exception as e:
                 last_exception = e
-                self.logger.error(f"Unexpected error fetching CoinGecko historical price for {coin_id}: {e}", exc_info=True)
-                self.coingecko_historical_price_disk_cache.set(cache_key, None, expire=3600)
+                self.logger.error(
+                    f"Unexpected error fetching CoinGecko historical price for {coin_id}: {e}",
+                    exc_info=True,
+                )
+                self.coingecko_historical_price_disk_cache.set(
+                    cache_key, None, expire=3600
+                )
                 break
 
         # If we reach here, all retries failed
-        raise NetworkOperationError(f"Failed to fetch historical price for {coin_id} on {date_str} after retries: {last_exception}")
+        raise NetworkOperationError(
+            f"Failed to fetch historical price for {coin_id} on {date_str} after retries: {last_exception}"
+        )
 
-    def _get_historical_fiat_exchange_rate(self, date_str_orig: str, from_currency: str, to_currency: str) -> Optional[float]:
+    def _get_historical_fiat_exchange_rate(
+        self, date_str_orig: str, from_currency: str, to_currency: str
+    ) -> Optional[float]:
         """
         Fetches the historical exchange rate using yfinance.
         date_str_orig should be in "YYYY-MM-DD" or "DD-MM-YYYY".
         Returns how many "to_currency" 1 unit of "from_currency" is worth.
         """
         if not date_str_orig or not from_currency or not to_currency:
-            self.logger.error("Date, from_currency, or to_currency missing for fiat exchange rate lookup.")
+            self.logger.error(
+                "Date, from_currency, or to_currency missing for fiat exchange rate lookup."
+            )
             return None
 
         if from_currency.upper() == to_currency.upper():
@@ -331,15 +415,21 @@ class CryptoPortfolioTracker:
             target_dt = pd.to_datetime(date_str_orig)
             api_date_str = target_dt.strftime("%Y-%m-%d")
         except ValueError:
-            self.logger.error(f"Invalid date format '{date_str_orig}'. Could not parse for yfinance.")
+            self.logger.error(
+                f"Invalid date format '{date_str_orig}'. Could not parse for yfinance."
+            )
             return None
 
         cache_key = f"yfinance_{api_date_str}_{from_currency}_{to_currency}"
         if cache_key in self.fiat_exchange_rate_cache:
-            self.logger.debug(f"Cache HIT for yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}.")
+            self.logger.debug(
+                f"Cache HIT for yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}."
+            )
             return self.fiat_exchange_rate_cache[cache_key]
 
-        self.logger.debug(f"Cache MISS. Fetching yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}.")
+        self.logger.debug(
+            f"Cache MISS. Fetching yfinance fiat rate: {from_currency}->{to_currency} on {api_date_str}."
+        )
 
         ticker_symbol = f"{from_currency.upper()}{to_currency.upper()}=X"
         rate = None
@@ -348,16 +438,28 @@ class CryptoPortfolioTracker:
         end_date_fetch = (target_dt + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
 
         try:
-            self.logger.debug(f"yfinance download: Ticker='{ticker_symbol}', Start='{start_date_fetch}', End='{end_date_fetch}'")
-            data_window = yf.download(ticker_symbol, start=start_date_fetch, end=end_date_fetch, progress=False, auto_adjust=True)
+            self.logger.debug(
+                f"yfinance download: Ticker='{ticker_symbol}', Start='{start_date_fetch}', End='{end_date_fetch}'"
+            )
+            data_window = yf.download(
+                ticker_symbol,
+                start=start_date_fetch,
+                end=end_date_fetch,
+                progress=False,
+                auto_adjust=True,
+            )
 
             if data_window.empty:
-                self.logger.warning(f"No data returned by yfinance for {ticker_symbol} in window {start_date_fetch} to {end_date_fetch}.")
+                self.logger.warning(
+                    f"No data returned by yfinance for {ticker_symbol} in window {start_date_fetch} to {end_date_fetch}."
+                )
             else:
                 data_window = data_window.sort_index()
                 closest_price_intermediate = data_window["Close"].asof(target_dt)
 
-                self.logger.debug(f"yfinance .asof() result type: {type(closest_price_intermediate)}, value: {closest_price_intermediate}")
+                self.logger.debug(
+                    f"yfinance .asof() result type: {type(closest_price_intermediate)}, value: {closest_price_intermediate}"
+                )
 
                 closest_price_scalar = None
                 if isinstance(closest_price_intermediate, pd.Series):
@@ -369,25 +471,42 @@ class CryptoPortfolioTracker:
                     closest_price_scalar = closest_price_intermediate
 
                 if pd.notna(closest_price_scalar):
-                    actual_price_date_idx = data_window.index.get_indexer([target_dt], method="ffill")
-                    if actual_price_date_idx[0] != -1 :
+                    actual_price_date_idx = data_window.index.get_indexer(
+                        [target_dt], method="ffill"
+                    )
+                    if actual_price_date_idx[0] != -1:
                         actual_price_date = data_window.index[actual_price_date_idx[0]]
                         rate = float(closest_price_scalar)
-                        self.logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using data from {actual_price_date.strftime("%Y-%m-%d")}): {rate}")
+                        self.logger.debug(
+                            f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using data from {actual_price_date.strftime('%Y-%m-%d')}): {rate}"
+                        )
                     else:
-                        self.logger.warning(f"Could not determine actual date for 'asof' price for {ticker_symbol} on {api_date_str}, but got a value. Using asof value directly.")
+                        self.logger.warning(
+                            f"Could not determine actual date for 'asof' price for {ticker_symbol} on {api_date_str}, but got a value. Using asof value directly."
+                        )
                         rate = float(closest_price_scalar)
-                        self.logger.debug(f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using .asof() value directly): {rate}")
+                        self.logger.debug(
+                            f"Fetched yfinance rate for {from_currency}->{to_currency} (for {api_date_str}, using .asof() value directly): {rate}"
+                        )
                 else:
-                    self.logger.warning(f"No valid data found for {ticker_symbol} on or before {api_date_str} in the fetched window using .asof() (result was NaN or pd.NA).")
+                    self.logger.warning(
+                        f"No valid data found for {ticker_symbol} on or before {api_date_str} in the fetched window using .asof() (result was NaN or pd.NA)."
+                    )
 
         except Exception as e:
-            self.logger.error(f"Error during yfinance download or processing for {ticker_symbol} on {api_date_str}: {e}", exc_info=True)
+            self.logger.error(
+                f"Error during yfinance download or processing for {ticker_symbol} on {api_date_str}: {e}",
+                exc_info=True,
+            )
             rate = None
 
         finally:
             self.fiat_exchange_rate_cache[cache_key] = rate
-            yf_delay_ms = self.config.get("apis", {}).get("yfinance", {}).get("request_delay_ms", 200)
+            yf_delay_ms = (
+                self.config.get("apis", {})
+                .get("yfinance", {})
+                .get("request_delay_ms", 200)
+            )
             if yf_delay_ms > 0:
                 time.sleep(yf_delay_ms / 1000.0)
 
@@ -400,7 +519,9 @@ class CryptoPortfolioTracker:
         """
         symbol_upper = symbol.upper()
         if symbol_upper in self.stablecoin_symbols:
-            self.logger.debug(f"Skipping yfinance ticker for stablecoin: {symbol_upper}")
+            self.logger.debug(
+                f"Skipping yfinance ticker for stablecoin: {symbol_upper}"
+            )
             return None
 
         # Add more specific mappings if needed, e.g., RENDER might be RNDR-USD
@@ -415,10 +536,14 @@ class CryptoPortfolioTracker:
         try:
             with open(self.strategy_state_path, "r") as f:
                 states = json.load(f)
-                self.logger.info(f"Loaded strategy states from {self.strategy_state_path}")
+                self.logger.info(
+                    f"Loaded strategy states from {self.strategy_state_path}"
+                )
                 return states
         except (json.JSONDecodeError, IOError) as e:
-            self.logger.error(f"Error loading strategy state file: {e}. Starting fresh.")
+            self.logger.error(
+                f"Error loading strategy state file: {e}. Starting fresh."
+            )
             return {}
 
     def _save_strategy_state(self):
@@ -444,17 +569,23 @@ class CryptoPortfolioTracker:
                 return None
 
             filters = {f["filterType"]: f for f in symbol_info["filters"]}
-            self.yfinance_disk_cache.set(cache_key, filters, expire=3600 * 24) # Cache for 24 hours
+            self.yfinance_disk_cache.set(
+                cache_key, filters, expire=3600 * 24
+            )  # Cache for 24 hours
             return filters
         except Exception as e:
             self.logger.error(f"Could not fetch symbol info for {symbol}: {e}")
             return None
 
-    def _adjust_quantity_to_lot_size(self, symbol: str, quantity: float) -> Optional[float]:
+    def _adjust_quantity_to_lot_size(
+        self, symbol: str, quantity: float
+    ) -> Optional[float]:
         """Rounds the quantity down to the nearest valid step size for the LOT_SIZE filter."""
         filters = self._get_symbol_filters(symbol)
         if not filters or "LOT_SIZE" not in filters:
-            self.logger.warning(f"Could not get LOT_SIZE filter for {symbol}. Cannot adjust quantity.")
+            self.logger.warning(
+                f"Could not get LOT_SIZE filter for {symbol}. Cannot adjust quantity."
+            )
             return None
 
         step_size_str = filters["LOT_SIZE"].get("stepSize")
@@ -468,13 +599,17 @@ class CryptoPortfolioTracker:
             precision = 0
 
         # Floor the quantity to the required precision
-        factor = 10 ** precision
+        factor = 10**precision
         adjusted_quantity = (int(quantity * factor)) / factor
 
-        self.logger.info(f"Adjusted quantity for {symbol} from {quantity} to {adjusted_quantity} (precision: {precision})")
+        self.logger.info(
+            f"Adjusted quantity for {symbol} from {quantity} to {adjusted_quantity} (precision: {precision})"
+        )
         return adjusted_quantity
 
-    def _redeem_from_earn_if_needed(self, asset: str, required_amount: float, is_live: bool) -> bool:
+    def _redeem_from_earn_if_needed(
+        self, asset: str, required_amount: float, is_live: bool
+    ) -> bool:
         """
         Checks for sufficient spot balance. If needed, it finds the correct productId
         and redeems from Simple Earn only if in live mode.
@@ -485,15 +620,23 @@ class CryptoPortfolioTracker:
             free_spot_balance = float(spot_balance_info.get("free", 0.0))
 
             if free_spot_balance >= required_amount:
-                self.logger.info(f"Sufficient {asset} balance in Spot wallet. No action needed.")
+                self.logger.info(
+                    f"Sufficient {asset} balance in Spot wallet. No action needed."
+                )
                 return True
 
             shortfall = required_amount - free_spot_balance
-            self.logger.warning(f"Shortfall of {shortfall:.8f} {asset}. Checking Simple Earn.")
+            self.logger.warning(
+                f"Shortfall of {shortfall:.8f} {asset}. Checking Simple Earn."
+            )
 
-            positions = self.binance_client.get_simple_earn_flexible_product_position(asset=asset)
+            positions = self.binance_client.get_simple_earn_flexible_product_position(
+                asset=asset
+            )
             if not positions or not positions.get("rows"):
-                print(f"❌ No active Simple Earn Flexible positions found for {asset} to redeem from.")
+                print(
+                    f"❌ No active Simple Earn Flexible positions found for {asset} to redeem from."
+                )
                 return False
 
             product_to_redeem_from = positions["rows"][0]
@@ -501,107 +644,172 @@ class CryptoPortfolioTracker:
             available_to_redeem = float(product_to_redeem_from.get("totalAmount", 0.0))
 
             if shortfall > available_to_redeem:
-                print(f"❌ Cannot redeem required amount. Need {shortfall:.8f} {asset}, but only {available_to_redeem:.8f} is available in Simple Earn.")
+                print(
+                    f"❌ Cannot redeem required amount. Need {shortfall:.8f} {asset}, but only {available_to_redeem:.8f} is available in Simple Earn."
+                )
                 return False
 
             if is_live:
-                print(f"⚠️ Insufficient Spot balance. Attempting to redeem {shortfall:.8f} {asset} from product {product_id}.")
-                self.logger.info(f"LIVE MODE: Attempting to redeem {shortfall:.8f} {asset} from productId {product_id}.")
-                redemption_result = self.binance_client.redeem_simple_earn_flexible_product(
-                    productId=product_id,
-                    amount=f"{shortfall:.8f}"
+                print(
+                    f"⚠️ Insufficient Spot balance. Attempting to redeem {shortfall:.8f} {asset} from product {product_id}."
+                )
+                self.logger.info(
+                    f"LIVE MODE: Attempting to redeem {shortfall:.8f} {asset} from productId {product_id}."
+                )
+                redemption_result = (
+                    self.binance_client.redeem_simple_earn_flexible_product(
+                        productId=product_id, amount=f"{shortfall:.8f}"
+                    )
                 )
                 if redemption_result and redemption_result.get("success"):
-                    self.logger.info(f"Successfully initiated LIVE redemption. Waiting 5 seconds...")
-                    print(f"✅ Redemption initiated for {shortfall:.8f} {asset}. Waiting 5 seconds...")
+                    self.logger.info(
+                        f"Successfully initiated LIVE redemption. Waiting 5 seconds..."
+                    )
+                    print(
+                        f"✅ Redemption initiated for {shortfall:.8f} {asset}. Waiting 5 seconds..."
+                    )
                     time.sleep(5)
-                    return True # Assume success and let the trade proceed
+                    return True  # Assume success and let the trade proceed
                 else:
-                    self.logger.error(f"Failed to redeem {asset} from {product_id}: {redemption_result}")
+                    self.logger.error(
+                        f"Failed to redeem {asset} from {product_id}: {redemption_result}"
+                    )
                     print(f"❌ LIVE redemption FAILED for {asset}. See logs.")
                     return False
             else:
                 # In Dry Run mode, we only simulate the check.
-                print(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from Simple Earn product {product_id}.")
-                self.logger.info(f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}.")
-                return True # Return True to allow the simulated trade to continue
+                print(
+                    f"DRY RUN: Would redeem {shortfall:.8f} {asset} from Simple Earn product {product_id}."
+                )
+                self.logger.info(
+                    f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}."
+                )
+                return True  # Return True to allow the simulated trade to continue
 
         except BinanceAPIException as e:
-            self.logger.error(f"API Error during redemption process for {asset}: {e}", exc_info=True)
-            print(f"❌ An API Error occurred when trying to process redemption for {asset}: {e.message}")
+            self.logger.error(
+                f"API Error during redemption process for {asset}: {e}", exc_info=True
+            )
+            print(
+                f"❌ An API Error occurred when trying to process redemption for {asset}: {e.message}"
+            )
             return False
         except Exception as e:
-            self.logger.error(f"An unexpected error occurred during redemption check for {asset}: {e}", exc_info=True)
+            self.logger.error(
+                f"An unexpected error occurred during redemption check for {asset}: {e}",
+                exc_info=True,
+            )
             return False
 
     def _execute_directional_trade(self, trade: Dict[str, Any], client: Client):
         """Helper function to execute a single directional BUY or SELL trade."""
         symbol = trade["Symbol"]
         signal = trade["Signal"]
-        size = trade.get("Size", 1.0) # Default to 100% if not provided
+        size = trade.get("Size", 1.0)  # Default to 100% if not provided
         trade_ticker = f"{symbol}USDT"
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
         is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
 
-        self.logger.info(f"Executing {signal} for {symbol} (Size: {size:.2%}) on account via directional strategy. LIVE: {is_live}")
+        self.logger.info(
+            f"Executing {signal} for {symbol} (Size: {size:.2%}) on account via directional strategy. LIVE: {is_live}"
+        )
 
         try:
             if signal == "BUY":
-                usdt_balance = float(client.get_asset_balance(asset="USDT").get("free", 0.0))
+                usdt_balance = float(
+                    client.get_asset_balance(asset="USDT").get("free", 0.0)
+                )
                 trade_amount_usd = usdt_balance * size
 
                 if trade_amount_usd < min_trade_usd:
-                    print(f"⚠️ SKIPPING BUY for {symbol}: Calculated trade size (${trade_amount_usd:,.2f}) is below minimum of ${min_trade_usd:,.2f}.")
+                    print(
+                        f"⚠️ SKIPPING BUY for {symbol}: Calculated trade size (${trade_amount_usd:,.2f}) is below minimum of ${min_trade_usd:,.2f}."
+                    )
                     return
 
-                print(f"\nPreparing MARKET BUY for ${trade_amount_usd:,.2f} of {symbol}...")
+                print(
+                    f"\nPreparing MARKET BUY for ${trade_amount_usd:,.2f} of {symbol}..."
+                )
 
                 if is_live:
-                    order = client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{trade_amount_usd:.2f}")
+                    order = client.order_market_buy(
+                        symbol=trade_ticker, quoteOrderQty=f"{trade_amount_usd:.2f}"
+                    )
                     print(f"✅ LIVE BUY ORDER PLACED: {order}")
                     self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
                 else:
-                    print(f"✅ [DRY RUN] Market BUY order for ${trade_amount_usd:,.2f} of {trade_ticker} was not placed.")
-                    self.logger.info(f"[DRY RUN] Market BUY order for {trade_ticker} was not placed.")
+                    print(
+                        f"✅ [DRY RUN] Market BUY order for ${trade_amount_usd:,.2f} of {trade_ticker} was not placed."
+                    )
+                    self.logger.info(
+                        f"[DRY RUN] Market BUY order for {trade_ticker} was not placed."
+                    )
 
             elif signal == "SELL":
-                asset_balance = float(client.get_asset_balance(asset=symbol).get("free", 0.0))
+                asset_balance = float(
+                    client.get_asset_balance(asset=symbol).get("free", 0.0)
+                )
                 trade_quantity = asset_balance * size
                 current_price = self._get_current_prices([symbol]).get(symbol, 0)
 
                 if (trade_quantity * current_price) < min_trade_usd:
-                    print(f"⚠️ SKIPPING SELL for {symbol}: Position value is below minimum trade size.")
+                    print(
+                        f"⚠️ SKIPPING SELL for {symbol}: Position value is below minimum trade size."
+                    )
                     return
 
-                print(f"\nPreparing MARKET SELL for {trade_quantity:.8f} {symbol} ({size:.0%} of holding)...")
+                print(
+                    f"\nPreparing MARKET SELL for {trade_quantity:.8f} {symbol} ({size:.0%} of holding)..."
+                )
 
                 if is_live:
-                    order = client.order_market_sell(symbol=trade_ticker, quantity=f"{trade_quantity:.8f}")
+                    order = client.order_market_sell(
+                        symbol=trade_ticker, quantity=f"{trade_quantity:.8f}"
+                    )
                     print(f"✅ LIVE SELL ORDER PLACED: {order}")
                     self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                 else:
-                    print(f"✅ [DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed.")
-                    self.logger.info(f"[DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed.")
+                    print(
+                        f"✅ [DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed."
+                    )
+                    self.logger.info(
+                        f"[DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed."
+                    )
 
         except BinanceAPIException as e:
-            print(f"❌ {("LIVE" if is_live else "DRY RUN")} {signal} FAILED for {symbol}: {e}")
-            self.logger.error(f"{("LIVE" if is_live else "DRY RUN")} {signal} FAILED for {symbol}: {e}")
+            print(
+                f"❌ {('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}"
+            )
+            self.logger.error(
+                f"{('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}"
+            )
         except Exception as e:
-            self.logger.error(f"An unexpected error occurred executing directional trade for {symbol}: {e}", exc_info=True)
+            self.logger.error(
+                f"An unexpected error occurred executing directional trade for {symbol}: {e}",
+                exc_info=True,
+            )
             print(f"❌ Unexpected Error for {symbol}: {e}")
 
-    async def execute_rebalancing_trades_core(self, suggestions_df, earn_balances, interactive, auto_confirm=False) -> TradeResult:
+    async def execute_rebalancing_trades_core(
+        self, suggestions_df, earn_balances, interactive, auto_confirm=False
+    ) -> TradeResult:
         result = TradeResult(success=False)
         trades_executed_count = 0
         if suggestions_df.empty or "Signal" not in suggestions_df.columns:
             result.messages.append("No rebalancing suggestions to execute.")
             return result
 
-        trades_to_execute = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])]
-        trades_to_execute = trades_to_execute.sort_values(by=["Signal", "Drift (pts)"], ascending=[False, True])
+        trades_to_execute = suggestions_df[
+            suggestions_df["Signal"].isin(["BUY", "SELL"])
+        ]
+        trades_to_execute = trades_to_execute.sort_values(
+            by=["Signal", "Drift (pts)"], ascending=[False, True]
+        )
 
         if trades_to_execute.empty:
-            result.messages.append("\n✅ No BUY or SELL actions suggested. Nothing to execute.")
+            result.messages.append(
+                "\n✅ No BUY or SELL actions suggested. Nothing to execute."
+            )
             return result
 
         portfolio_config = self.config.get("portfolio", {})
@@ -612,53 +820,81 @@ class CryptoPortfolioTracker:
         all_trade_symbols = set(trades_to_execute["Symbol"].unique()) | {"USDT"}
         for symbol in all_trade_symbols:
             try:
-                spot_bal = float(self.binance_client.get_asset_balance(asset=symbol).get("free", 0.0))
+                spot_bal = float(
+                    self.binance_client.get_asset_balance(asset=symbol).get("free", 0.0)
+                )
                 earn_bal = earn_balances.get(symbol, 0.0)
                 simulated_balances[symbol] = spot_bal + earn_bal
-                self.logger.info(f"Initialized simulated balance for {symbol}: {simulated_balances[symbol]:.8f}")
+                self.logger.info(
+                    f"Initialized simulated balance for {symbol}: {simulated_balances[symbol]:.8f}"
+                )
             except Exception as e:
                 self.logger.error(f"Could not fetch balance for {symbol}: {e}")
                 simulated_balances[symbol] = 0.0
 
-        result.messages.append("\n" + "="*80)
+        result.messages.append("\n" + "=" * 80)
         if is_live:
             result.messages.append("🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴")
         else:
             result.messages.append("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡🟡🟡")
-        result.messages.append("="*80)
+        result.messages.append("=" * 80)
 
         items_to_process = []
         if not interactive:
             if auto_confirm:
                 items_to_process = list(trades_to_execute.iterrows())
             else:
-                result.messages.append("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-                result.messages.append(trades_to_execute[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
-                result.messages.append("="*80)
-                confirm = input("Type EXECUTE ALL to proceed with all trades listed above: ")
+                result.messages.append(
+                    "🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨"
+                )
+                result.messages.append(
+                    trades_to_execute[
+                        ["Symbol", "Signal", "Suggested Action Detail"]
+                    ].to_string(index=False)
+                )
+                result.messages.append("=" * 80)
+                confirm = input(
+                    "Type EXECUTE ALL to proceed with all trades listed above: "
+                )
                 if confirm == "EXECUTE ALL":
                     self.logger.info("User confirmed bulk trade execution.")
                     items_to_process = list(trades_to_execute.iterrows())
                 else:
-                    result.messages.append("🛑 Bulk trade execution cancelled by user."); return result
+                    result.messages.append("🛑 Bulk trade execution cancelled by user.")
+                    return result
         else:
-            result.messages.append("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
+            result.messages.append(
+                "👀 Entering interactive confirmation mode. You will be prompted for each trade."
+            )
             for index, row in trades_to_execute.iterrows():
-                result.messages.append("\n" + "-"*80)
+                result.messages.append("\n" + "-" * 80)
                 result.messages.append("🚨 PROPOSED TRADE - PLEASE REVIEW CAREFULLY 🚨")
-                result.messages.append(pd.DataFrame([row])[["Symbol", "Signal", "Suggested Action Detail"]].to_string(index=False))
+                result.messages.append(
+                    pd.DataFrame([row])[
+                        ["Symbol", "Signal", "Suggested Action Detail"]
+                    ].to_string(index=False)
+                )
                 try:
-                    confirm_one = input(f"Approve this trade for {row["Symbol"]}? Type YES to confirm: ").upper().strip()
+                    confirm_one = (
+                        input(
+                            f"Approve this trade for {row['Symbol']}? Type YES to confirm: "
+                        )
+                        .upper()
+                        .strip()
+                    )
                     if confirm_one == "YES":
-                        self.logger.info(f"User approved trade for {row["Symbol"]}.")
+                        self.logger.info(f"User approved trade for {row['Symbol']}.")
                         items_to_process.append((index, row))
                     else:
-                        self.logger.info(f"User skipped trade for {row["Symbol"]}.")
-                        result.messages.append(f"Skipping trade for {row["Symbol"]}.")
+                        self.logger.info(f"User skipped trade for {row['Symbol']}.")
+                        result.messages.append(f"Skipping trade for {row['Symbol']}.")
                 except KeyboardInterrupt:
-                    result.messages.append("\n🛑 Trade execution cancelled by user."); return result
-            result.messages.append("="*80)
-            result.messages.append(f"Executing {len(items_to_process)} approved trade(s)...")
+                    result.messages.append("\n🛑 Trade execution cancelled by user.")
+                    return result
+            result.messages.append("=" * 80)
+            result.messages.append(
+                f"Executing {len(items_to_process)} approved trade(s)..."
+            )
 
         for _, row in items_to_process:
             symbol = row["Symbol"]
@@ -668,86 +904,135 @@ class CryptoPortfolioTracker:
             coin_quantity = row.get("action_coin_quantity", 0.0)
 
             if usd_value < min_trade_usd:
-                result.messages.append(f"\n⚠️ SKIPPING {signal} for {symbol}: Suggested trade value (~${usd_value:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                result.messages.append(
+                    f"\n⚠️ SKIPPING {signal} for {symbol}: Suggested trade value (~${usd_value:,.2f}) is below the minimum of ${min_trade_usd:,.2f}."
+                )
                 continue
 
             try:
                 if signal == "SELL":
                     if coin_quantity > simulated_balances.get(symbol, 0.0):
-                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({coin_quantity:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f}).")
+                        result.messages.append(
+                            f"⚠️ SKIPPING SELL for {symbol}: Required quantity ({coin_quantity:.8f}) exceeds simulated available balance ({simulated_balances.get(symbol, 0.0):.8f})."
+                        )
                         continue
 
-                    adjusted_quantity = self._adjust_quantity_to_lot_size(trade_ticker, coin_quantity)
+                    adjusted_quantity = self._adjust_quantity_to_lot_size(
+                        trade_ticker, coin_quantity
+                    )
                     if adjusted_quantity is None or adjusted_quantity <= 0:
-                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol}: Adjusted quantity is zero or invalid after applying lot size rules.")
+                        result.messages.append(
+                            f"⚠️ SKIPPING SELL for {symbol}: Adjusted quantity is zero or invalid after applying lot size rules."
+                        )
                         continue
 
                     current_price = self._get_current_prices([symbol]).get(symbol, 0)
                     final_notional_value = adjusted_quantity * current_price
                     if final_notional_value < min_trade_usd:
-                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol}: Final trade value (~${final_notional_value:,.2f}) is below minimum of ${min_trade_usd:,.2f} after applying exchange rules.")
+                        result.messages.append(
+                            f"⚠️ SKIPPING SELL for {symbol}: Final trade value (~${final_notional_value:,.2f}) is below minimum of ${min_trade_usd:,.2f} after applying exchange rules."
+                        )
                         continue
 
-                    if not self._redeem_from_earn_if_needed(asset=symbol, required_amount=adjusted_quantity, is_live=is_live):
-                        result.messages.append(f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure.")
+                    if not self._redeem_from_earn_if_needed(
+                        asset=symbol, required_amount=adjusted_quantity, is_live=is_live
+                    ):
+                        result.messages.append(
+                            f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure."
+                        )
                         continue
 
-                    result.messages.append(f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
+                    result.messages.append(
+                        f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}..."
+                    )
                     if is_live:
                         try:
                             result.messages.append("🚀 PLACING LIVE ORDER...")
-                            order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}")
+                            order = self.binance_client.order_market_sell(
+                                symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}"
+                            )
                             result.messages.append(f"✅ LIVE SELL ORDER PLACED.")
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             simulated_balances[symbol] -= adjusted_quantity
-                            simulated_balances["USDT"] += float(order.get("cummulativeQuoteQty", 0.0))
-                            self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances["USDT"]:.2f}")
+                            simulated_balances["USDT"] += float(
+                                order.get("cummulativeQuoteQty", 0.0)
+                            )
+                            self.logger.info(
+                                f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}"
+                            )
                             trades_executed_count += 1
                         except BinanceAPIException as e:
-                            result.errors.append(f"❌ LIVE SELL FAILED for {symbol}: {e}")
+                            result.errors.append(
+                                f"❌ LIVE SELL FAILED for {symbol}: {e}"
+                            )
                             self.logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
                     else:
                         result.messages.append("✅ (Dry Run) Trade was not placed.")
 
                 elif signal == "BUY":
                     if usd_value > simulated_balances.get("USDT", 0.0):
-                        result.messages.append(f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get("USDT", 0.0):,.2f}).")
+                        result.messages.append(
+                            f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get('USDT', 0.0):,.2f})."
+                        )
                         continue
 
-                    if not self._redeem_from_earn_if_needed(asset="USDT", required_amount=usd_value, is_live=is_live):
-                        result.messages.append(f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check.")
+                    if not self._redeem_from_earn_if_needed(
+                        asset="USDT", required_amount=usd_value, is_live=is_live
+                    ):
+                        result.messages.append(
+                            f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check."
+                        )
                         continue
 
-                    result.messages.append(f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}...")
+                    result.messages.append(
+                        f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}..."
+                    )
                     if is_live:
                         try:
                             result.messages.append("🚀 PLACING LIVE ORDER...")
-                            order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}")
+                            order = self.binance_client.order_market_buy(
+                                symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}"
+                            )
                             result.messages.append(f"✅ LIVE BUY ORDER PLACED.")
                             self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
-                            simulated_balances["USDT"] -= float(order.get("cummulativeQuoteQty", 0.0))
-                            simulated_balances[symbol] = simulated_balances.get(symbol, 0.0) + float(order.get("executedQty", 0.0))
-                            self.logger.info(f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances["USDT"]:.2f}")
+                            simulated_balances["USDT"] -= float(
+                                order.get("cummulativeQuoteQty", 0.0)
+                            )
+                            simulated_balances[symbol] = simulated_balances.get(
+                                symbol, 0.0
+                            ) + float(order.get("executedQty", 0.0))
+                            self.logger.info(
+                                f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}"
+                            )
                             trades_executed_count += 1
                         except BinanceAPIException as e:
-                            result.errors.append(f"❌ LIVE BUY FAILED for {symbol}: {e}")
+                            result.errors.append(
+                                f"❌ LIVE BUY FAILED for {symbol}: {e}"
+                            )
                             self.logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
                     else:
                         result.messages.append("✅ (Dry Run) Trade was not placed.")
 
             except Exception as e:
-                self.logger.error(f"An unexpected error occurred executing trade for {symbol}: {e}", exc_info=True)
+                self.logger.error(
+                    f"An unexpected error occurred executing trade for {symbol}: {e}",
+                    exc_info=True,
+                )
                 result.errors.append(f"❌ Unexpected Error for {symbol}: {e}")
 
         if trades_executed_count > 0:
-            result.messages.append(f"\n🎉 Rebalancing execution complete. {trades_executed_count} trade(s) processed.")
+            result.messages.append(
+                f"\n🎉 Rebalancing execution complete. {trades_executed_count} trade(s) processed."
+            )
         else:
             result.messages.append("\nNo trades were executed.")
         result.success = trades_executed_count > 0
         result.data["trades_executed"] = trades_executed_count
         return result
 
-    async def execute_manual_trade_core(self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live) -> TradeResult:
+    async def execute_manual_trade_core(
+        self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
+    ) -> TradeResult:
         result = TradeResult(success=False)
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
         try:
@@ -756,15 +1041,21 @@ class CryptoPortfolioTracker:
                 if not is_quote_qty:
                     prices = self._get_current_prices([symbol])
                     if not prices.get(symbol):
-                        result.errors.append(f"Could not fetch price for {symbol} to calculate trade value.")
+                        result.errors.append(
+                            f"Could not fetch price for {symbol} to calculate trade value."
+                        )
                         return result
                     usdt_to_spend = amount * prices[symbol]
                 if usdt_to_spend < min_trade_usd:
-                    result.errors.append(f"SKIPPING BUY for {symbol}: Required value (~${usdt_to_spend:,.2f}) is below the minimum of ${min_trade_usd:,.2f}.")
+                    result.errors.append(
+                        f"SKIPPING BUY for {symbol}: Required value (~${usdt_to_spend:,.2f}) is below the minimum of ${min_trade_usd:,.2f}."
+                    )
                     return result
                 result.messages.append(f"Preparing MARKET BUY for {symbol}...")
                 if is_live:
-                    order = self.binance_client.order_market_buy(symbol=trade_ticker, quoteOrderQty=f"{usdt_to_spend:.2f}")
+                    order = self.binance_client.order_market_buy(
+                        symbol=trade_ticker, quoteOrderQty=f"{usdt_to_spend:.2f}"
+                    )
                     result.messages.append(f"LIVE BUY ORDER PLACED: {order}")
                     result.data["order"] = order
                 else:
@@ -775,27 +1066,41 @@ class CryptoPortfolioTracker:
                 if is_quote_qty:
                     prices = self._get_current_prices([symbol])
                     if not prices.get(symbol) or prices[symbol] == 0:
-                        result.errors.append(f"Could not fetch price for {symbol} to calculate quantity.")
+                        result.errors.append(
+                            f"Could not fetch price for {symbol} to calculate quantity."
+                        )
                         return result
                     coin_quantity_to_sell = amount / prices[symbol]
-                adjusted_quantity = self._adjust_quantity_to_lot_size(trade_ticker, coin_quantity_to_sell)
+                adjusted_quantity = self._adjust_quantity_to_lot_size(
+                    trade_ticker, coin_quantity_to_sell
+                )
                 if adjusted_quantity is None or adjusted_quantity <= 0:
-                    result.errors.append(f"SKIPPING SELL for {symbol}: Quantity is zero or invalid after applying exchange lot size rules.")
+                    result.errors.append(
+                        f"SKIPPING SELL for {symbol}: Quantity is zero or invalid after applying exchange lot size rules."
+                    )
                     return result
-                result.messages.append(f"Preparing MARKET SELL for {adjusted_quantity:.8f} {symbol}...")
+                result.messages.append(
+                    f"Preparing MARKET SELL for {adjusted_quantity:.8f} {symbol}..."
+                )
                 if is_live:
-                    order = self.binance_client.order_market_sell(symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}")
+                    order = self.binance_client.order_market_sell(
+                        symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}"
+                    )
                     result.messages.append(f"LIVE SELL ORDER PLACED: {order}")
                     result.data["order"] = order
                 else:
                     result.messages.append(f"(Dry Run) SELL Trade was not placed.")
                 result.success = True
-            result.messages.append("Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade.")
+            result.messages.append(
+                "Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade."
+            )
         except Exception as e:
             result.errors.append(f"Unexpected Error for {symbol}: {e}")
         return result
 
-    async def get_core_portfolio_rebalance_suggestions_technical(self) -> Optional[pd.DataFrame]:
+    async def get_core_portfolio_rebalance_suggestions_technical(
+        self,
+    ) -> Optional[pd.DataFrame]:
         """
         Generates rebalancing suggestions by fetching live portfolio data and passing
         it to the central rebalancing logic orchestrator.
@@ -803,32 +1108,41 @@ class CryptoPortfolioTracker:
         self.logger.info("Calculating Core Portfolio rebalance suggestions...")
 
         # 1. Prepare live data
-        analyzer = CryptoTrendAnalyzer(config=self.config, binance_client=self.binance_client)
+        analyzer = CryptoTrendAnalyzer(
+            config=self.config, binance_client=self.binance_client
+        )
         live_balances_df = self.fetch_binance_balances()
         if live_balances_df.empty:
             self.logger.error("Could not fetch live balances. Cannot rebalance.")
             return None
 
         prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
-        live_balances_df["value_usd"] = live_balances_df["symbol"].map(prices).fillna(0.0) * live_balances_df["quantity"]
+        live_balances_df["value_usd"] = (
+            live_balances_df["symbol"].map(prices).fillna(0.0)
+            * live_balances_df["quantity"]
+        )
 
         # Get the list of coins we actually want to rebalance from the config
         target_symbols = list(self.config.get("target_allocation", {}).keys())
 
         # Filter the DataFrame to create a "core" portfolio
-        core_portfolio_df = live_balances_df[live_balances_df["symbol"].isin(target_symbols)].copy()
+        core_portfolio_df = live_balances_df[
+            live_balances_df["symbol"].isin(target_symbols)
+        ].copy()
 
         if core_portfolio_df.empty:
-            self.logger.warning("No assets from target_allocation found in live balances. Cannot generate rebalancing suggestions.")
-            return pd.DataFrame() # Return an empty DataFrame
+            self.logger.warning(
+                "No assets from target_allocation found in live balances. Cannot generate rebalancing suggestions."
+            )
+            return pd.DataFrame()  # Return an empty DataFrame
 
-        self.logger.info(f"Rebalancing logic will be based on {len(core_portfolio_df)} core assets.")
+        self.logger.info(
+            f"Rebalancing logic will be based on {len(core_portfolio_df)} core assets."
+        )
 
         # 2. Call the new central orchestrator with the live data
         suggestions_df = await get_live_rebalance_suggestions(
-            analyzer=analyzer,
-            portfolio_df=core_portfolio_df,
-            config=self.config
+            analyzer=analyzer, portfolio_df=core_portfolio_df, config=self.config
         )
 
         return suggestions_df
@@ -838,63 +1152,112 @@ class CryptoPortfolioTracker:
         Calculates key portfolio metrics using a consolidated view of holdings,
         correctly summing values from Spot, Earn, Futures, and Funding wallets.
         """
-        self.logger.info("Calculating consolidated portfolio metrics (Spot, Earn, Futures, Funding)...")
+        self.logger.info(
+            "Calculating consolidated portfolio metrics (Spot, Earn, Futures, Funding)..."
+        )
         cost_basis_df = self.db_manager.get_holdings()
 
         # 1. Calculate Spot + Earn Value
-        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(columns={"quantity": "total_quantity_api"})
+        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(
+            columns={"quantity": "total_quantity_api"}
+        )
         earn_balances_df = pd.DataFrame(columns=["symbol", "earn_quantity"])
         if not self.config_manager.is_testnet_mode:
             earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
             if earn_dict:
-                    earn_balances_df = pd.DataFrame(list(earn_dict.items()), columns=["symbol", "earn_quantity"])
+                earn_balances_df = pd.DataFrame(
+                    list(earn_dict.items()), columns=["symbol", "earn_quantity"]
+                )
 
-        holdings_df = pd.merge(total_balances_api_df, earn_balances_df, on="symbol", how="outer")
-        holdings_df["total_quantity_api"] = pd.to_numeric(holdings_df["total_quantity_api"], errors="coerce").fillna(0)
-        holdings_df["earn_quantity"] = pd.to_numeric(holdings_df["earn_quantity"], errors="coerce").fillna(0)
-        holdings_df["total_quantity"] = holdings_df[["total_quantity_api", "earn_quantity"]].max(axis=1)
-        holdings_df["spot_quantity"] = (holdings_df["total_quantity"] - holdings_df["earn_quantity"]).clip(lower=0)
-        holdings_df = holdings_df[holdings_df["total_quantity"] > 1e-8].reset_index(drop=True)
+        holdings_df = pd.merge(
+            total_balances_api_df, earn_balances_df, on="symbol", how="outer"
+        )
+        holdings_df["total_quantity_api"] = pd.to_numeric(
+            holdings_df["total_quantity_api"], errors="coerce"
+        ).fillna(0)
+        holdings_df["earn_quantity"] = pd.to_numeric(
+            holdings_df["earn_quantity"], errors="coerce"
+        ).fillna(0)
+        holdings_df["total_quantity"] = holdings_df[
+            ["total_quantity_api", "earn_quantity"]
+        ].max(axis=1)
+        holdings_df["spot_quantity"] = (
+            holdings_df["total_quantity"] - holdings_df["earn_quantity"]
+        ).clip(lower=0)
+        holdings_df = holdings_df[holdings_df["total_quantity"] > 1e-8].reset_index(
+            drop=True
+        )
 
         spot_earn_value = 0
         if not holdings_df.empty:
             if not cost_basis_df.empty:
-                holdings_df = pd.merge(holdings_df, cost_basis_df[["symbol", "average_cost_basis"]], on="symbol", how="left")
+                holdings_df = pd.merge(
+                    holdings_df,
+                    cost_basis_df[["symbol", "average_cost_basis"]],
+                    on="symbol",
+                    how="left",
+                )
             else:
                 holdings_df["average_cost_basis"] = 0.0
-            holdings_df["average_cost_basis"] = holdings_df["average_cost_basis"].fillna(0.0)
+            holdings_df["average_cost_basis"] = holdings_df[
+                "average_cost_basis"
+            ].fillna(0.0)
 
-            prices = await self.enricher.get_current_prices(holdings_df["symbol"].tolist())
+            prices = await self.enricher.get_current_prices(
+                holdings_df["symbol"].tolist()
+            )
             holdings_df["current_price"] = holdings_df["symbol"].map(prices).fillna(0.0)
-            holdings_df["value_usd"] = holdings_df["total_quantity"] * holdings_df["current_price"]
-            holdings_df["cost_basis_total"] = holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
-            holdings_df["unrealized_pl_usd"] = holdings_df["value_usd"] - holdings_df["cost_basis_total"]
-            holdings_df.loc[holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"] = (holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]) * 100
+            holdings_df["value_usd"] = (
+                holdings_df["total_quantity"] * holdings_df["current_price"]
+            )
+            holdings_df["cost_basis_total"] = (
+                holdings_df["total_quantity"] * holdings_df["average_cost_basis"]
+            )
+            holdings_df["unrealized_pl_usd"] = (
+                holdings_df["value_usd"] - holdings_df["cost_basis_total"]
+            )
+            holdings_df.loc[
+                holdings_df["cost_basis_total"] > 0, "unrealized_pl_percent"
+            ] = (
+                holdings_df["unrealized_pl_usd"] / holdings_df["cost_basis_total"]
+            ) * 100
 
             spot_earn_value = holdings_df["value_usd"].sum()
 
         else:
-            holdings_df = pd.DataFrame(columns=['symbol', 'total_quantity', 'spot_quantity', 'earn_quantity', 'value_usd', 'average_cost_basis', 'cost_basis_total'])
+            holdings_df = pd.DataFrame(
+                columns=[
+                    "symbol",
+                    "total_quantity",
+                    "spot_quantity",
+                    "earn_quantity",
+                    "value_usd",
+                    "average_cost_basis",
+                    "cost_basis_total",
+                ]
+            )
 
         # 2. Calculate Futures Value
         futures_value = 0
         futures_balances = self.fetcher.fetch_futures_balance()
         for item in futures_balances:
-            if item.get('asset') == 'USDT':
-                futures_value += float(item.get('balance', 0.0))
+            if item.get("asset") == "USDT":
+                futures_value += float(item.get("balance", 0.0))
 
         # 3. Calculate Funding Wallet Value
         funding_value = 0
         funding_balances_raw = self.fetcher.fetch_funding_balance()
-        funding_balances = [b for b in funding_balances_raw if float(b.get('free', 0.0)) > 1e-8]
+        funding_balances = [
+            b for b in funding_balances_raw if float(b.get("free", 0.0)) > 1e-8
+        ]
 
         if funding_balances:
-            funding_assets = [b['asset'] for b in funding_balances]
+            funding_assets = [b["asset"] for b in funding_balances]
             funding_prices = await self.enricher.get_current_prices(funding_assets)
             for item in funding_balances:
-                asset = item['asset']
+                asset = item["asset"]
                 price = funding_prices.get(asset, 0.0)
-                quantity = float(item.get('free', 0.0))
+                quantity = float(item.get("free", 0.0))
                 funding_value += quantity * price
 
         # 4. Calculate Grand Total
@@ -913,17 +1276,23 @@ class CryptoPortfolioTracker:
 
         total_core_value = core_holdings_df["value_usd"].sum()
         if total_core_value > 0:
-            core_holdings_df["core_allocation"] = core_holdings_df["value_usd"] / total_core_value
+            core_holdings_df["core_allocation"] = (
+                core_holdings_df["value_usd"] / total_core_value
+            )
         else:
             core_holdings_df["core_allocation"] = 0
 
         total_cost_basis = holdings_df["cost_basis_total"].sum()
         total_pl_usd = spot_earn_value - total_cost_basis
-        total_pl_percent = (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
+        total_pl_percent = (
+            (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
+        )
         total_invested = self.db_manager.calculate_total_invested_capital()
 
         overall_pl_usd = total_portfolio_value - total_invested
-        overall_pl_percent = (overall_pl_usd / total_invested * 100) if total_invested > 0 else 0.0
+        overall_pl_percent = (
+            (overall_pl_usd / total_invested * 100) if total_invested > 0 else 0.0
+        )
 
         metrics = {
             "total_value_usd": total_portfolio_value,
@@ -941,7 +1310,7 @@ class CryptoPortfolioTracker:
             "other_holdings_df": other_holdings_df,
             "futures_balances": futures_balances,
             "funding_balances": funding_balances,
-            "timestamp": datetime.datetime.now()
+            "timestamp": datetime.datetime.now(),
         }
         self.logger.info("Successfully calculated consolidated portfolio metrics.")
         return metrics
@@ -956,15 +1325,42 @@ class CryptoPortfolioTracker:
 
         # Define all possible data sources for production mode
         all_data_sources = {
-            "Binance Trade": {"fetcher": self.fetcher.fetch_binance_transactions, "days": lookback_config.get("trades", 90)},
-            "Binance Deposit": {"fetcher": self.fetcher.fetch_deposit_history, "days": lookback_config.get("deposits", 90)},
-            "Binance Withdrawal": {"fetcher": self.fetcher.fetch_withdrawal_history, "days": lookback_config.get("withdrawals", 90)},
-            "Binance P2P Buy": {"fetcher": self.fetcher.fetch_p2p_usdt_buys, "days": lookback_config.get("p2p_buys", 90)},
-            "Binance Convert": {"fetcher": self.fetcher.fetch_spot_convert_history, "days": lookback_config.get("spot_convert_history", 90)},
-            "Binance Dividend": {"fetcher": self.fetcher.fetch_dividend_history, "days": lookback_config.get("dividend_history", 90)},
-            "Binance Simple Earn Reward": {"fetcher": self.fetcher.fetch_simple_earn_rewards, "days": lookback_config.get("simple_earn_rewards", 90)},
-            "Binance Simple Earn Subscription": {"fetcher": self.fetcher.fetch_simple_earn_subscriptions, "days": lookback_config.get("simple_earn_subscriptions", 90)},
-            "Binance Simple Earn Redemption": {"fetcher": self.fetcher.fetch_simple_earn_redemptions, "days": lookback_config.get("simple_earn_redemptions", 90)},
+            "Binance Trade": {
+                "fetcher": self.fetcher.fetch_binance_transactions,
+                "days": lookback_config.get("trades", 90),
+            },
+            "Binance Deposit": {
+                "fetcher": self.fetcher.fetch_deposit_history,
+                "days": lookback_config.get("deposits", 90),
+            },
+            "Binance Withdrawal": {
+                "fetcher": self.fetcher.fetch_withdrawal_history,
+                "days": lookback_config.get("withdrawals", 90),
+            },
+            "Binance P2P Buy": {
+                "fetcher": self.fetcher.fetch_p2p_usdt_buys,
+                "days": lookback_config.get("p2p_buys", 90),
+            },
+            "Binance Convert": {
+                "fetcher": self.fetcher.fetch_spot_convert_history,
+                "days": lookback_config.get("spot_convert_history", 90),
+            },
+            "Binance Dividend": {
+                "fetcher": self.fetcher.fetch_dividend_history,
+                "days": lookback_config.get("dividend_history", 90),
+            },
+            "Binance Simple Earn Reward": {
+                "fetcher": self.fetcher.fetch_simple_earn_rewards,
+                "days": lookback_config.get("simple_earn_rewards", 90),
+            },
+            "Binance Simple Earn Subscription": {
+                "fetcher": self.fetcher.fetch_simple_earn_subscriptions,
+                "days": lookback_config.get("simple_earn_subscriptions", 90),
+            },
+            "Binance Simple Earn Redemption": {
+                "fetcher": self.fetcher.fetch_simple_earn_redemptions,
+                "days": lookback_config.get("simple_earn_redemptions", 90),
+            },
         }
 
         data_sources_to_fetch = {}
@@ -973,9 +1369,7 @@ class CryptoPortfolioTracker:
         if self.config_manager.is_testnet_mode:
             # In testnet, only fetch spot trade history
             self.logger.warning("TESTNET MODE: Syncing SPOT TRADE history only.")
-            data_sources_to_fetch = {
-                "Binance Trade": all_data_sources["Binance Trade"]
-            }
+            data_sources_to_fetch = {"Binance Trade": all_data_sources["Binance Trade"]}
             fetch_staking = False
         else:
             # In production, fetch everything
@@ -986,24 +1380,46 @@ class CryptoPortfolioTracker:
         for source, config in data_sources_to_fetch.items():
             latest_known_ts = self.db_manager.get_latest_timestamp_for_source(source)
             if latest_known_ts:
-                self.logger.info(f"History found for '{source}'. Initiating selective sync from {latest_known_ts.strftime('%Y-%m-%d %H:%M')}.")
+                self.logger.info(
+                    f"History found for '{source}'. Initiating selective sync from {latest_known_ts.strftime('%Y-%m-%d %H:%M')}."
+                )
             else:
-                self.logger.info(f"No history found for '{source}'. Initiating full sync for the last {config['days']} days.")
+                self.logger.info(
+                    f"No history found for '{source}'. Initiating full sync for the last {config['days']} days."
+                )
 
             fetcher_tasks.append(
-                asyncio.to_thread(config["fetcher"], source_name=source, days_back=config['days'], latest_known_ts=latest_known_ts)
+                asyncio.to_thread(
+                    config["fetcher"],
+                    source_name=source,
+                    days_back=config["days"],
+                    latest_known_ts=latest_known_ts,
+                )
             )
 
         # Only check for staking history if not in testnet mode
         if fetch_staking:
             staking_ts_map = {
-                "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source("Binance Staking Subscription"),
-                "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source("Binance Staking Redemption"),
-                "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source("Binance Staking Interest"),
+                "Binance Staking Subscription": self.db_manager.get_latest_timestamp_for_source(
+                    "Binance Staking Subscription"
+                ),
+                "Binance Staking Redemption": self.db_manager.get_latest_timestamp_for_source(
+                    "Binance Staking Redemption"
+                ),
+                "Binance Staking Interest": self.db_manager.get_latest_timestamp_for_source(
+                    "Binance Staking Interest"
+                ),
             }
-            self.logger.info("Checking for Staking history (Subscriptions, Redemptions, Interest)...")
+            self.logger.info(
+                "Checking for Staking history (Subscriptions, Redemptions, Interest)..."
+            )
             fetcher_tasks.append(
-                asyncio.to_thread(self.fetcher.fetch_staking_history, source_name="Binance Staking", days_back=lookback_config.get("staking_history", 90), latest_known_ts_map=staking_ts_map)
+                asyncio.to_thread(
+                    self.fetcher.fetch_staking_history,
+                    source_name="Binance Staking",
+                    days_back=lookback_config.get("staking_history", 90),
+                    latest_known_ts_map=staking_ts_map,
+                )
             )
 
         if not fetcher_tasks:
@@ -1011,7 +1427,9 @@ class CryptoPortfolioTracker:
             return
 
         # 1. GATHER
-        self.logger.info(f"Launching {len(fetcher_tasks)} data fetching tasks concurrently...")
+        self.logger.info(
+            f"Launching {len(fetcher_tasks)} data fetching tasks concurrently..."
+        )
         results = await asyncio.gather(*fetcher_tasks, return_exceptions=True)
 
         all_raw_transactions = []
@@ -1019,24 +1437,38 @@ class CryptoPortfolioTracker:
             if isinstance(res, list):
                 all_raw_transactions.extend(res)
             elif isinstance(res, Exception):
-                self.logger.error(f"An error occurred during a fetching task: {res}", exc_info=False)
+                self.logger.error(
+                    f"An error occurred during a fetching task: {res}", exc_info=False
+                )
 
         if not all_raw_transactions:
             self.logger.info("No new raw transactions were fetched. Sync complete.")
             return
 
         # 2. ENRICH
-        self.logger.info(f"Passing {len(all_raw_transactions)} raw transactions to the PriceEnricher.")
-        enriched_transactions = await self.enricher.enrich_transactions(all_raw_transactions)
+        self.logger.info(
+            f"Passing {len(all_raw_transactions)} raw transactions to the PriceEnricher."
+        )
+        enriched_transactions = await self.enricher.enrich_transactions(
+            all_raw_transactions
+        )
 
         # 3. PROCESS
         if enriched_transactions:
-            enriched_transactions.sort(key=lambda x: x['timestamp'])
-            self.logger.info(f"Saving {len(enriched_transactions)} enriched transactions to the database...")
-            num_inserted = self.db_manager.bulk_insert_transactions(enriched_transactions)
-            self.logger.info(f"Database update complete. {num_inserted} new transactions were saved.")
+            enriched_transactions.sort(key=lambda x: x["timestamp"])
+            self.logger.info(
+                f"Saving {len(enriched_transactions)} enriched transactions to the database..."
+            )
+            num_inserted = self.db_manager.bulk_insert_transactions(
+                enriched_transactions
+            )
+            self.logger.info(
+                f"Database update complete. {num_inserted} new transactions were saved."
+            )
         else:
-            self.logger.warning("Enrichment process returned no transactions. Nothing to save.")
+            self.logger.warning(
+                "Enrichment process returned no transactions. Nothing to save."
+            )
 
         self.update_holdings_from_transactions()
         self.logger.info("Data synchronization pipeline finished successfully.")
@@ -1049,7 +1481,9 @@ class CryptoPortfolioTracker:
     def fetch_binance_balances(self) -> pd.DataFrame:
         """Fetch current balances from Binance Spot wallet with retry, explicit normalization, and LD-prefix consolidation."""
         if not self.binance_client:
-            self.logger.warning("Binance client not initialized. Cannot fetch Spot balances.")
+            self.logger.warning(
+                "Binance client not initialized. Cannot fetch Spot balances."
+            )
             return pd.DataFrame(columns=["symbol", "quantity"])
 
         # --- Close stale connections before making a new request ---
@@ -1061,7 +1495,9 @@ class CryptoPortfolioTracker:
 
         while retries > 0:
             try:
-                self.logger.debug(f"Attempting to fetch Binance account info (Timeout: {api_timeout}s)...")
+                self.logger.debug(
+                    f"Attempting to fetch Binance account info (Timeout: {api_timeout}s)..."
+                )
                 account_info = self.binance_client.get_account()
 
                 balances_raw = account_info.get("balances", [])
@@ -1078,34 +1514,57 @@ class CryptoPortfolioTracker:
                     if quantity > 0.00000001:
                         # Get the raw symbol from the API
                         asset_symbol_api = b.get("asset", "")
-                        final_symbol = self.symbol_mappings.normalize_symbol(asset_symbol_api)
+                        final_symbol = self.symbol_mappings.normalize_symbol(
+                            asset_symbol_api
+                        )
 
                         # Only append if the final symbol is valid (not empty)
                         if final_symbol:
-                            processed_balances.append({"symbol": final_symbol, "quantity": quantity})
-
+                            processed_balances.append(
+                                {"symbol": final_symbol, "quantity": quantity}
+                            )
 
                 if not processed_balances:
-                    self.logger.info("Found raw balances, but all were zero or negligible after processing.")
+                    self.logger.info(
+                        "Found raw balances, but all were zero or negligible after processing."
+                    )
                     return pd.DataFrame(columns=["symbol", "quantity"])
 
                 df = pd.DataFrame(processed_balances)
                 df = df.groupby("symbol", as_index=False)["quantity"].sum()
 
-                self.logger.debug(f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else "EMPTY DF"}")
-                self.logger.info(f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot.")
+                self.logger.debug(
+                    f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}"
+                )
+                self.logger.info(
+                    f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot."
+                )
                 return df
 
-            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+            ) as e:
                 retries -= 1
-                self.logger.error(f"Network error fetching Binance Spot balances: {e}. Retries left: {retries}.")
-                if retries > 0: self.logger.info(f"Waiting {wait_time_seconds}s before retrying..."); time.sleep(wait_time_seconds)
-                else: self.logger.error("Failed to fetch Spot balances after multiple retries due to network errors.")
+                self.logger.error(
+                    f"Network error fetching Binance Spot balances: {e}. Retries left: {retries}."
+                )
+                if retries > 0:
+                    self.logger.info(f"Waiting {wait_time_seconds}s before retrying...")
+                    time.sleep(wait_time_seconds)
+                else:
+                    self.logger.error(
+                        "Failed to fetch Spot balances after multiple retries due to network errors."
+                    )
             except BinanceAPIException as e:
-                 self.logger.error(f"Binance API Error fetching Spot balances: {e}. No retries for API errors.")
-                 break
+                self.logger.error(
+                    f"Binance API Error fetching Spot balances: {e}. No retries for API errors."
+                )
+                break
             except Exception as e:
-                self.logger.error(f"Unexpected error fetching Spot balances: {e}", exc_info=True)
+                self.logger.error(
+                    f"Unexpected error fetching Spot balances: {e}", exc_info=True
+                )
                 break
         return pd.DataFrame(columns=["symbol", "quantity"])
 
@@ -1125,19 +1584,31 @@ class CryptoPortfolioTracker:
             self.logger.debug(f"Calculating FIFO for {symbol}...")
 
             group_df_copy = group_df.copy()
-            group_df_copy["price_usd"] = pd.to_numeric(group_df_copy["price_usd"], errors="coerce").fillna(0.0)
-            group_df_copy["quantity"] = pd.to_numeric(group_df_copy["quantity"], errors="coerce").fillna(0.0)
-            group_df_copy["timestamp"] = pd.to_datetime(group_df_copy["timestamp"], errors="coerce")
+            group_df_copy["price_usd"] = pd.to_numeric(
+                group_df_copy["price_usd"], errors="coerce"
+            ).fillna(0.0)
+            group_df_copy["quantity"] = pd.to_numeric(
+                group_df_copy["quantity"], errors="coerce"
+            ).fillna(0.0)
+            group_df_copy["timestamp"] = pd.to_datetime(
+                group_df_copy["timestamp"], errors="coerce"
+            )
             group_df_copy.dropna(subset=["timestamp"], inplace=True)
 
             # 1. Isolate real trades for cost basis calculation
             cost_basis_tx_df = group_df_copy[
-                ~group_df_copy["source"].str.contains("Simple Earn|Asset Transfer|Staking", case=False, na=False)
+                ~group_df_copy["source"].str.contains(
+                    "Simple Earn|Asset Transfer|Staking", case=False, na=False
+                )
             ]
-            self.logger.debug(f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions.")
+            self.logger.debug(
+                f"Calculating cost basis for {symbol} using {len(cost_basis_tx_df)} non-transfer transactions."
+            )
 
             if cost_basis_tx_df.empty:
-                self.logger.debug(f"No non-transfer transactions for {symbol}. Cannot calculate cost basis.")
+                self.logger.debug(
+                    f"No non-transfer transactions for {symbol}. Cannot calculate cost basis."
+                )
                 continue  # Skip to the next symbol
 
             # 2. Calculate cost basis and the remaining quantity FROM THAT BASIS
@@ -1146,40 +1617,73 @@ class CryptoPortfolioTracker:
             # 3. If there"s a valid average cost, save it.
             # The quantity saved here is just a placeholder; the final report uses the live wallet balance.
             if avg_cost > 0:
-                self.logger.debug(f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost.")
-                updated_holdings.append({
-                    "symbol": symbol,
-                    "quantity": cost_basis_qty,
-                    "average_cost_basis": avg_cost
-                })
+                self.logger.debug(
+                    f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost."
+                )
+                updated_holdings.append(
+                    {
+                        "symbol": symbol,
+                        "quantity": cost_basis_qty,
+                        "average_cost_basis": avg_cost,
+                    }
+                )
             else:
-                self.logger.debug(f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history).")
+                self.logger.debug(
+                    f"No cost basis calculated for {symbol} (likely no 'BUY' transactions in history)."
+                )
 
         if updated_holdings:
             holdings_df = pd.DataFrame(updated_holdings)
             self.db_manager.update_holdings(holdings_df)
-            self.logger.info(f"Successfully updated/inserted {len(holdings_df)} asset holdings in the database with new cost basis.")
+            self.logger.info(
+                f"Successfully updated/inserted {len(holdings_df)} asset holdings in the database with new cost basis."
+            )
         else:
-            self.logger.warning("No holdings with valid cost basis to update in the database.")
+            self.logger.warning(
+                "No holdings with valid cost basis to update in the database."
+            )
 
     def create_portfolio_charts(self, metrics: Dict[str, Any]):
         """Generate portfolio charts."""
-        holdings_df = metrics.get("holdings_df"); target_alloc = self.config.get("target_allocation", {})
-        if holdings_df is not None: self.visualizer.generate_all_charts(holdings_df, metrics, target_alloc, pd.DataFrame())
-        else: self.logger.warning("No holdings data for chart generation.")
+        holdings_df = metrics.get("holdings_df")
+        target_alloc = self.config.get("target_allocation", {})
+        if holdings_df is not None:
+            self.visualizer.generate_all_charts(
+                holdings_df, metrics, target_alloc, pd.DataFrame()
+            )
+        else:
+            self.logger.warning("No holdings data for chart generation.")
 
-    def export_to_excel(self, metrics: Dict[str, Any]): self.excel_exporter.export(metrics=metrics, holdings_df=metrics.get("holdings_df"))
-    def export_to_html(self, metrics: Dict[str, Any]): self.html_exporter.export(metrics=metrics, holdings_df=metrics.get("holdings_df"))
-    def export_csv_backup(self): self.csv_exporter.export(transactions_df=self.db_manager.get_all_transactions(), holdings_df=self.db_manager.get_holdings())
-    def cleanup_old_data(self): self.db_manager.cleanup_old_data()
+    def export_to_excel(self, metrics: Dict[str, Any]):
+        self.excel_exporter.export(
+            metrics=metrics, holdings_df=metrics.get("holdings_df")
+        )
+
+    def export_to_html(self, metrics: Dict[str, Any]):
+        self.html_exporter.export(
+            metrics=metrics, holdings_df=metrics.get("holdings_df")
+        )
+
+    def export_csv_backup(self):
+        self.csv_exporter.export(
+            transactions_df=self.db_manager.get_all_transactions(),
+            holdings_df=self.db_manager.get_holdings(),
+        )
+
+    def cleanup_old_data(self):
+        self.db_manager.cleanup_old_data()
 
     def save_snapshot(self, metrics: Dict[str, Any]):
         """Wrapper to save a portfolio snapshot using data from calculated metrics."""
         if "error" in metrics or "total_value_usd" not in metrics:
-            self.logger.warning("Skipping snapshot save due to missing data in metrics.")
+            self.logger.warning(
+                "Skipping snapshot save due to missing data in metrics."
+            )
             return
 
-        timestamp = metrics.get("timestamp", datetime.datetime.now(datetime.timezone.utc))
+        timestamp = metrics.get(
+            "timestamp", datetime.datetime.now(datetime.timezone.utc)
+        )
         total_value = metrics.get("total_value_usd", 0)
         total_cost_basis = metrics.get("total_cost_basis_usd", 0)
         unrealized_pl_usd = metrics.get("unrealized_pl_usd", 0)
@@ -1191,5 +1695,5 @@ class CryptoPortfolioTracker:
             total_value=total_value,
             total_cost_basis=total_cost_basis,
             unrealized_pl=unrealized_pl_usd,
-            unrealized_pl_percent=unrealized_pl_percent
+            unrealized_pl_percent=unrealized_pl_percent,
         )

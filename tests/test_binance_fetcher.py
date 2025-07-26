@@ -12,13 +12,21 @@ def mock_binance_client():
     client = MagicMock()
     # Configure the mock to return a sample trade for BTCUSDT
     mock_trade_data = [
-        {'symbol': 'BTCUSDT', 'id': 123, 'time': 1620000000000, 'isBuyer': True,
-         'qty': '0.1', 'price': '50000.0', 'commission': '0.0001', 'commissionAsset': 'BNB'}
+        {
+            "symbol": "BTCUSDT",
+            "id": 123,
+            "time": 1620000000000,
+            "isBuyer": True,
+            "qty": "0.1",
+            "price": "50000.0",
+            "commission": "0.0001",
+            "commissionAsset": "BNB",
+        }
     ]
 
     # Use a side effect to only return data when asked for BTCUSDT
     def get_trades_side_effect(symbol, **kwargs):
-        if symbol == 'BTCUSDT':
+        if symbol == "BTCUSDT":
             return mock_trade_data
         return []
 
@@ -34,24 +42,30 @@ def mock_symbol_mapper():
     return mapper
 
 
-def test_fetch_binance_transactions_returns_raw_data(mock_binance_client, mock_symbol_mapper):
+def test_fetch_binance_transactions_returns_raw_data(
+    mock_binance_client, mock_symbol_mapper
+):
     """
     Tests that the fetcher correctly calls the client and shapes the raw transaction data.
     """
     # 1. Arrange
     config = {
         "portfolio": {"crypto_quotes": ["USDT"], "stablecoin_symbols": ["USDT"]},
-        "target_allocation": {"BTC": 1.0, "USDT": 1.0}
+        "target_allocation": {"BTC": 1.0, "USDT": 1.0},
     }
-    fetcher = BinanceFetcher(client=mock_binance_client, symbol_mapper=mock_symbol_mapper, config=config)
+    fetcher = BinanceFetcher(
+        client=mock_binance_client, symbol_mapper=mock_symbol_mapper, config=config
+    )
 
     # 2. Act
-    raw_transactions = fetcher.fetch_binance_transactions(source_name="Binance Trade", days_back=1)
+    raw_transactions = fetcher.fetch_binance_transactions(
+        source_name="Binance Trade", days_back=1
+    )
 
     # 3. Assert
     assert len(raw_transactions) > 0
 
     tx_btc = raw_transactions[0]
-    assert tx_btc['tx_type'] == 'TRADE'
-    assert tx_btc['source'] == 'Binance Trade'
-    assert tx_btc['raw_data']['price'] == 50000.0
+    assert tx_btc["tx_type"] == "TRADE"
+    assert tx_btc["source"] == "Binance Trade"
+    assert tx_btc["raw_data"]["price"] == 50000.0

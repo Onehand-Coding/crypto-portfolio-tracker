@@ -93,43 +93,60 @@ The project follows a standard `src` layout for clean, maintainable, and distrib
 ```
 crypto-portfolio-tracker/
 ├── config/
-│   └── default_config.json        # Default configuration settings
+│   ├── default_config.json
+│   └── .gitkeep
 ├── data/
-│   ├── portfolio.db               # SQLite database (production)
-│   ├── testnet_portfolio.db       # SQLite database (testnet)
-│   ├── db_backups/                # Timestamped database backups
-│   ├── cache/                     # API response cache
-│   │   ├── backtest_data/         # Cached backtesting data
-│   │   └── coingecko_historical/  # CoinGecko price cache
-│   ├── exports/                   # Generated reports and backups
-│   └── trend_reports/             # Technical analysis reports
+│   ├── portfolio.db
+│   ├── testnet_portfolio.db
+│   ├── coingecko_mappings.json
+│   ├── strategy_state.json
+│   ├── connection_state.json
+│   ├── db_backups/
+│   ├── cache/
+│   │   ├── backtest_data/
+│   │   ├── coingecko_historical/
+│   │   ├── fiat_exchange_rates/
+│   │   └── yfinance_historical/
+│   ├── exports/
+│   └── trend_reports/
 ├── logs/
-│   └── portfolio_tracker.log      # Application logs with rotation
+│   └── portfolio_tracker.log
 ├── src/
 │   └── crypto_portfolio_tracker/
-│       ├── templates/
-│       │   └── report_template.html
 │       ├── __init__.py
-│       ├── __main__.py            # Main application entry point
-│       ├── portfolio_tracker.py   # Core orchestration logic
-│       ├── binance_fetcher.py     # Binance API data fetching
-│       ├── price_enricher.py      # Price data enrichment
-│       ├── database.py            # SQLite database operations
-│       ├── config.py              # Configuration management
-│       ├── exporters.py           # Export functionality (Excel/HTML/CSV)
-│       ├── visualizations.py      # Chart and graph generation
-│       ├── crypto_trend_analyzer.py # Multi-timeframe technical analysis
-│       ├── trading_strategies.py  # Pluggable trading strategies
-│       ├── strategy_backtester.py # Backtester for directional strategies
-│       ├── rebalancing_backtester.py # Backtester for rebalancing strategies
-│       ├── rebalancing_logic.py   # Rebalancing calculation logic
-│       └── symbol_mapper.py       # Symbol mapping utilities
-├── tests/                         # Unit tests
-├── main.py                        # Developer convenience entry point
-├── pyproject.toml                 # Project definition and dependencies
-├── default_config.json.example    # Configuration template
-├── .env.example                   # Environment variable template
-└── README.md                      # This documentation
+│       ├── __main__.py
+│       ├── binance_fetcher.py
+│       ├── config.py
+│       ├── crypto_trend_analyzer.py
+│       ├── database.py
+│       ├── exceptions.py
+│       ├── exporters.py
+│       ├── portfolio_tracker.py
+│       ├── price_enricher.py
+│       ├── rebalancing_backtester.py
+│       ├── rebalancing_logic.py
+│       ├── strategy_backtester.py
+│       ├── symbol_mapper.py
+│       ├── trading_strategies.py
+│       ├── utils.py
+│       ├── visualizations.py
+│       ├── webui.py
+│       ├── webui_launcher.py
+│       └── templates/
+│           ├── report_template.html
+│           ├── tax_report_template.html
+│           └── trend_report_template.html
+├── tests/
+│   ├── test_binance_fetcher.py
+│   ├── test_portfolio_tracker.py
+│   └── test_price_enricher.py
+├── main.py
+├── pyproject.toml
+├── default_config.json.example
+├── uv.lock
+├── .gitignore
+├── LICENSE
+└── README.md
 ```
 
 ## 🛠 Installation & Setup
@@ -172,57 +189,16 @@ MAIN_API_SECRET=your_binance_api_secret_here
 # Optional: Testnet API Keys (recommended for testing)
 TESTNET_API_KEY=testnet_api_key_here
 TESTNET_API_SECRET=testnet_api_secret_here
-
-# Master Testnet Switch - Set to "true" for safe testing
-BINANCE_TESTNET=true
-
 # CoinGecko API (recommended for higher rate limits)
 COINGECKO_API_KEY=your_coingecko_api_key_here
 ```
 
-5. **Configure Your Portfolio Targets:**
-```bash
-cp default_config.json.example config/default_config.json
-```
+5. **Configure Your Portfolio and Testnet Mode:**
 
-Edit `config/default_config.json` with your target allocation and preferences.
-
-## 🔐 Binance API Setup
-
-### Production API Setup
-
-**CRITICAL SECURITY STEPS:**
-
-1. Visit [Binance API Management](https://www.binance.com/en/my/settings/api-management)
-2. Create a new API key with descriptive name
-3. **For Portfolio Tracking Only**: Enable ONLY "Enable Reading" permission
-4. **For Live Trading**: Enable "Enable Reading" + "Enable Spot & Margin Trading" (use with extreme caution)
-5. **Add your IP address to whitelist** for enhanced security
-6. Copy API Key and Secret to your `.env` file as `MAIN_API_KEY` and `MAIN_API_SECRET`
-
-### Testnet API Setup (Recommended for Testing)
-
-1. Visit [Binance Testnet](https://testnet.binance.vision/)
-2. Create testnet account and generate API keys
-3. Add testnet keys to `.env` file as `TESTNET_API_KEY` and `TESTNET_API_SECRET`
-4. Set `BINANCE_TESTNET=true` in `.env` to use testnet
-5. **Note**: Testnet uses a separate database (`testnet_portfolio.db`) to avoid mixing test and real data
-
-### CoinGecko API Setup (Recommended)
-
-1. Visit [CoinGecko API](https://www.coingecko.com/en/api) (optional but recommended)
-2. Sign up for free or premium API access
-3. Add your API key to `.env` file as `COINGECKO_API_KEY`
-4. Higher rate limits prevent API throttling issues
-
-## ⚙️ Configuration
-
-### Target Portfolio Allocation
-
-Define your desired allocation in `config/default_config.json` (percentages must sum to 1.0):
-
+Edit `config/default_config.json` to set your target allocation and preferences. To enable testnet mode, set:
 ```json
 {
+  "testnet_mode": true,
   "target_allocation": {
     "BTC": 0.35,
     "ETH": 0.20,
@@ -232,6 +208,44 @@ Define your desired allocation in `config/default_config.json` (percentages must
     "AVAX": 0.06,
     "LINK": 0.06,
     "ONDO": 0.05
+  },
+  "asset_classes": {
+    "majors": ["BTC", "ETH"]
+  },
+  "rebalance_technical": {
+    "majors": {
+      "allocation_drift_threshold_pct": 3.0,
+      "sell_percentage_multiplier": 0.25,
+      "buy_amount_multiplier": 0.75
+    },
+    "alts": {
+      "allocation_drift_threshold_pct": 7.0,
+      "sell_percentage_multiplier": 0.5,
+      "buy_amount_multiplier": 1.0
+    }
+  },
+  "trend_analyzer": {
+    "cryptocurrencies": [],
+    "timeframe_settings": {
+      "long_term": {
+        "period": "4y",
+        "sma_short_window": 50,
+        "sma_long_window": 200
+      },
+      "swing": {
+        "period": "3mo",
+        "sma_short_window": 10,
+        "sma_long_window": 30
+      },
+      "day": {
+        "period": "60d",
+        "sma_short_window": 5,
+        "sma_long_window": 15
+      }
+    },
+    "rsi_period": 14,
+    "rsi_oversold": 30,
+    "rsi_overbought": 70
   }
 }
 ```
@@ -294,83 +308,83 @@ Configure multi-timeframe analysis parameters:
 
 ## 🎯 Usage
 
-The application offers a comprehensive interactive menu and command-line options for automation.
+The application offers both a modern web interface and a command-line interface for different use cases.
 
-### Interactive Mode (Recommended)
+### 🌐 Web UI (Recommended)
 
-For day-to-day portfolio management:
+The **Streamlit web interface** provides an intuitive, feature-rich experience for portfolio management:
 
 ```bash
-# Using uv
+uv run track-portfolio-web
+```
+
+**Features:**
+- 📊 Real-time portfolio dashboard with interactive charts
+- 📈 Market trends and technical analysis with visual indicators
+- ⚖️ Rebalancing suggestions with interactive controls
+- 🔀 Manual and automated trading interfaces
+- 🧪 Backtesting with interactive parameter controls
+- 📋 Data management and export tools
+- ⚙️ Settings and configuration management
+- 🎨 Professional, responsive design
+
+The web UI runs on `http://localhost:8502` and is the **recommended interface** for daily portfolio management.
+
+### 💻 CLI Interface (For Debugging & Automation)
+
+The command-line interface is useful for debugging, automation, and quick checks:
+
+```bash
+# Interactive CLI
 uv run track-portfolio
-# Or Activate your virtual environment first
-source .venv/bin/activate
-# Run the application
-track-portfolio
-# OR for development
+
+# Command-line mode
+track-portfolio [options]
+# -v, --verbose   Enable DEBUG logging
+# -q, --quiet     Suppress output except errors
+
+# Developer entry point
 python main.py
 ```
 
-**Interactive Menu Options:**
+**CLI Menu Options:**
 ```
 ==================================================
 🚀 Crypto Portfolio Tracker v2.1.0
 ==================================================
-1. 🔄 Full Sync & Analysis (Recommended)
+1. 🔄 Full Sync & Analysis
 2. 📊 Quick Portfolio Summary
 3. 📈 View Crypto Trends
-4. ⚖️  View Rebalance Suggestions
-5. 🤖 Execute Rebalancing Trades
-6. 🔀 TRADE Manual Trade (Buy/Sell)
-7. 💰 Live Trading (Directional Strategy)
-8. 🧪 Run Strategy Backtest
-9. ⚖️  Run Rebalancing Backtest
-10. 📋 Export Reports
-11. 📈 Generate Charts
-12. 💾 Export Data Backup (CSV)
-13. 🗄️  Backup / Restore Database
-14. 🧹 Clean Old Data
-15. ⚙️  View Configuration
-16. 🔧 Test API Connections
-17. ❌ Exit
+4. 🤖 Execute Rebalancing Trades
+5. 🔀 Trading
+6. 🧪 Backtesting
+7. 📋 Export Reports / Data
+8. 📈 Generate Charts
+9. 🗄️  Backup / Restore Database
+10. 🧹 Clean Old Data
+11. ⚙️  View Configuration
+12. 🔧 Test API Connections
+13. ❌ Exit
 ==================================================
-Select option (1-17):
+Select option (1-13):  
 ```
 
-### Command-Line Mode
-
-For automation, scripting, and advanced usage:
-
-```bash
-# General format
-track-portfolio [options]
-
-# Available options
--v, --verbose            # Enable detailed DEBUG logging
--q, --quiet              # Suppress console output except errors
-```
-
-**Command-Line Examples:**
-```bash
-# Silent background sync for automation
-track-portfolio --quiet
-
-# Verbose logging for troubleshooting
-track-portfolio --verbose
-
-# View live logs
-tail -f logs/portfolio_tracker.log
-```
+**Use Cases for CLI:**
+- 🔧 Debugging API connections and data sync issues
+- 🤖 Automation scripts and scheduled tasks
+- ⚡ Quick portfolio summaries and status checks
+- 🧪 Testing new features and configurations
 
 ### Recommended Workflow
 
-1. **First Setup**: Set `BINANCE_TESTNET=true` and run option 1 (Full Sync & Analysis) to test safely
-2. **Production Setup**: Set `BINANCE_TESTNET=false` for real portfolio tracking
-3. **Daily Monitoring**: Option 2 (Quick Portfolio Summary) for fast portfolio updates
-4. **Technical Analysis**: Option 3 (View Crypto Trends) for multi-timeframe market analysis
-5. **Strategic Planning**: Option 4 (Rebalance Suggestions) for allocation-based recommendations
-6. **Strategy Testing**: Options 8-9 for backtesting before live trading
-7. **Live Execution**: Options 5-6 for automated rebalancing or manual trading (use with extreme caution)
+1. **First Setup**: Set `testnet_mode=true` and use the web UI for initial testing
+2. **Production Setup**: Set `testnet_mode=false` for real portfolio tracking
+3. **Daily Monitoring**: Use the web UI for portfolio overview and management
+4. **Technical Analysis**: Use web UI's trend analysis for multi-timeframe market insights
+5. **Strategic Planning**: Use web UI's rebalancing interface for allocation management
+6. **Strategy Testing**: Use web UI's backtesting tools before live trading
+7. **Live Execution**: Use web UI's trading interface for manual and automated trades
+8. **Debugging**: Use CLI when troubleshooting API or configuration issues
 
 ## 📊 Understanding the Output
 
@@ -570,7 +584,7 @@ uv run pytest tests/test_portfolio_tracker.py
 
 #### Testnet vs Production Confusion
 - **Check Database**: Look for "TESTNET MODE" indicator in portfolio summary
-- **Verify Settings**: Ensure `BINANCE_TESTNET` is set correctly in `.env`
+- **Verify Settings**: Ensure `testnet_mode` is set correctly in `default_config.json`
 - **Separate Databases**: Testnet uses `testnet_portfolio.db`, production uses `portfolio.db`
 
 #### API Connection Failed
@@ -630,7 +644,7 @@ rm data/portfolio.db data/testnet_portfolio.db
 ## 🔒 Security Best Practices
 
 ### API Security
-1. **Start with Testnet**: Always test with `BINANCE_TESTNET=true` first
+1. **Start with Testnet**: Always test with `testnet_mode=true` first
 2. **Use Read-Only Keys**: Enable only "Enable Reading" permission unless live trading is necessary
 3. **Enable IP Whitelisting**: Restrict API access to your IP address
 4. **Rotate API Keys Regularly**: Monthly rotation recommended
@@ -668,7 +682,7 @@ This software is for **educational and informational purposes only** and does **
 ### Testnet vs Production
 - **Always test on testnet first** before using real funds
 - **Testnet data is separate** from production data
-- **Set `BINANCE_TESTNET=false`** only when ready for real trading
+- **Set `testnet_mode=false`** only when ready for real trading
 - **Double-check database indicator** in portfolio summaries
 
 ### Strategy Performance Warning
@@ -710,26 +724,17 @@ All files are organized in the `data/` directory:
 
 ## 🚀 Roadmap
 
-### Immediate Improvements (v2.2)
-- [ ] Enhanced error recovery for network interruptions
-- [ ] Manual transaction import from CSV files
-- [ ] Additional exchange integrations (Coinbase Pro, Kraken)
-- [ ] Mobile app companion for portfolio monitoring
+### Next Major Features
 - [ ] Real-time price alerts and notifications
-
-### Medium-term Goals (v2.5)
-- [ ] Tax reporting features (Form 8949, capital gains calculation)
-- [ ] DeFi protocol integration (Uniswap, Compound, Aave)
-- [ ] Advanced options and futures tracking
+- [ ] Manual transaction import from CSV files
+- [ ] Additional exchange integrations
 - [ ] Multi-portfolio management for different strategies
-- [ ] Social trading features and strategy sharing
+- [ ] Advanced options and futures tracking
+- [ ] Integrate a gem sniper tool for new token detection and analysis (BNB Chain, honeypot check, liquidity, etc.)
 
-### Long-term Vision (v3.0)
-- [ ] Web-based dashboard with real-time updates
-- [ ] Machine learning-powered strategy optimization
-- [ ] Cross-chain asset tracking (Ethereum, BSC, Polygon)
-- [ ] Professional-grade risk management tools
-- [ ] Institutional features for larger portfolios
+### Web UI Future
+- The current web UI is built with Streamlit for rapid development and ease of use.
+- **Planned:** Upgrade to a React-based frontend for a more modern, responsive, and customizable user experience.
 
 ## 🤝 Contributing
 

@@ -25,7 +25,10 @@ from crypto_portfolio_tracker.strategy_backtester import StrategyBacktester
 from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
-from crypto_portfolio_tracker.exceptions import NetworkOperationError, NetworkUnavailableError
+from crypto_portfolio_tracker.exceptions import (
+    NetworkOperationError,
+    NetworkUnavailableError,
+)
 from crypto_portfolio_tracker.utils import (
     parse_df_string,
     format_percent,
@@ -47,11 +50,12 @@ st.set_page_config(
     page_title="Crypto Portfolio Tracker",
     page_icon="🚀",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # Custom CSS for professional styling
-st.markdown("""
+st.markdown(
+    """
 <style>
     .main-header {
         background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
@@ -106,7 +110,9 @@ st.markdown("""
         margin: 0.5rem 0;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 class PortfolioDashboard:
@@ -120,13 +126,13 @@ class PortfolioDashboard:
 
     def initialize_session_state(self):
         """Initialize Streamlit session state variables"""
-        if 'tracker_initialized' not in st.session_state:
+        if "tracker_initialized" not in st.session_state:
             st.session_state.tracker_initialized = False
-        if 'offline_mode' not in st.session_state:
+        if "offline_mode" not in st.session_state:
             st.session_state.offline_mode = False
-        if 'last_sync' not in st.session_state:
+        if "last_sync" not in st.session_state:
             st.session_state.last_sync = None
-        if 'portfolio_metrics' not in st.session_state:
+        if "portfolio_metrics" not in st.session_state:
             st.session_state.portfolio_metrics = None
         if "confirm_delete" not in st.session_state:
             st.session_state["confirm_delete"] = None
@@ -136,11 +142,13 @@ class PortfolioDashboard:
         try:
             self.config_manager = ConfigManager()
             logging_config = self.config_manager.config.get("logging", {})
-            log_level_str = level_override or logging_config.get("level", "INFO").upper()
+            log_level_str = (
+                level_override or logging_config.get("level", "INFO").upper()
+            )
             log_level = getattr(logging, log_level_str, logging.INFO)
             logging.basicConfig(
                 level=log_level,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             )
             logging.getLogger("httpx").setLevel(logging.WARNING)
         except Exception as e:
@@ -148,7 +156,10 @@ class PortfolioDashboard:
 
     def initialize_tracker(self):
         """Initialize the portfolio tracker and always set self.tracker"""
-        if st.session_state.get('tracker_initialized', False) and self.tracker is not None:
+        if (
+            st.session_state.get("tracker_initialized", False)
+            and self.tracker is not None
+        ):
             return self.tracker
         try:
             with st.spinner("Initializing Portfolio Tracker..."):
@@ -160,7 +171,9 @@ class PortfolioDashboard:
         except NetworkUnavailableError:
             st.warning("⚠️ Network appears unavailable. Running in offline mode.")
             try:
-                self.tracker = CryptoPortfolioTracker(self.config_manager, force_offline=True)
+                self.tracker = CryptoPortfolioTracker(
+                    self.config_manager, force_offline=True
+                )
                 st.session_state.tracker_initialized = True
                 st.session_state.offline_mode = True
                 self.offline_mode = True
@@ -174,35 +187,47 @@ class PortfolioDashboard:
 
     def render_header(self):
         """Render the main header"""
-        st.markdown("""
+        st.markdown(
+            """
         <div class="main-header">
             <h1>🚀 Crypto Portfolio Tracker v2.1.0</h1>
             <p>Professional Portfolio Management & Analysis Dashboard</p>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
     def render_status_indicator(self):
         """Render connection status indicator"""
         if st.session_state.offline_mode:
-            st.markdown("""
+            st.markdown(
+                """
             <div style="text-align: center; padding: 0.5rem; background: #f8d7da; border-radius: 8px; margin-bottom: 1rem;">
                 <span class="status-offline">⚠️ OFFLINE MODE - Network features are disabled</span>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
         else:
-            st.markdown("""
+            st.markdown(
+                """
             <div style="text-align: center; padding: 0.5rem; background: #d4edda; border-radius: 8px; margin-bottom: 1rem;">
                 <span class="status-online">✅ ONLINE - All features available</span>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
 
     def render_sidebar(self):
         """Render the sidebar with navigation and controls"""
-        st.sidebar.markdown("""
+        st.sidebar.markdown(
+            """
         <div class="sidebar-section">
             <h3>📊 Dashboard Controls</h3>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
         # Navigation
         page = st.sidebar.radio(
@@ -215,14 +240,17 @@ class PortfolioDashboard:
                 "🧪 Backtest",
                 "🗄️ Database",
                 "⚙️ Settings",
-            ]
+            ],
         )
 
-        st.sidebar.markdown("""
+        st.sidebar.markdown(
+            """
         <div class="sidebar-section">
             <h4>⚡ Quick Actions</h4>
         </div>
-        """, unsafe_allow_html=True)
+        """,
+            unsafe_allow_html=True,
+        )
 
         if st.sidebar.button("🔄 Sync Portfolio"):
             self.run_full_sync()
@@ -235,11 +263,14 @@ class PortfolioDashboard:
 
         # Last sync info
         if st.session_state.last_sync:
-            st.sidebar.markdown(f"""
+            st.sidebar.markdown(
+                f"""
             <div class="sidebar-section">
                 <small>Last Sync: {st.session_state.last_sync}</small>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
 
         return page
 
@@ -253,7 +284,9 @@ class PortfolioDashboard:
             with st.spinner("Running full sync and analysis..."):
                 metrics = asyncio.run(tracker.run_full_sync())
                 st.session_state.portfolio_metrics = metrics
-                st.session_state.last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.last_sync = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 st.success("✅ Full sync completed successfully!")
         except Exception as e:
             st.error(f"Sync failed: {str(e)}")
@@ -285,41 +318,41 @@ class PortfolioDashboard:
         with col1:
             st.metric(
                 label="Total Invested Capital",
-                value=format_usd(metrics.get('total_invested_capital', 0)),
-                help="The total amount of USD you have put into the portfolio."
+                value=format_usd(metrics.get("total_invested_capital", 0)),
+                help="The total amount of USD you have put into the portfolio.",
             )
 
         with col2:
             st.metric(
                 label="Total Cost Basis",
-                value=format_usd(metrics.get('total_cost_basis_usd', 0)),
-                help="The total amount of USD you have put into the portfolio from FIFO."
+                value=format_usd(metrics.get("total_cost_basis_usd", 0)),
+                help="The total amount of USD you have put into the portfolio from FIFO.",
             )
 
         with col3:
             st.metric(
                 label="Total Portfolio Value",
-                value=format_usd(metrics.get('total_value_usd', 0)),
-                help="Current portfolio total value."
+                value=format_usd(metrics.get("total_value_usd", 0)),
+                help="Current portfolio total value.",
             )
 
         with col4:
             st.metric(
                 label="Overall P/L",
-                value=format_usd(metrics.get('overall_pl_usd', 0)),
-                delta=format_percent(metrics.get('overall_pl_percent', 0)),
-                help="Profit/Loss based on Total Invested Capital."
+                value=format_usd(metrics.get("overall_pl_usd", 0)),
+                delta=format_percent(metrics.get("overall_pl_percent", 0)),
+                help="Profit/Loss based on Total Invested Capital.",
             )
 
         with col5:
             st.metric(
                 label="Unrealized P/L (FIFO)",
-                value=format_usd(metrics.get('unrealized_pl_usd', 0)),
-                delta=format_percent(metrics.get('unrealized_pl_percent', 0)),
-                help="Profit/Loss based on FIFO Cost Basis."
+                value=format_usd(metrics.get("unrealized_pl_usd", 0)),
+                delta=format_percent(metrics.get("unrealized_pl_percent", 0)),
+                help="Profit/Loss based on FIFO Cost Basis.",
             )
 
-        st.markdown("---") # Visual separator
+        st.markdown("---")  # Visual separator
 
         # --- Row 2: Value Breakdown ---
         st.markdown("#### 💳 Wallet & Capital Breakdown")
@@ -328,22 +361,22 @@ class PortfolioDashboard:
         with col1:
             st.metric(
                 label="Spot & Earn Value",
-                value=format_usd(metrics.get('spot_earn_value_usd', 0))
+                value=format_usd(metrics.get("spot_earn_value_usd", 0)),
             )
 
         with col2:
             st.metric(
                 label="Futures Wallet Value",
-                value=format_usd(metrics.get('futures_value_usd', 0))
+                value=format_usd(metrics.get("futures_value_usd", 0)),
             )
 
         with col3:
             st.metric(
                 label="Funding Wallet Value",
-                value=format_usd(metrics.get('funding_value_usd', 0))
+                value=format_usd(metrics.get("funding_value_usd", 0)),
             )
 
-        st.markdown("---") # Visual separator
+        st.markdown("---")  # Visual separator
 
         # --- Holdings DataFrames ---
         # The dataframes are already well-structured, so we'll keep them as is.
@@ -354,7 +387,10 @@ class PortfolioDashboard:
         else:
             all_df = metrics.get("holdings_df")
         if all_df is not None:
-            st.dataframe(build_holdings_table(all_df, alloc_col="allocation"), use_container_width=True)
+            st.dataframe(
+                build_holdings_table(all_df, alloc_col="allocation"),
+                use_container_width=True,
+            )
         else:
             st.info("No holdings data available.")
 
@@ -365,7 +401,10 @@ class PortfolioDashboard:
         else:
             core_df = metrics.get("core_holdings_df")
         if core_df is not None:
-            st.dataframe(build_holdings_table(core_df, alloc_col="core_allocation"), use_container_width=True)
+            st.dataframe(
+                build_holdings_table(core_df, alloc_col="core_allocation"),
+                use_container_width=True,
+            )
         else:
             st.info("No core holdings data available.")
 
@@ -376,7 +415,10 @@ class PortfolioDashboard:
         else:
             other_df = metrics.get("other_holdings_df")
         if other_df is not None:
-            st.dataframe(build_holdings_table(other_df, alloc_col="allocation"), use_container_width=True)
+            st.dataframe(
+                build_holdings_table(other_df, alloc_col="allocation"),
+                use_container_width=True,
+            )
         else:
             st.info("No other holdings data available.")
 
@@ -417,28 +459,34 @@ class PortfolioDashboard:
             return
 
         # --- Load data required for the home page ---
-        holdings_df = parse_df_string(metrics.get("holdings_df")) if isinstance(metrics.get("holdings_df"), str) else metrics.get("holdings_df")
+        holdings_df = (
+            parse_df_string(metrics.get("holdings_df"))
+            if isinstance(metrics.get("holdings_df"), str)
+            else metrics.get("holdings_df")
+        )
         target_allocation = self.config_manager.config.get("target_allocation", {})
         try:
             snapshots = tracker.db_manager.get_all_snapshots()
-            snapshots = snapshots[~pd.isna(snapshots['timestamp'])].copy()
+            snapshots = snapshots[~pd.isna(snapshots["timestamp"])].copy()
             snapshots = snapshots.drop_duplicates(subset=["timestamp"])
         except Exception:
             snapshots = None
 
         # --- Create a cleaner tab layout ---
-        tab_perf, tab_viz, tab_tax, tab_log, tab_export = st.tabs([
-            "📊 Performance",
-            "📈 Visualizations",
-            "🧾 Tax Report",
-            "📝 Trade Log",
-            "📂 View Exports"
-        ])
+        tab_perf, tab_viz, tab_tax, tab_log, tab_export = st.tabs(
+            [
+                "📊 Performance",
+                "📈 Visualizations",
+                "🧾 Tax Report",
+                "📝 Trade Log",
+                "📂 View Exports",
+            ]
+        )
 
         # --- 1. Portfolio Performance Tab ---
         with tab_perf:
             st.header("📊 Portfolio Performance")
-            self.display_metrics(metrics) # Using the improved metric card layout
+            self.display_metrics(metrics)  # Using the improved metric card layout
 
             st.markdown("---")
             st.info("For a full, professional report, use the export buttons below.")
@@ -460,7 +508,7 @@ class PortfolioDashboard:
                 "Portfolio Allocation (Pie Chart)",
                 "Current vs. Target Allocation",
                 "Unrealized P/L by Asset",
-                "Portfolio Value Over Time"
+                "Portfolio Value Over Time",
             ]
             chart_choice = st.selectbox("Select a chart to display:", chart_options)
             st.markdown("---")
@@ -475,12 +523,17 @@ class PortfolioDashboard:
                         names="symbol",
                         values="value_usd",
                         title="Portfolio Allocation by Value",
-                        hole=0.4
+                        hole=0.4,
                     )
                     st.plotly_chart(fig_plotly, use_container_width=True)
                     # Matplotlib chart for universal PNG download
                     fig, ax = plt.subplots()
-                    ax.pie(pie_df["value_usd"], labels=pie_df["symbol"], autopct='%1.1f%%', startangle=90)
+                    ax.pie(
+                        pie_df["value_usd"],
+                        labels=pie_df["symbol"],
+                        autopct="%1.1f%%",
+                        startangle=90,
+                    )
                     ax.set_title("Portfolio Allocation by Value")
                     buf = io.BytesIO()
                     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -489,7 +542,7 @@ class PortfolioDashboard:
                         "Download Pie Chart",
                         buf,
                         file_name="portfolio_allocation_pie.png",
-                        mime="image/png"
+                        mime="image/png",
                     )
                     plt.close(fig)
                 else:
@@ -497,40 +550,59 @@ class PortfolioDashboard:
 
             elif chart_choice == "Current vs. Target Allocation":
                 st.subheader("Current vs. Target Allocation")
-                if holdings_df is not None and not holdings_df.empty and target_allocation:
-                    current_alloc = holdings_df.set_index('symbol')['allocation'] * 100
+                if (
+                    holdings_df is not None
+                    and not holdings_df.empty
+                    and target_allocation
+                ):
+                    current_alloc = holdings_df.set_index("symbol")["allocation"] * 100
                     target_alloc = pd.Series(target_allocation) * 100
-                    comparison_df = pd.DataFrame({
-                        'Current (%)': current_alloc,
-                        'Target (%)': target_alloc
-                    }).fillna(0)
+                    comparison_df = pd.DataFrame(
+                        {"Current (%)": current_alloc, "Target (%)": target_alloc}
+                    ).fillna(0)
                     # Plotly chart for interactivity
                     fig_plotly = go.Figure()
-                    fig_plotly.add_trace(go.Bar(
-                        x=comparison_df.index,
-                        y=comparison_df['Current (%)'],
-                        name='Current (%)',
-                        marker_color='indigo'
-                    ))
-                    fig_plotly.add_trace(go.Bar(
-                        x=comparison_df.index,
-                        y=comparison_df['Target (%)'],
-                        name='Target (%)',
-                        marker_color='orange'
-                    ))
+                    fig_plotly.add_trace(
+                        go.Bar(
+                            x=comparison_df.index,
+                            y=comparison_df["Current (%)"],
+                            name="Current (%)",
+                            marker_color="indigo",
+                        )
+                    )
+                    fig_plotly.add_trace(
+                        go.Bar(
+                            x=comparison_df.index,
+                            y=comparison_df["Target (%)"],
+                            name="Target (%)",
+                            marker_color="orange",
+                        )
+                    )
                     fig_plotly.update_layout(
-                        barmode='group',
+                        barmode="group",
                         title="Current vs. Target Portfolio Allocation",
                         xaxis_title="Asset",
-                        yaxis_title="Allocation (%)"
+                        yaxis_title="Allocation (%)",
                     )
                     st.plotly_chart(fig_plotly, use_container_width=True)
                     # Matplotlib chart for universal PNG download
                     fig, ax = plt.subplots()
                     width = 0.35
                     x = range(len(comparison_df.index))
-                    ax.bar([i - width/2 for i in x], comparison_df['Current (%)'], width=width, label='Current (%)', color='indigo')
-                    ax.bar([i + width/2 for i in x], comparison_df['Target (%)'], width=width, label='Target (%)', color='orange')
+                    ax.bar(
+                        [i - width / 2 for i in x],
+                        comparison_df["Current (%)"],
+                        width=width,
+                        label="Current (%)",
+                        color="indigo",
+                    )
+                    ax.bar(
+                        [i + width / 2 for i in x],
+                        comparison_df["Target (%)"],
+                        width=width,
+                        label="Target (%)",
+                        color="orange",
+                    )
                     ax.set_xticks(list(x))
                     ax.set_xticklabels(comparison_df.index, rotation=45)
                     ax.set_ylabel("Allocation (%)")
@@ -544,7 +616,7 @@ class PortfolioDashboard:
                         "Download Allocation Comparison",
                         buf,
                         file_name="allocation_comparison_bar.png",
-                        mime="image/png"
+                        mime="image/png",
                     )
                     plt.close(fig)
                 else:
@@ -552,29 +624,33 @@ class PortfolioDashboard:
 
             elif chart_choice == "Unrealized P/L by Asset":
                 st.subheader("Unrealized Profit/Loss (P/L) by Asset")
-                if holdings_df is not None and not holdings_df.empty and "unrealized_pl_usd" in holdings_df.columns:
-                    pl_df = holdings_df.set_index('symbol')["unrealized_pl_usd"].sort_values()
-                    colors = ['red' if x < 0 else 'green' for x in pl_df]
+                if (
+                    holdings_df is not None
+                    and not holdings_df.empty
+                    and "unrealized_pl_usd" in holdings_df.columns
+                ):
+                    pl_df = holdings_df.set_index("symbol")[
+                        "unrealized_pl_usd"
+                    ].sort_values()
+                    colors = ["red" if x < 0 else "green" for x in pl_df]
                     # Plotly chart for interactivity
-                    fig_plotly = go.Figure([go.Bar(
-                        x=pl_df.index,
-                        y=pl_df.values,
-                        marker_color=colors
-                    )])
+                    fig_plotly = go.Figure(
+                        [go.Bar(x=pl_df.index, y=pl_df.values, marker_color=colors)]
+                    )
                     fig_plotly.update_layout(
                         title="Unrealized P/L by Asset",
                         xaxis_title="Asset",
-                        yaxis_title="Unrealized P/L (USD)"
+                        yaxis_title="Unrealized P/L (USD)",
                     )
                     st.plotly_chart(fig_plotly, use_container_width=True)
                     # Matplotlib chart for universal PNG download
                     fig, ax = plt.subplots()
-                    bar_colors = ['green' if v >= 0 else 'red' for v in pl_df.values]
+                    bar_colors = ["green" if v >= 0 else "red" for v in pl_df.values]
                     ax.bar(pl_df.index, pl_df.values, color=bar_colors)
                     ax.set_ylabel("Unrealized P/L (USD)")
                     ax.set_title("Unrealized P/L by Asset")
-                    ax.axhline(0, color='black', linewidth=0.8)
-                    ax.tick_params(axis='x', rotation=45)  # <-- Use this line
+                    ax.axhline(0, color="black", linewidth=0.8)
+                    ax.tick_params(axis="x", rotation=45)  # <-- Use this line
                     fig.tight_layout()
                     buf = io.BytesIO()
                     fig.savefig(buf, format="png", bbox_inches="tight")
@@ -583,7 +659,7 @@ class PortfolioDashboard:
                         "Download P/L Chart",
                         buf,
                         file_name="pl_by_asset_bar.png",
-                        mime="image/png"
+                        mime="image/png",
                     )
                     plt.close(fig)
                 else:
@@ -595,10 +671,14 @@ class PortfolioDashboard:
                     snapshots = snapshots.copy()
                     snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
                     snapshots = snapshots.dropna(subset=["timestamp"])
-                    snapshots = snapshots[snapshots["timestamp"].dt.year > 2000]  # Filter out weird old dates
+                    snapshots = snapshots[
+                        snapshots["timestamp"].dt.year > 2000
+                    ]  # Filter out weird old dates
 
                     # Drop duplicate timestamps, keeping the last entry for each timestamp
-                    snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
+                    snapshots = snapshots.sort_values("timestamp").drop_duplicates(
+                        subset=["timestamp"], keep="last"
+                    )
 
                     # Plotly chart for interactivity
                     fig_plotly = px.line(
@@ -607,20 +687,25 @@ class PortfolioDashboard:
                         y="total_value_usd",
                         title="Portfolio Value Over Time",
                         markers=True,
-                        labels={"total_value_usd": "Total Value (USD)", "timestamp": "Date"}
+                        labels={
+                            "total_value_usd": "Total Value (USD)",
+                            "timestamp": "Date",
+                        },
                     )
                     fig_plotly.update_xaxes(
                         tickformat="%Y-%m-%d",  # Format as date
-                        ticklabelmode="period"
+                        ticklabelmode="period",
                     )
                     st.plotly_chart(fig_plotly, use_container_width=True)
                     # Matplotlib chart for universal PNG download
                     fig, ax = plt.subplots()
-                    ax.plot(snapshots["timestamp"], snapshots["total_value_usd"], marker='o')
+                    ax.plot(
+                        snapshots["timestamp"], snapshots["total_value_usd"], marker="o"
+                    )
                     ax.set_xlabel("Date")
                     ax.set_ylabel("Total Value (USD)")
                     ax.set_title("Portfolio Value Over Time")
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
                     fig.autofmt_xdate()
                     fig.tight_layout()
                     buf = io.BytesIO()
@@ -630,7 +715,7 @@ class PortfolioDashboard:
                         "Download Value History",
                         buf,
                         file_name="portfolio_value_history.png",
-                        mime="image/png"
+                        mime="image/png",
                     )
                     plt.close(fig)
                 else:
@@ -650,47 +735,61 @@ class PortfolioDashboard:
                         st.info("No taxable events (sales) found.")
                     else:
                         # Remove timezone from datetime columns before processing
-                        if 'date' in tax_df.columns and hasattr(tax_df['date'], 'dt'):
-                            tax_df['date'] = tax_df['date'].dt.tz_localize(None)
+                        if "date" in tax_df.columns and hasattr(tax_df["date"], "dt"):
+                            tax_df["date"] = tax_df["date"].dt.tz_localize(None)
 
                         tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
 
                         # Rename columns for user-friendliness
-                        tax_df_renamed = tax_df.rename(columns={
-                            "date": "Date",
-                            "symbol": "Asset",
-                            "quantity": "Quantity",
-                            "proceeds_usd": "Proceeds (USD)",
-                            "cost_basis_usd": "Cost Basis (USD)",
-                            "gain_usd": "Gain/Loss (USD)",
-                            "year": "Year"
-                        })
+                        tax_df_renamed = tax_df.rename(
+                            columns={
+                                "date": "Date",
+                                "symbol": "Asset",
+                                "quantity": "Quantity",
+                                "proceeds_usd": "Proceeds (USD)",
+                                "cost_basis_usd": "Cost Basis (USD)",
+                                "gain_usd": "Gain/Loss (USD)",
+                                "year": "Year",
+                            }
+                        )
 
                         st.dataframe(tax_df_renamed, use_container_width=True)
 
                         st.markdown("#### Summary of Realized Gains")
-                        summary = tax_df.groupby("symbol").agg(
-                            total_gain_usd=("gain_usd", "sum"),
-                            total_proceeds_usd=("proceeds_usd", "sum"),
-                            total_cost_basis_usd=("cost_basis_usd", "sum")
-                        ).reset_index()
+                        summary = (
+                            tax_df.groupby("symbol")
+                            .agg(
+                                total_gain_usd=("gain_usd", "sum"),
+                                total_proceeds_usd=("proceeds_usd", "sum"),
+                                total_cost_basis_usd=("cost_basis_usd", "sum"),
+                            )
+                            .reset_index()
+                        )
 
                         # Rename columns for summary
-                        summary_renamed = summary.rename(columns={
-                            "symbol": "Asset",
-                            "total_gain_usd": "Total Gain/Loss (USD)",
-                            "total_proceeds_usd": "Total Proceeds (USD)",
-                            "total_cost_basis_usd": "Total Cost Basis (USD)"
-                        })
+                        summary_renamed = summary.rename(
+                            columns={
+                                "symbol": "Asset",
+                                "total_gain_usd": "Total Gain/Loss (USD)",
+                                "total_proceeds_usd": "Total Proceeds (USD)",
+                                "total_cost_basis_usd": "Total Cost Basis (USD)",
+                            }
+                        )
 
                         st.dataframe(summary_renamed, use_container_width=True)
 
                         st.markdown("---")
-                        export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+                        export_dir = Path(
+                            self.config_manager.config.get("exports", {}).get(
+                                "path", "data/exports/"
+                            )
+                        )
                         export_dir.mkdir(parents=True, exist_ok=True)
                         if st.button("Export Full Tax Report to Excel"):
                             # Make sure all datetime columns are timezone-unaware before export
-                            datetime_cols = tax_df.select_dtypes(include=['datetime64[ns, UTC]']).columns
+                            datetime_cols = tax_df.select_dtypes(
+                                include=["datetime64[ns, UTC]"]
+                            ).columns
                             for col in datetime_cols:
                                 tax_df[col] = tax_df[col].dt.tz_localize(None)
 
@@ -711,32 +810,63 @@ class PortfolioDashboard:
                 else:
                     # Clean up columns for display
                     col_map = {
-                        "timestamp": "Date/Time", "symbol": "Asset", "type": "Type",
-                        "quantity": "Quantity", "price": "Price (USD)", "fee_usd": "Fee (USD)",
-                        "side": "Side", "notes": "Notes", "source": "Trade Source",
+                        "timestamp": "Date/Time",
+                        "symbol": "Asset",
+                        "type": "Type",
+                        "quantity": "Quantity",
+                        "price": "Price (USD)",
+                        "fee_usd": "Fee (USD)",
+                        "side": "Side",
+                        "notes": "Notes",
+                        "source": "Trade Source",
                     }
                     desired_order = [
-                        "Date/Time", "Asset", "Type", "Side", "Quantity", "Price (USD)",
-                        "Fee (USD)", "Trade Source", "Notes"
+                        "Date/Time",
+                        "Asset",
+                        "Type",
+                        "Side",
+                        "Quantity",
+                        "Price (USD)",
+                        "Fee (USD)",
+                        "Trade Source",
+                        "Notes",
                     ]
-                    drop_cols = [col for col in ["id", "asset_id"] if col in tx_df.columns]
-                    display_df = tx_df.drop(columns=drop_cols, errors="ignore").rename(columns=col_map)
+                    drop_cols = [
+                        col for col in ["id", "asset_id"] if col in tx_df.columns
+                    ]
+                    display_df = tx_df.drop(columns=drop_cols, errors="ignore").rename(
+                        columns=col_map
+                    )
 
-                    ordered_cols = [col for col in desired_order if col in display_df.columns]
+                    ordered_cols = [
+                        col for col in desired_order if col in display_df.columns
+                    ]
                     display_df = display_df[ordered_cols].reset_index(drop=True)
 
                     st.dataframe(display_df, use_container_width=True)
-                    st.download_button("Download Trade Log (CSV)", tx_df.to_csv(index=False), "trade_log.csv")
+                    st.download_button(
+                        "Download Trade Log (CSV)",
+                        tx_df.to_csv(index=False),
+                        "trade_log.csv",
+                    )
             except Exception as e:
                 st.error(f"Failed to load transactions: {e}")
 
         # --- 4. View Exports Tab ---
         with tab_export:
             st.header("📂 View Exported Data")
-            export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+            export_dir = Path(
+                self.config_manager.config.get("exports", {}).get(
+                    "path", "data/exports/"
+                )
+            )
             export_dir.mkdir(parents=True, exist_ok=True)
 
-            files = sorted([f for f in export_dir.glob("*.*")], key=lambda x: x.stat().st_mtime, reverse=True)
+            files = sorted(
+                [f for f in export_dir.glob("*.*")],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True,
+            )
 
             if not files:
                 st.info("No exported files found.")
@@ -748,7 +878,11 @@ class PortfolioDashboard:
                 # --- Preview logic ---
                 try:
                     if selected_file.endswith((".csv", ".xlsx")):
-                        df = pd.read_csv(file_path) if selected_file.endswith(".csv") else pd.read_excel(file_path)
+                        df = (
+                            pd.read_csv(file_path)
+                            if selected_file.endswith(".csv")
+                            else pd.read_excel(file_path)
+                        )
                         st.dataframe(df)
                     elif selected_file.endswith(".html"):
                         with open(file_path, "r", encoding="utf-8") as f:
@@ -768,9 +902,19 @@ class PortfolioDashboard:
                 col1, col2 = st.columns(2)
                 with col1:
                     with open(file_path, "rb") as f:
-                        st.download_button("Download File", f, file_name=selected_file, use_container_width=True)
+                        st.download_button(
+                            "Download File",
+                            f,
+                            file_name=selected_file,
+                            use_container_width=True,
+                        )
                 with col2:
-                    if st.button("Delete File", key=f"delete_{selected_file}", use_container_width=True, type="primary"):
+                    if st.button(
+                        "Delete File",
+                        key=f"delete_{selected_file}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
                         try:
                             file_path.unlink()
                             st.success(f"Deleted {selected_file}")
@@ -780,20 +924,29 @@ class PortfolioDashboard:
 
     def render_market_trends(self):
         st.markdown("## 📈 Market Trends")
-        export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+        export_dir = Path(
+            self.config_manager.config.get("exports", {}).get("path", "data/exports/")
+        )
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Define get_trend_report
         @st.cache_data(show_spinner="Generating trend report...", ttl=300)
         def get_trend_report(config, _binance_client, timeframe):
-            from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
-            analyzer = CryptoTrendAnalyzer(config=config, binance_client=_binance_client)
+            from crypto_portfolio_tracker.crypto_trend_analyzer import (
+                CryptoTrendAnalyzer,
+            )
+
+            analyzer = CryptoTrendAnalyzer(
+                config=config, binance_client=_binance_client
+            )
             return asyncio.run(analyzer.generate_report(timeframe))
 
         # 2. Define the chart plotting function
         def plot_coin_chart(symbol, timeframe, config, binance_client):
             import matplotlib.pyplot as plt
-            from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
+            from crypto_portfolio_tracker.crypto_trend_analyzer import (
+                CryptoTrendAnalyzer,
+            )
             import numpy as np
             import pandas as pd
 
@@ -805,7 +958,9 @@ class PortfolioDashboard:
 
             period = settings.get("period", "1mo")
             interval = "1wk" if timeframe == "long_term" else "1d"
-            data = asyncio.run(analyzer.fetch_crypto_data_async(symbol, period, interval))
+            data = asyncio.run(
+                analyzer.fetch_crypto_data_async(symbol, period, interval)
+            )
             if data is None or data.empty:
                 st.warning(f"No data available for {symbol}.")
                 return
@@ -818,25 +973,35 @@ class PortfolioDashboard:
             if not pd.api.types.is_datetime64_any_dtype(indicator_df.index):
                 st.warning("Data index is not datetime. Cannot plot.")
                 return
-            indicator_df = indicator_df[~indicator_df.index.duplicated(keep='first')]
+            indicator_df = indicator_df[~indicator_df.index.duplicated(keep="first")]
             indicator_df = indicator_df[~indicator_df.index.isna()]
             indicator_df = indicator_df.sort_index()
 
             # Require a minimum number of rows for meaningful plotting
             min_required_rows = 30
             if len(indicator_df) < min_required_rows:
-                st.warning(f"Not enough data to plot a meaningful chart (need at least {min_required_rows} rows, got {len(indicator_df)}).")
+                st.warning(
+                    f"Not enough data to plot a meaningful chart (need at least {min_required_rows} rows, got {len(indicator_df)})."
+                )
                 return
 
             # Check for all-empty rows (all columns are NaN)
-            if indicator_df.dropna(how='all').empty:
-                st.warning("No valid data to plot (all rows are empty or all columns are NaN).")
+            if indicator_df.dropna(how="all").empty:
+                st.warning(
+                    "No valid data to plot (all rows are empty or all columns are NaN)."
+                )
                 return
 
             # Check for all-NaN in the columns you want to plot
-            plot_cols = ['Close']
-            if all(indicator_df[col].dropna().empty for col in plot_cols if col in indicator_df.columns):
-                st.warning("No valid data to plot (all values in plot columns are NaN).")
+            plot_cols = ["Close"]
+            if all(
+                indicator_df[col].dropna().empty
+                for col in plot_cols
+                if col in indicator_df.columns
+            ):
+                st.warning(
+                    "No valid data to plot (all values in plot columns are NaN)."
+                )
                 return
 
             # Limit to last 500 rows for safety
@@ -844,24 +1009,47 @@ class PortfolioDashboard:
                 indicator_df = indicator_df.tail(500)
 
             # Only now is it safe to plot!
-            fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [2, 1, 1]})
-            fig.suptitle(f"{symbol} Price & Indicators ({timeframe.replace('_', ' ').title()})", fontsize=16)
+            fig, axs = plt.subplots(
+                3,
+                1,
+                figsize=(10, 8),
+                sharex=True,
+                gridspec_kw={"height_ratios": [2, 1, 1]},
+            )
+            fig.suptitle(
+                f"{symbol} Price & Indicators ({timeframe.replace('_', ' ').title()})",
+                fontsize=16,
+            )
 
             # --- Price and SMAs ---
-            axs[0].plot(indicator_df.index, indicator_df['Close'], label='Close', color='blue')
-            sma_short = settings.get('sma_short_window')
-            sma_long = settings.get('sma_long_window')
+            axs[0].plot(
+                indicator_df.index, indicator_df["Close"], label="Close", color="blue"
+            )
+            sma_short = settings.get("sma_short_window")
+            sma_long = settings.get("sma_long_window")
             if sma_short and f"SMA_{sma_short}" in indicator_df.columns:
-                axs[0].plot(indicator_df.index, indicator_df[f"SMA_{sma_short}"], label=f"SMA {sma_short}", color='orange')
+                axs[0].plot(
+                    indicator_df.index,
+                    indicator_df[f"SMA_{sma_short}"],
+                    label=f"SMA {sma_short}",
+                    color="orange",
+                )
             if sma_long and f"SMA_{sma_long}" in indicator_df.columns:
-                axs[0].plot(indicator_df.index, indicator_df[f"SMA_{sma_long}"], label=f"SMA {sma_long}", color='green')
+                axs[0].plot(
+                    indicator_df.index,
+                    indicator_df[f"SMA_{sma_long}"],
+                    label=f"SMA {sma_long}",
+                    color="green",
+                )
             # Support/Resistance (last value)
-            if 'Low' in indicator_df.columns and 'High' in indicator_df.columns:
+            if "Low" in indicator_df.columns and "High" in indicator_df.columns:
                 window = 30 if len(indicator_df) > 30 else len(indicator_df)
-                support = indicator_df['Low'].tail(window).min()
-                resistance = indicator_df['High'].tail(window).max()
-                axs[0].axhline(support, color='red', linestyle='--', label='Support')
-                axs[0].axhline(resistance, color='purple', linestyle='--', label='Resistance')
+                support = indicator_df["Low"].tail(window).min()
+                resistance = indicator_df["High"].tail(window).max()
+                axs[0].axhline(support, color="red", linestyle="--", label="Support")
+                axs[0].axhline(
+                    resistance, color="purple", linestyle="--", label="Resistance"
+                )
             axs[0].set_ylabel("Price")
             axs[0].legend()
             axs[0].grid(True)
@@ -869,26 +1057,41 @@ class PortfolioDashboard:
             # --- RSI ---
             rsi_col = f"RSI_{analyzer.rsi_period}"
             if rsi_col in indicator_df.columns:
-                axs[1].plot(indicator_df.index, indicator_df[rsi_col], label='RSI', color='magenta')
-                axs[1].axhline(70, color='red', linestyle='--', linewidth=1)
-                axs[1].axhline(30, color='green', linestyle='--', linewidth=1)
+                axs[1].plot(
+                    indicator_df.index,
+                    indicator_df[rsi_col],
+                    label="RSI",
+                    color="magenta",
+                )
+                axs[1].axhline(70, color="red", linestyle="--", linewidth=1)
+                axs[1].axhline(30, color="green", linestyle="--", linewidth=1)
                 axs[1].set_ylabel("RSI")
                 axs[1].legend()
                 axs[1].grid(True)
             else:
-                axs[1].text(0.5, 0.5, "No RSI data", ha='center', va='center')
+                axs[1].text(0.5, 0.5, "No RSI data", ha="center", va="center")
 
             # --- MACD ---
             macd_col = "MACD_12_26_9"
             macds_col = "MACDs_12_26_9"
             if macd_col in indicator_df.columns and macds_col in indicator_df.columns:
-                axs[2].plot(indicator_df.index, indicator_df[macd_col], label='MACD', color='blue')
-                axs[2].plot(indicator_df.index, indicator_df[macds_col], label='Signal', color='orange')
+                axs[2].plot(
+                    indicator_df.index,
+                    indicator_df[macd_col],
+                    label="MACD",
+                    color="blue",
+                )
+                axs[2].plot(
+                    indicator_df.index,
+                    indicator_df[macds_col],
+                    label="Signal",
+                    color="orange",
+                )
                 axs[2].set_ylabel("MACD")
                 axs[2].legend()
                 axs[2].grid(True)
             else:
-                axs[2].text(0.5, 0.5, "No MACD data", ha='center', va='center')
+                axs[2].text(0.5, 0.5, "No MACD data", ha="center", va="center")
 
             plt.tight_layout(rect=[0, 0, 1, 0.97])
             st.pyplot(fig)
@@ -897,17 +1100,21 @@ class PortfolioDashboard:
         timeframe_map = {
             "Long-term (4 Years)": "long_term",
             "Swing (3 Months)": "swing",
-            "Day (1 Month)": "day"
+            "Day (1 Month)": "day",
         }
         timeframe_label = st.radio(
             "Select timeframe for trend analysis:",
             list(timeframe_map.keys()),
-            horizontal=True
+            horizontal=True,
         )
         timeframe = timeframe_map[timeframe_label]
 
         tracker = self.initialize_tracker()
-        report = get_trend_report(self.config_manager.config, getattr(tracker, "binance_client", None), timeframe)
+        report = get_trend_report(
+            self.config_manager.config,
+            getattr(tracker, "binance_client", None),
+            timeframe,
+        )
 
         if not report:
             st.error("Could not generate trend report. Please try again later.")
@@ -923,16 +1130,18 @@ class PortfolioDashboard:
         all_symbols = list(coin_analyses.keys())
         if all_symbols:
             if "current_chart_symbol" not in st.session_state:
-                st.session_state.current_chart_symbol = all_symbols[0]  # Default to first coin
-            
+                st.session_state.current_chart_symbol = all_symbols[
+                    0
+                ]  # Default to first coin
+
             # Dropdown for selecting coin
             selected_symbol = st.selectbox(
                 "Select coin to view chart:",
                 all_symbols,
                 key="unified_chart_coin_select",
-                index=all_symbols.index(st.session_state.current_chart_symbol)
+                index=all_symbols.index(st.session_state.current_chart_symbol),
             )
-            
+
             # Update session state with selected symbol
             st.session_state.current_chart_symbol = selected_symbol
 
@@ -941,7 +1150,7 @@ class PortfolioDashboard:
                 st.session_state.current_chart_symbol,
                 timeframe,
                 self.config_manager.config,
-                getattr(tracker, "binance_client", None)
+                getattr(tracker, "binance_client", None),
             )
         else:
             st.info("No coin data available for charting.")
@@ -950,15 +1159,19 @@ class PortfolioDashboard:
         st.markdown("### 🪙 Coin Analysis")
         rows = []
         for symbol, analysis in coin_analyses.items():
-            rows.append({
-                "Symbol": symbol,
-                "Price": f"${analysis.get('current_price', 0):,.2f}",
-                "Change (%)": f"{analysis.get('price_change_pct', 0):+.2f}",
-                "RSI": f"{analysis.get('rsi', 0):,.2f}",
-                "Support": f"${analysis.get('support_level', 0):,.2f}",
-                "Resistance": f"${analysis.get('resistance_level', 0):,.2f}",
-                "Active Conditions": ", ".join(analysis.get('active_conditions', []))
-            })
+            rows.append(
+                {
+                    "Symbol": symbol,
+                    "Price": f"${analysis.get('current_price', 0):,.2f}",
+                    "Change (%)": f"{analysis.get('price_change_pct', 0):+.2f}",
+                    "RSI": f"{analysis.get('rsi', 0):,.2f}",
+                    "Support": f"${analysis.get('support_level', 0):,.2f}",
+                    "Resistance": f"${analysis.get('resistance_level', 0):,.2f}",
+                    "Active Conditions": ", ".join(
+                        analysis.get("active_conditions", [])
+                    ),
+                }
+            )
         df = pd.DataFrame(rows)
         if not df.empty:
             st.dataframe(df, use_container_width=True)
@@ -966,18 +1179,22 @@ class PortfolioDashboard:
             st.info("No coin analysis data available.")
 
         # --- Prepare exportable data ---
-        df_export = pd.DataFrame([
-            {
-                "Symbol": symbol,
-                "Price": analysis.get('current_price', 0),
-                "Change (%)": analysis.get('price_change_pct', 0),
-                "RSI": analysis.get('rsi', 0),
-                "Support": analysis.get('support_level', 0),
-                "Resistance": analysis.get('resistance_level', 0),
-                "Active Conditions": ", ".join(analysis.get('active_conditions', []))
-            }
-            for symbol, analysis in coin_analyses.items()
-        ])
+        df_export = pd.DataFrame(
+            [
+                {
+                    "Symbol": symbol,
+                    "Price": analysis.get("current_price", 0),
+                    "Change (%)": analysis.get("price_change_pct", 0),
+                    "RSI": analysis.get("rsi", 0),
+                    "Support": analysis.get("support_level", 0),
+                    "Resistance": analysis.get("resistance_level", 0),
+                    "Active Conditions": ", ".join(
+                        analysis.get("active_conditions", [])
+                    ),
+                }
+                for symbol, analysis in coin_analyses.items()
+            ]
+        )
 
         # --- Export Section ---
         st.markdown("### 📤 Analysis Exports")
@@ -994,9 +1211,9 @@ class PortfolioDashboard:
                     format_func=lambda x: {
                         "CSV": "📄 CSV",
                         "JSON": "🔣 JSON",
-                        "HTML": "🌐 HTML"
+                        "HTML": "🌐 HTML",
                     }[x],
-                    horizontal=True
+                    horizontal=True,
                 )
 
             with col_action:
@@ -1013,9 +1230,14 @@ class PortfolioDashboard:
                                 with open(exported_file, "w") as f:
                                     json.dump(report, f, indent=2)
                             elif export_format == "HTML":
-                                from crypto_portfolio_tracker.exporters import HtmlExporter
+                                from crypto_portfolio_tracker.exporters import (
+                                    HtmlExporter,
+                                )
+
                                 exporter = HtmlExporter(self.config_manager.config)
-                                exported_file = exporter.export_trend_report(report, df_export)
+                                exported_file = exporter.export_trend_report(
+                                    report, df_export
+                                )
 
                             st.success(f"Successfully created {filename}")
                             st.rerun()
@@ -1031,7 +1253,7 @@ class PortfolioDashboard:
         all_files = sorted(
             list(export_dir.glob("trend_report_*.*")),
             key=lambda x: x.stat().st_mtime,
-            reverse=True
+            reverse=True,
         )
 
         if not all_files:
@@ -1042,9 +1264,9 @@ class PortfolioDashboard:
         selected_export = st.selectbox(
             "Select an export file:",
             options=all_files,
-            format_func=lambda x: f"{x.name} ({x.stat().st_size/1024:.1f} KB, {datetime.fromtimestamp(x.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})",
+            format_func=lambda x: f"{x.name} ({x.stat().st_size / 1024:.1f} KB, {datetime.fromtimestamp(x.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})",
             index=0,
-            help="Select an export file to view, download or delete"
+            help="Select an export file to view, download or delete",
         )
 
         # Initialize preview state if not exists
@@ -1066,8 +1288,10 @@ class PortfolioDashboard:
                     label="⬇️ Download",
                     data=file_bytes,
                     file_name=selected_export.name,
-                    mime=f"text/{selected_export.suffix[1:].lower()}" if selected_export.suffix != ".json" else "application/json",
-                    use_container_width=True
+                    mime=f"text/{selected_export.suffix[1:].lower()}"
+                    if selected_export.suffix != ".json"
+                    else "application/json",
+                    use_container_width=True,
                 )
 
         with col_delete:
@@ -1095,7 +1319,9 @@ class PortfolioDashboard:
                 elif filetype == "JSON":
                     st.json(json.load(open(preview_file)))
                 elif filetype == "HTML":
-                    st.components.v1.html(preview_file.read_text(), height=800, scrolling=True)
+                    st.components.v1.html(
+                        preview_file.read_text(), height=800, scrolling=True
+                    )
             except Exception as e:
                 st.error(f"Could not preview file: {str(e)}")
 
@@ -1105,6 +1331,7 @@ class PortfolioDashboard:
 
     def render_rebalancing(self):
         import asyncio
+
         st.markdown("## ⚖️ Portfolio Rebalancing")
 
         # Initialize session state
@@ -1125,26 +1352,28 @@ class PortfolioDashboard:
 
         # --- Generate Suggestions Section ---
         st.markdown("### 🔄 Portfolio Analysis")
-        
+
         col1, col2 = st.columns([2, 1])
         with col1:
             generate_clicked = st.button(
-                "🔍 Analyze Portfolio & Generate Suggestions", 
-                key="rebalance_generate_btn", 
+                "🔍 Analyze Portfolio & Generate Suggestions",
+                key="rebalance_generate_btn",
                 disabled=st.session_state.rebalance_executing,
                 use_container_width=True,
-                type="primary"
+                type="primary",
             )
-        
+
         with col2:
             if st.session_state.rebalance_metrics:
                 last_update = datetime.now().strftime("%H:%M:%S")
                 st.success(f"✅ Last updated: {last_update}")
 
         if generate_clicked or st.session_state.rebalance_metrics is None:
-            with st.spinner("🔄 Analyzing portfolio and generating rebalancing suggestions..."):
+            with st.spinner(
+                "🔄 Analyzing portfolio and generating rebalancing suggestions..."
+            ):
                 tracker = self.initialize_tracker()
-                
+
                 # 1. Get current metrics
                 metrics = asyncio.run(tracker.calculate_portfolio_metrics())
                 st.session_state.rebalance_metrics = metrics
@@ -1152,10 +1381,16 @@ class PortfolioDashboard:
                 # 2. Get USDT balance (Spot + Earn)
                 usdt_balance = 0.0
                 try:
-                    spot_balance = float(tracker.binance_client.get_asset_balance(asset="USDT").get("free", 0.0))
+                    spot_balance = float(
+                        tracker.binance_client.get_asset_balance(asset="USDT").get(
+                            "free", 0.0
+                        )
+                    )
                     usdt_balance += spot_balance
                     if not self.config_manager.is_testnet_mode:
-                        earn_positions = tracker.fetcher.fetch_simple_earn_balances(pd.DataFrame([{"symbol": "USDT"}]))
+                        earn_positions = tracker.fetcher.fetch_simple_earn_balances(
+                            pd.DataFrame([{"symbol": "USDT"}])
+                        )
                         earn_balance = earn_positions.get("USDT", 0.0)
                         usdt_balance += earn_balance
                 except Exception:
@@ -1163,13 +1398,17 @@ class PortfolioDashboard:
                 st.session_state.rebalance_usdt = usdt_balance
 
                 # 3. Get rebalancing suggestions
-                suggestions_df = asyncio.run(tracker.get_core_portfolio_rebalance_suggestions_technical())
+                suggestions_df = asyncio.run(
+                    tracker.get_core_portfolio_rebalance_suggestions_technical()
+                )
                 st.session_state.rebalance_suggestions = suggestions_df
 
                 # 4. Check for actionable trades
                 actionable = False
                 if suggestions_df is not None and not suggestions_df.empty:
-                    actionable = any(s in ["BUY", "SELL"] for s in suggestions_df["Signal"])
+                    actionable = any(
+                        s in ["BUY", "SELL"] for s in suggestions_df["Signal"]
+                    )
                 st.session_state.rebalance_actionable = actionable
 
                 # Clear previous results and accepted trades
@@ -1178,27 +1417,43 @@ class PortfolioDashboard:
 
         # --- Display Core Portfolio Status ---
         st.markdown("### 🎯 Current Core Portfolio Status")
-        
+
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.markdown("#### 📊 Current Allocation")
             suggestions_df = st.session_state.rebalance_suggestions
             if suggestions_df is not None and not suggestions_df.empty:
                 # Build the status table from suggestions for uniformity
-                alloc_table = suggestions_df[[
-                    'Symbol', 'Current %', 'Target %', 'Drift (pts)', 'Current Value (USD)'
-                ]].copy()
-                alloc_table['Current %'] = alloc_table['Current %'].round(2)
-                alloc_table['Target %'] = alloc_table['Target %'].round(2)
-                alloc_table['Drift (pts)'] = alloc_table['Drift (pts)'].round(2)
-                alloc_table['Current Value (USD)'] = alloc_table['Current Value (USD)'].apply(lambda x: f"${x:,.2f}")
-                alloc_table.columns = ['Asset', 'Current %', 'Target %', 'Drift (pts)', 'Value (USD)']
+                alloc_table = suggestions_df[
+                    [
+                        "Symbol",
+                        "Current %",
+                        "Target %",
+                        "Drift (pts)",
+                        "Current Value (USD)",
+                    ]
+                ].copy()
+                alloc_table["Current %"] = alloc_table["Current %"].round(2)
+                alloc_table["Target %"] = alloc_table["Target %"].round(2)
+                alloc_table["Drift (pts)"] = alloc_table["Drift (pts)"].round(2)
+                alloc_table["Current Value (USD)"] = alloc_table[
+                    "Current Value (USD)"
+                ].apply(lambda x: f"${x:,.2f}")
+                alloc_table.columns = [
+                    "Asset",
+                    "Current %",
+                    "Target %",
+                    "Drift (pts)",
+                    "Value (USD)",
+                ]
                 st.dataframe(alloc_table, use_container_width=True, hide_index=True)
-                st.caption("Allocations are shown as a percentage of your core portfolio (assets being rebalanced).")
+                st.caption(
+                    "Allocations are shown as a percentage of your core portfolio (assets being rebalanced)."
+                )
             else:
                 st.info("Portfolio analysis required")
-        
+
         with col2:
             st.markdown("#### 💰 Available Liquidity")
             usdt = st.session_state.rebalance_usdt
@@ -1211,13 +1466,15 @@ class PortfolioDashboard:
 
         # --- Display Interactive Rebalancing Suggestions ---
         st.markdown("### 📝 Rebalancing Suggestions & Trade Selection")
-        
+
         suggestions_df = st.session_state.rebalance_suggestions
         if suggestions_df is not None and not suggestions_df.empty:
             # Separate actionable and non-actionable trades
-            actionable_trades = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])].copy()
+            actionable_trades = suggestions_df[
+                suggestions_df["Signal"].isin(["BUY", "SELL"])
+            ].copy()
             hold_trades = suggestions_df[suggestions_df["Signal"] == "HOLD"].copy()
-            
+
             # Show summary stats first
             st.markdown("#### 📈 Analysis Summary")
             col1, col2, col3 = st.columns(3)
@@ -1228,121 +1485,161 @@ class PortfolioDashboard:
             with col3:
                 selected_count = len(st.session_state.accepted_trades)
                 st.metric("Selected for Execution", selected_count)
-            
+
             # Show actionable trades with enhanced selection interface
             if not actionable_trades.empty:
                 st.markdown("#### 🎯 Actionable Trades")
-                st.markdown("*Select the trades you want to execute by checking the boxes below:*")
-                
+                st.markdown(
+                    "*Select the trades you want to execute by checking the boxes below:*"
+                )
+
                 # Add select all / deselect all buttons
                 col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
                 with col1:
-                    if st.button("✅ Select All", key="select_all_trades", use_container_width=True):
+                    if st.button(
+                        "✅ Select All",
+                        key="select_all_trades",
+                        use_container_width=True,
+                    ):
                         for idx, row in actionable_trades.iterrows():
                             trade_key = f"{row['Symbol']}_{row['Signal']}"
                             st.session_state.accepted_trades.add(trade_key)
                         st.rerun()
-                
+
                 with col2:
-                    if st.button("❌ Deselect All", key="deselect_all_trades", use_container_width=True):
+                    if st.button(
+                        "❌ Deselect All",
+                        key="deselect_all_trades",
+                        use_container_width=True,
+                    ):
                         st.session_state.accepted_trades.clear()
                         st.rerun()
-                
+
                 with col3:
-                    if st.button("🔄 Refresh", key="refresh_selection", use_container_width=True):
+                    if st.button(
+                        "🔄 Refresh", key="refresh_selection", use_container_width=True
+                    ):
                         st.rerun()
-                
+
                 st.markdown("---")
-                
+
                 # Enhanced trade cards
                 for idx, row in actionable_trades.iterrows():
                     trade_key = f"{row['Symbol']}_{row['Signal']}"
-                    
+
                     # Create a card-like container for each trade
                     with st.container():
                         # Use colored border based on signal type
-                        if row['Signal'] == 'BUY':
-                            st.markdown("""
+                        if row["Signal"] == "BUY":
+                            st.markdown(
+                                """
                             <div style="border-left: 4px solid #28a745; padding-left: 15px; margin: 10px 0;">
-                            """, unsafe_allow_html=True)
+                            """,
+                                unsafe_allow_html=True,
+                            )
                         else:
-                            st.markdown("""
+                            st.markdown(
+                                """
                             <div style="border-left: 4px solid #dc3545; padding-left: 15px; margin: 10px 0;">
-                            """, unsafe_allow_html=True)
-                        
+                            """,
+                                unsafe_allow_html=True,
+                            )
+
                         col1, col2, col3, col4 = st.columns([1, 4, 2, 1])
-                        
+
                         with col1:
                             # Enhanced checkbox with styling
                             accepted = st.checkbox(
                                 "Execute",
                                 key=f"accept_{trade_key}",
                                 value=trade_key in st.session_state.accepted_trades,
-                                help=f"Check to include this {row['Signal']} order in execution"
+                                help=f"Check to include this {row['Signal']} order in execution",
                             )
                             if accepted:
                                 st.session_state.accepted_trades.add(trade_key)
                             else:
                                 st.session_state.accepted_trades.discard(trade_key)
-                        
+
                         with col2:
                             st.markdown(f"**{row['Symbol']}**")
                             # Enhanced trade details
-                            drift_color = "🔴" if abs(row['Drift (pts)']) > 5 else "🟡"
-                            st.markdown(f"**Drift:** {drift_color} {row['Drift (pts)']:.2f} pts")
-                            st.markdown(f"**Allocation:** {row['Current %']:.1f}% → {row['Target %']:.1f}%")
-                            
+                            drift_color = "🔴" if abs(row["Drift (pts)"]) > 5 else "🟡"
+                            st.markdown(
+                                f"**Drift:** {drift_color} {row['Drift (pts)']:.2f} pts"
+                            )
+                            st.markdown(
+                                f"**Allocation:** {row['Current %']:.1f}% → {row['Target %']:.1f}%"
+                            )
+
                             # Show the reason for the trade
-                            if row['Signal'] == 'BUY':
-                                st.markdown(f"*📈 Underweight by {abs(row['Drift (pts)']):,.2f} percentage points*")
+                            if row["Signal"] == "BUY":
+                                st.markdown(
+                                    f"*📈 Underweight by {abs(row['Drift (pts)']):,.2f} percentage points*"
+                                )
                             else:
-                                st.markdown(f"*📉 Overweight by {abs(row['Drift (pts)']):,.2f} percentage points*")
-                        
+                                st.markdown(
+                                    f"*📉 Overweight by {abs(row['Drift (pts)']):,.2f} percentage points*"
+                                )
+
                     with col3:
-                            st.markdown("**Current Value**")
-                            st.markdown(f"${row['Current Value (USD)']:,.0f}")
-                            
-                            # Show estimated trade size (this would need to be calculated)
-                            if 'Estimated Trade Size' in row:
-                                st.markdown("**Est. Trade Size**")
-                                st.markdown(f"${row['Estimated Trade Size']:,.0f}")
-                        
+                        st.markdown("**Current Value**")
+                        st.markdown(f"${row['Current Value (USD)']:,.0f}")
+
+                        # Show estimated trade size (this would need to be calculated)
+                        if "Estimated Trade Size" in row:
+                            st.markdown("**Est. Trade Size**")
+                            st.markdown(f"${row['Estimated Trade Size']:,.0f}")
+
                     with col4:
-                            # Enhanced signal display
-                            if row['Signal'] == 'BUY':
-                                st.markdown("""
+                        # Enhanced signal display
+                        if row["Signal"] == "BUY":
+                            st.markdown(
+                                """
                                 <div style="background: #d4edda; color: #155724; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold;">
                                     📈 BUY
                                 </div>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.markdown("""
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                """
                                 <div style="background: #f8d7da; color: #721c24; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold;">
                                     📉 SELL
                                 </div>
-                                """, unsafe_allow_html=True)
-                        
-                                st.markdown("</div>", unsafe_allow_html=True)
-                
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                            st.markdown("</div>", unsafe_allow_html=True)
+
                 st.markdown("---")
-            
+
             # Show HOLD trades in a more compact format
             if not hold_trades.empty:
-                with st.expander(f"📊 Hold Positions ({len(hold_trades)} assets) - No Action Required", expanded=False):
+                with st.expander(
+                    f"📊 Hold Positions ({len(hold_trades)} assets) - No Action Required",
+                    expanded=False,
+                ):
                     for idx, row in hold_trades.iterrows():
                         col1, col2, col3 = st.columns([1, 4, 1])
                         with col1:
-                            st.markdown("""
+                            st.markdown(
+                                """
                             <div style="background: #e2e3e5; color: #495057; padding: 4px 8px; border-radius: 4px; text-align: center; font-size: 0.8em;">
                                 HOLD
                             </div>
-                            """, unsafe_allow_html=True)
+                            """,
+                                unsafe_allow_html=True,
+                            )
                         with col2:
                             st.markdown(f"**{row['Symbol']}** - Within target range")
-                            st.markdown(f"Drift: {row['Drift (pts)']:.2f} pts | Current: {row['Current %']:.1f}% (Target: {row['Target %']:.1f}%)")
+                            st.markdown(
+                                f"Drift: {row['Drift (pts)']:.2f} pts | Current: {row['Current %']:.1f}% (Target: {row['Target %']:.1f}%)"
+                            )
                         with col3:
                             st.markdown(f"${row['Current Value (USD)']:,.0f}")
-            
+
             # Enhanced selection summary
             st.markdown("#### 📋 Execution Summary")
             accepted_count = len(st.session_state.accepted_trades)
@@ -1353,45 +1650,49 @@ class PortfolioDashboard:
                     trade_key = f"{row['Symbol']}_{row['Signal']}"
                     if trade_key in st.session_state.accepted_trades:
                         selected_trades.append(f"**{row['Symbol']}** ({row['Signal']})")
-                
+
                 st.success(f"✅ **{accepted_count} trade(s) selected for execution:**")
                 st.markdown(" • ".join(selected_trades))
-                
+
                 # Risk warning
                 if accepted_count > 3:
-                    st.warning("⚠️ **Large Rebalancing Operation**: You're about to execute multiple trades. Please review carefully.")
+                    st.warning(
+                        "⚠️ **Large Rebalancing Operation**: You're about to execute multiple trades. Please review carefully."
+                    )
             else:
-                st.info("ℹ️ No trades selected. Check the boxes above to select trades for execution.")
-        
+                st.info(
+                    "ℹ️ No trades selected. Check the boxes above to select trades for execution."
+                )
+
         else:
             st.info("📊 Run portfolio analysis to see rebalancing suggestions here.")
 
         # --- Enhanced Execute Button Section ---
         st.markdown("### ⚡ Execute Selected Trades")
-        
+
         # Execution controls
         col1, col2 = st.columns([3, 1])
-        
+
         with col1:
             execute_enabled = (
-                len(st.session_state.accepted_trades) > 0 and 
-                not st.session_state.rebalance_executing
+                len(st.session_state.accepted_trades) > 0
+                and not st.session_state.rebalance_executing
             )
-            
+
             execute_clicked = st.button(
                 f"🚀 Execute {len(st.session_state.accepted_trades)} Selected Trade(s)",
                 key="rebalance_execute_btn",
                 disabled=not execute_enabled,
                 use_container_width=True,
-                type="primary" if execute_enabled else "secondary"
+                type="primary" if execute_enabled else "secondary",
             )
-            
+
             # Show execution status
             if st.session_state.rebalance_executing:
                 st.info("⏳ Execution in progress... Please wait.")
             elif len(st.session_state.accepted_trades) == 0:
                 st.info("ℹ️ Select trades above to enable execution.")
-        
+
         with col2:
             # Emergency stop button (if executing)
             if st.session_state.rebalance_executing:
@@ -1404,19 +1705,19 @@ class PortfolioDashboard:
         if execute_clicked:
             st.session_state.rebalance_executing = True
             st.session_state.rebalance_results = ""
-            
+
             # Show execution progress
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
+
             with st.spinner("⚡ Executing selected rebalancing trades..."):
                 try:
                     status_text.text("🔄 Initializing execution...")
                     progress_bar.progress(10)
-                    
+
                     tracker = self.initialize_tracker()
                     suggestions_df = st.session_state.rebalance_suggestions
-                    
+
                     # Filter to only accepted trades
                     accepted_suggestions = []
                     for idx, row in suggestions_df.iterrows():
@@ -1424,54 +1725,63 @@ class PortfolioDashboard:
                             trade_key = f"{row['Symbol']}_{row['Signal']}"
                             if trade_key in st.session_state.accepted_trades:
                                 accepted_suggestions.append(row)
-                    
+
                     progress_bar.progress(30)
                     status_text.text("📊 Preparing trade execution...")
-                    
+
                     if accepted_suggestions:
                         # Create filtered DataFrame
                         filtered_df = pd.DataFrame(accepted_suggestions)
-                        
+
                         progress_bar.progress(50)
                         status_text.text("💰 Fetching earn balances...")
-                        
+
                         # Fetch Earn balances for execution
                         earn_balances = {}
                         if not self.config_manager.is_testnet_mode:
                             spot_balances_df = tracker.fetch_binance_balances()
-                            earn_balances = tracker.fetcher.fetch_simple_earn_balances(spot_balances_df)
-                        
+                            earn_balances = tracker.fetcher.fetch_simple_earn_balances(
+                                spot_balances_df
+                            )
+
                         progress_bar.progress(70)
                         status_text.text("🚀 Executing trades...")
-                        
+
                         # Run execution
                         import asyncio
+
                         result = asyncio.run(
                             tracker.execute_rebalancing_trades_core(
-                                    filtered_df,
-                                    earn_balances,
-                                    interactive=False,
-                                    auto_confirm=True
-                                )
+                                filtered_df,
+                                earn_balances,
+                                interactive=False,
+                                auto_confirm=True,
                             )
+                        )
                         output = "\n".join(result.messages)
                         if result.success:
                             st.session_state.rebalance_results = f"""=== REBALANCING EXECUTION COMPLETED ===
-Executed {result.data.get('trades_executed', 0)} trade(s)
+Executed {result.data.get("trades_executed", 0)} trade(s)
     Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 {output}
     === END EXECUTION LOG ===
                             """
                     else:
-                            st.session_state.rebalance_results = f"❌ Rebalancing failed:\n" + "\n".join(result.errors)
+                        st.session_state.rebalance_results = (
+                            f"❌ Rebalancing failed:\n" + "\n".join(result.errors)
+                        )
                     progress_bar.progress(100)
-                    status_text.text("✅ Execution completed!" if result.success else "❌ Execution failed!")
+                    status_text.text(
+                        "✅ Execution completed!"
+                        if result.success
+                        else "❌ Execution failed!"
+                    )
                 except Exception as e:
                     progress_bar.progress(100)
                     status_text.text("❌ Setup failed!")
                     st.session_state.rebalance_results = f"❌ **Setup Error**: {str(e)}"
-                
+
                 finally:
                     st.session_state.rebalance_executing = False
                     # Auto-refresh to show results
@@ -1479,27 +1789,31 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
         # --- Enhanced Execution Results ---
         st.markdown("### 📋 Execution Results & Logs")
-        
+
         if st.session_state.rebalance_results:
             # Parse results to show summary first
             results = st.session_state.rebalance_results
-            
+
             if "EXECUTION COMPLETED" in results:
                 st.success("✅ **Execution Successful!**")
-                
+
                 # Show execution summary in an expandable section
                 with st.expander("📊 View Detailed Execution Log", expanded=True):
                     st.code(results, language="text")
-                    
+
                 # Clear selection after successful execution
-                if st.button("🔄 Clear Selection & Refresh Portfolio", type="secondary"):
+                if st.button(
+                    "🔄 Clear Selection & Refresh Portfolio", type="secondary"
+                ):
                     st.session_state.accepted_trades.clear()
                     st.session_state.rebalance_metrics = None
                     st.session_state.rebalance_suggestions = None
                     st.session_state.rebalance_results = None
-                    st.success("✅ Selection cleared. Run analysis again to see updated portfolio.")
+                    st.success(
+                        "✅ Selection cleared. Run analysis again to see updated portfolio."
+                    )
                     st.rerun()
-                    
+
             elif "Error" in results:
                 st.error("❌ **Execution Failed**")
                 st.code(results, language="text")
@@ -1507,8 +1821,10 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 st.info("ℹ️ **Execution Information**")
                 st.code(results, language="text")
         else:
-            st.info("📝 Execution results and detailed logs will appear here after running trades.")
-            
+            st.info(
+                "📝 Execution results and detailed logs will appear here after running trades."
+            )
+
             # Show helpful tips
             with st.expander("💡 Execution Tips", expanded=False):
                 st.markdown("""
@@ -1546,7 +1862,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             st.session_state.strategy_signals = None
 
         # Check live trading status
-        is_live = self.config_manager.config.get("portfolio", {}).get("live_trading_enabled", False)
+        is_live = self.config_manager.config.get("portfolio", {}).get(
+            "live_trading_enabled", False
+        )
         is_testnet = self.config_manager.is_testnet_mode
 
         # Trading Status Banner
@@ -1574,7 +1892,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             ["📝 Manual Trade", "🤖 Live Strategy"],
             index=0 if st.session_state.trading_mode == "manual" else 1,
             key="trading_mode_radio",
-            horizontal=True
+            horizontal=True,
         )
 
         if mode == "📝 Manual Trade":
@@ -1586,7 +1904,10 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             if st.session_state.trading_mode != "strategy":
                 st.session_state.trading_mode = "strategy"
                 st.session_state.manual_trade_data = {}
-                if "trading_results" in st.session_state and st.session_state.trading_results:
+                if (
+                    "trading_results" in st.session_state
+                    and st.session_state.trading_results
+                ):
                     st.session_state.trading_results = None
             self._render_live_strategy_trading()
 
@@ -1601,7 +1922,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         usdt_balance = None
         tracker = self.initialize_tracker()
         try:
-            usdt_balance = float(tracker.binance_client.get_asset_balance(asset="USDT").get("free", 0.0))
+            usdt_balance = float(
+                tracker.binance_client.get_asset_balance(asset="USDT").get("free", 0.0)
+            )
         except Exception:
             usdt_balance = None
 
@@ -1619,13 +1942,19 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             if "EXECUTION COMPLETED" in st.session_state.trading_results:
                 st.success("✅ **Trade executed successfully!**")
                 st.markdown("### 🔄 Portfolio Update")
-                st.info("💡 **Recommendation**: After executing a trade, it's a good practice to sync your portfolio to see the updated balances and positions.")
+                st.info(
+                    "💡 **Recommendation**: After executing a trade, it's a good practice to sync your portfolio to see the updated balances and positions."
+                )
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
+                    if st.button(
+                        "🔄 Sync Portfolio", type="primary", use_container_width=True
+                    ):
                         self._sync_portfolio_and_reset()
                 with col2:
-                    if st.button("🆕 New Trade", type="secondary", use_container_width=True):
+                    if st.button(
+                        "🆕 New Trade", type="secondary", use_container_width=True
+                    ):
                         st.session_state.trading_results = None
                         st.session_state.manual_trade_data = {}
                         st.rerun()
@@ -1646,12 +1975,16 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 st.error("❌ **Trade execution failed**")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("🔄 Try Again", type="primary", use_container_width=True):
+                    if st.button(
+                        "🔄 Try Again", type="primary", use_container_width=True
+                    ):
                         st.session_state.trading_results = None
                         st.session_state.manual_trade_data = {}
                         st.rerun()
                 with col2:
-                    if st.button("❌ Cancel", type="secondary", use_container_width=True):
+                    if st.button(
+                        "❌ Cancel", type="secondary", use_container_width=True
+                    ):
                         st.session_state.trading_results = None
                         st.session_state.manual_trade_data = {}
                         st.rerun()
@@ -1664,13 +1997,17 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
         # --- OTHERWISE, SHOW THE TRADE FORM ---
         # (PASTE YOUR FORM CODE HERE)
-        core_coins = list(self.config_manager.config.get("target_allocation", {}).keys())
+        core_coins = list(
+            self.config_manager.config.get("target_allocation", {}).keys()
+        )
         core_coins_upper = [c.upper() for c in core_coins]
         symbol_mapper = self.config_manager.symbol_mapper
         all_symbols = list(symbol_mapper.get_all_mappings().keys())
         if not all_symbols:
             all_coin_dicts = symbol_mapper._fetch_master_coins_list()
-            all_symbols = [coin['symbol'].upper() for coin in all_coin_dicts if 'symbol' in coin]
+            all_symbols = [
+                coin["symbol"].upper() for coin in all_coin_dicts if "symbol" in coin
+            ]
         non_core_symbols = sorted(set(all_symbols) - set(core_coins_upper))
         coin_options = core_coins_upper + non_core_symbols
 
@@ -1679,41 +2016,36 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             trade_type = st.selectbox(
                 "Trade Action",
                 ["BUY", "SELL"],
-                help="Choose whether to buy or sell the asset"
+                help="Choose whether to buy or sell the asset",
             )
             symbol = st.selectbox(
-                "Asset Symbol",
-                coin_options,
-                help="Select the asset symbol"
+                "Asset Symbol", coin_options, help="Select the asset symbol"
             )
         with col2:
             amount_input = st.text_input(
                 f"Amount to {trade_type}",
                 placeholder="e.g., 0.1 BTC or 100 USDT",
-                help="Enter amount in asset units or USDT"
+                help="Enter amount in asset units or USDT",
             )
             is_quote_qty = st.checkbox(
                 "Amount is in USDT",
-                help="Check if the amount is in USDT, uncheck if in asset units"
+                help="Check if the amount is in USDT, uncheck if in asset units",
             )
-        
+
         st.markdown("---")
         is_valid = bool(symbol and amount_input)
         button_text = f"🚀 {trade_type} {symbol if symbol else 'ASSET'}"
         if st.button(
-            button_text,
-            type="primary",
-            disabled=not is_valid,
-            use_container_width=True
+            button_text, type="primary", disabled=not is_valid, use_container_width=True
         ):
             st.session_state.manual_trade_data = {
                 "trade_type": trade_type,
                 "symbol": symbol,
                 "amount_input": amount_input,
-                "is_quote_qty": is_quote_qty
+                "is_quote_qty": is_quote_qty,
             }
             st.rerun()
-        
+
         if not symbol:
             st.warning("⚠️ Please enter an asset symbol")
         if not amount_input:
@@ -1724,32 +2056,32 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
     def _show_trade_confirmation(self):
         """Shows the trade confirmation interface."""
         data = st.session_state.manual_trade_data
-        
+
         st.markdown("### 📝 Trade Confirmation")
-        
+
         # Use Streamlit containers instead of HTML for better styling
         with st.container():
             st.markdown("**Please review your trade details:**")
-            
+
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown(f"**Action:** {data['trade_type']}")
                 st.markdown(f"**Asset:** {data['symbol']}")
             with col2:
-                if data['is_quote_qty']:
+                if data["is_quote_qty"]:
                     st.markdown(f"**Amount:** ${data['amount_input']} USDT")
                 else:
                     st.markdown(f"**Amount:** {data['amount_input']} {data['symbol']}")
-        
+
         # Confirmation buttons
         col1, col2 = st.columns(2)
         with col1:
             if st.button("✅ EXECUTE TRADE", type="primary", use_container_width=True):
                 self._confirm_manual_trade(
-                    data['trade_type'], 
-                    data['symbol'], 
-                    data['amount_input'], 
-                    data['is_quote_qty']
+                    data["trade_type"],
+                    data["symbol"],
+                    data["amount_input"],
+                    data["is_quote_qty"],
                 )
         with col2:
             if st.button("❌ CANCEL", type="secondary", use_container_width=True):
@@ -1763,12 +2095,17 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             with st.spinner(f"Executing {trade_type} order for {symbol}..."):
                 try:
                     tracker = self.initialize_tracker()
-                    is_live = self.config_manager.config.get("portfolio", {}).get("live_trading_enabled", False)
+                    is_live = self.config_manager.config.get("portfolio", {}).get(
+                        "live_trading_enabled", False
+                    )
                     # Parse amount
                     import re
+
                     numeric_part = re.search(r"[\d\.]+", amount_input)
                     if not numeric_part:
-                        st.error("❌ Invalid amount format. Please enter a valid number.")
+                        st.error(
+                            "❌ Invalid amount format. Please enter a valid number."
+                        )
                         # Set debug output even on error
                         st.session_state.trade_debug_output = {
                             "error": "Invalid amount format",
@@ -1777,15 +2114,21 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 "symbol": symbol,
                                 "amount_input": amount_input,
                                 "is_quote_qty": is_quote_qty,
-                            }
+                            },
                         }
                         return
                     amount = float(numeric_part.group(0))
                     trade_ticker = f"{symbol}USDT"
                     import asyncio
+
                     result = asyncio.run(
                         tracker.execute_manual_trade_core(
-                            trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
+                            trade_type,
+                            symbol,
+                            trade_ticker,
+                            amount,
+                            is_quote_qty,
+                            is_live,
                         )
                     )
                     # Set debug output with result
@@ -1798,17 +2141,19 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "amount": amount,
                             "is_quote_qty": is_quote_qty,
                             "is_live": is_live,
-                        }
+                        },
                     }
                     output = "\n".join(result.messages)
                     if result.success:
                         st.session_state.trading_results = f"=== MANUAL TRADE EXECUTION COMPLETED ===\n{output}\n=== END EXECUTION LOG ==="
                     else:
-                        st.session_state.trading_results = f"❌ Trade failed:\n" + "\n".join(result.errors)
-                    
+                        st.session_state.trading_results = (
+                            f"❌ Trade failed:\n" + "\n".join(result.errors)
+                        )
+
                     # CRITICAL: Clear manual_trade_data so results are shown instead of confirmation
                     st.session_state.manual_trade_data = {}
-                    
+
                 except Exception as e:
                     st.session_state.trade_debug_output = {
                         "exception": str(e),
@@ -1817,9 +2162,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "symbol": symbol,
                             "amount_input": amount_input,
                             "is_quote_qty": is_quote_qty,
-                        }
+                        },
                     }
-                    st.session_state.trading_results = f"❌ **Execution Error**: {str(e)}"
+                    st.session_state.trading_results = (
+                        f"❌ **Execution Error**: {str(e)}"
+                    )
                     # CRITICAL: Clear manual_trade_data even on error
                     st.session_state.manual_trade_data = {}
         finally:
@@ -1832,7 +2179,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 tracker = self.initialize_tracker()
                 metrics = asyncio.run(tracker.run_full_sync())
                 st.session_state.portfolio_metrics = metrics
-                st.session_state.last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.last_sync = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 # Reset trading page state
                 st.session_state.trading_results = None
                 st.session_state.manual_trade_data = {}
@@ -1846,7 +2195,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     if key.startswith("strategy_param_"):
                         del st.session_state[key]
                 st.session_state.strategy_reset_flag = True  # <--- ADD THIS LINE
-                st.success("✅ Portfolio synced successfully! Trading page reset to initial state.")
+                st.success(
+                    "✅ Portfolio synced successfully! Trading page reset to initial state."
+                )
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Portfolio sync failed: {str(e)}")
@@ -1867,57 +2218,89 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         # --- 1. Account Selection ---
         tracker = self.initialize_tracker()
         config = self.config_manager.config
-        main_account = {"name": "Main Account", "type": "main", **config.get("main_api_keys", {})}
+        main_account = {
+            "name": "Main Account",
+            "type": "main",
+            **config.get("main_api_keys", {}),
+        }
         sub_accounts = config.get("sub_accounts", [])
         accounts = [main_account] + sub_accounts
 
         # Defensive: No API keys
         if not any(acc.get("api_key") or acc.get("binance_key") for acc in accounts):
-            st.error("❌ No API keys found for any account. Cannot run live strategies.")
+            st.error(
+                "❌ No API keys found for any account. Cannot run live strategies."
+            )
             return
 
         account_names = [acc["name"] for acc in accounts]
-        selected_account_name = st.selectbox("Select Account", account_names, key="strategy_account")
-        selected_account = next(acc for acc in accounts if acc["name"] == selected_account_name)
+        selected_account_name = st.selectbox(
+            "Select Account", account_names, key="strategy_account"
+        )
+        selected_account = next(
+            acc for acc in accounts if acc["name"] == selected_account_name
+        )
         account_type = selected_account.get("type", "main")
 
         # --- 2. Strategy Selection ---
         # Discover all strategies
         all_strategies = {
-            name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
-            if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy
+            name: obj
+            for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
+            if issubclass(obj, trading_strategies.Strategy)
+            and obj is not trading_strategies.Strategy
         }
         # Filter by account type
         if account_type == "main":
             available_strategies = all_strategies
         elif account_type == "swing":
-            available_strategies = {k: v for k, v in all_strategies.items() if getattr(v, "strategy_type", None) in ["swing", "general"]}
+            available_strategies = {
+                k: v
+                for k, v in all_strategies.items()
+                if getattr(v, "strategy_type", None) in ["swing", "general"]
+            }
         elif account_type == "day":
-            available_strategies = {k: v for k, v in all_strategies.items() if getattr(v, "strategy_type", None) in ["day", "general"]}
+            available_strategies = {
+                k: v
+                for k, v in all_strategies.items()
+                if getattr(v, "strategy_type", None) in ["day", "general"]
+            }
         else:
             available_strategies = all_strategies
 
         if not available_strategies:
-            st.error(f"❌ No suitable strategies found for account type '{account_type}'.")
+            st.error(
+                f"❌ No suitable strategies found for account type '{account_type}'."
+            )
             return
 
         strategy_names = list(available_strategies.keys())
-        selected_strategy_name = st.selectbox("Select Strategy", strategy_names, key="strategy_name")
+        selected_strategy_name = st.selectbox(
+            "Select Strategy", strategy_names, key="strategy_name"
+        )
         strategy_class = available_strategies[selected_strategy_name]
 
-         # --- Show Available USDT Balance ---
+        # --- Show Available USDT Balance ---
         usdt_balance = None
         try:
             if selected_account["name"] == "Main Account":
                 # Use the already-initialized client for main account
-                usdt_balance = float(tracker.binance_client.get_asset_balance(asset="USDT").get("free", 0.0))
+                usdt_balance = float(
+                    tracker.binance_client.get_asset_balance(asset="USDT").get(
+                        "free", 0.0
+                    )
+                )
             else:
                 # For sub-accounts, initialize a new client with sub-account keys
                 live_client = tracker._init_binance_client(
-                    api_key=selected_account.get("api_key") or selected_account.get("binance_key"),
-                    api_secret=selected_account.get("api_secret") or selected_account.get("binance_secret")
+                    api_key=selected_account.get("api_key")
+                    or selected_account.get("binance_key"),
+                    api_secret=selected_account.get("api_secret")
+                    or selected_account.get("binance_secret"),
                 )
-                usdt_balance = float(live_client.get_asset_balance(asset="USDT").get("free", 0.0))
+                usdt_balance = float(
+                    live_client.get_asset_balance(asset="USDT").get("free", 0.0)
+                )
         except Exception as e:
             st.info(f"USDT balance unavailable. Error: {e}")
             usdt_balance = None
@@ -1929,7 +2312,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         all_symbols = list(symbol_mapper.get_all_mappings().keys())
         if not all_symbols:
             all_coin_dicts = symbol_mapper._fetch_master_coins_list()
-            all_symbols = [f"{coin['symbol'].upper()}-USD" for coin in all_coin_dicts if 'symbol' in coin]
+            all_symbols = [
+                f"{coin['symbol'].upper()}-USD"
+                for coin in all_coin_dicts
+                if "symbol" in coin
+            ]
         non_core_symbols = sorted(set(all_symbols) - set(core_coins_upper))
         coin_options = core_coins_upper + non_core_symbols
 
@@ -1949,11 +2336,15 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 selected_coins = st.multiselect(
                     "Coins to include",
                     options=coin_options,
-                    default=st.session_state.get("strategy_selected_coins", core_coins_upper),
-                    key="strategy_selected_coins"
+                    default=st.session_state.get(
+                        "strategy_selected_coins", core_coins_upper
+                    ),
+                    key="strategy_selected_coins",
                 )
             with col2:
-                st.form_submit_button("Select All Core Coins", on_click=select_all_core_coins)
+                st.form_submit_button(
+                    "Select All Core Coins", on_click=select_all_core_coins
+                )
 
             # Defensive: Require at least one coin
             if not selected_coins:
@@ -1966,11 +2357,20 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 key = f"strategy_param_{param}"
                 if spec.get("type") == "float":
                     st.number_input(
-                        label, value=float(default), min_value=spec.get("min_value", 0.0), max_value=spec.get("max_value", 100.0), key=key
+                        label,
+                        value=float(default),
+                        min_value=spec.get("min_value", 0.0),
+                        max_value=spec.get("max_value", 100.0),
+                        key=key,
                     )
                 elif spec.get("type") == "int":
                     st.number_input(
-                        label, value=int(default), min_value=spec.get("min_value", 0), max_value=spec.get("max_value", 100), step=1, key=key
+                        label,
+                        value=int(default),
+                        min_value=spec.get("min_value", 0),
+                        max_value=spec.get("max_value", 100),
+                        step=1,
+                        key=key,
                     )
                 elif spec.get("type") == "bool":
                     st.checkbox(label, value=bool(default), key=key)
@@ -1982,20 +2382,25 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 "How do you want to specify trade size?",
                 ["% of USDT balance", "Fixed USDT amount"],
                 horizontal=True,
-                key="strategy_trade_amount_mode"
+                key="strategy_trade_amount_mode",
             )
             if trade_amount_mode == "% of USDT balance":
                 trade_pct = st.number_input(
                     "Percent of available USDT to use per trade",
-                    min_value=1.0, max_value=100.0, value=20.0, step=1.0,
-                    key="strategy_trade_pct"
+                    min_value=1.0,
+                    max_value=100.0,
+                    value=20.0,
+                    step=1.0,
+                    key="strategy_trade_pct",
                 )
                 trade_amount = None
             else:
                 trade_amount = st.number_input(
                     "Fixed USDT amount to use per trade",
-                    min_value=1.0, value=50.0, step=1.0,
-                    key="strategy_trade_amount"
+                    min_value=1.0,
+                    value=50.0,
+                    step=1.0,
+                    key="strategy_trade_amount",
                 )
                 trade_pct = None
 
@@ -2003,7 +2408,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
         # After the form, collect the user input from session_state:
         for param in param_specs:
-            param_inputs[param] = st.session_state.get(f"strategy_param_{param}", param_specs[param].get("default"))
+            param_inputs[param] = st.session_state.get(
+                f"strategy_param_{param}", param_specs[param].get("default")
+            )
         selected_coins = st.session_state.strategy_selected_coins
 
         # Defensive: Require at least one coin
@@ -2016,10 +2423,14 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             with st.spinner("Generating signals..."):
                 try:
                     live_client = tracker._init_binance_client(
-                        api_key=selected_account.get("api_key") or selected_account.get("binance_key"),
-                        api_secret=selected_account.get("api_secret") or selected_account.get("binance_secret")
+                        api_key=selected_account.get("api_key")
+                        or selected_account.get("binance_key"),
+                        api_secret=selected_account.get("api_secret")
+                        or selected_account.get("binance_secret"),
                     )
-                    analyzer = CryptoTrendAnalyzer(config=config, binance_client=live_client)
+                    analyzer = CryptoTrendAnalyzer(
+                        config=config, binance_client=live_client
+                    )
                     signals = []
                     for coin in selected_coins:
                         yf_ticker = f"{coin}-USD"
@@ -2027,17 +2438,39 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         # Convert percent params to fraction if needed
                         strategy_kwargs = param_inputs.copy()
                         for k, v in param_specs.items():
-                            if v.get("type") == "float" and "pct" in k and strategy_kwargs[k] is not None and strategy_kwargs[k] > 1:
+                            if (
+                                v.get("type") == "float"
+                                and "pct" in k
+                                and strategy_kwargs[k] is not None
+                                and strategy_kwargs[k] > 1
+                            ):
                                 strategy_kwargs[k] = strategy_kwargs[k] / 100.0
-                        strategy_instance = strategy_class(analyzer=analyzer, **strategy_kwargs)
-                        interval = getattr(strategy_instance, "valid_intervals", ["1d"])[0]
+                        strategy_instance = strategy_class(
+                            analyzer=analyzer, **strategy_kwargs
+                        )
+                        interval = getattr(
+                            strategy_instance, "valid_intervals", ["1d"]
+                        )[0]
                         period = "7d" if "m" in interval or "h" in interval else "1y"
-                        data = asyncio.run(analyzer.fetch_crypto_data_async(yf_ticker, period=period, interval=interval))
+                        data = asyncio.run(
+                            analyzer.fetch_crypto_data_async(
+                                yf_ticker, period=period, interval=interval
+                            )
+                        )
                         if data is None or data.empty:
                             continue
-                        signal, size, reason = asyncio.run(strategy_instance.generate_signal(data))
+                        signal, size, reason = asyncio.run(
+                            strategy_instance.generate_signal(data)
+                        )
                         if signal in ["BUY", "SELL"]:
-                            signals.append({"Symbol": coin, "Signal": signal, "Size": size, "Reason": reason})
+                            signals.append(
+                                {
+                                    "Symbol": coin,
+                                    "Signal": signal,
+                                    "Size": size,
+                                    "Reason": reason,
+                                }
+                            )
                         st.session_state.strategy_signals = signals
                 except Exception as e:
                     st.error(f"Signal generation failed: {e}")
@@ -2053,7 +2486,12 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         st.dataframe(signals, use_container_width=True)
 
         # --- 6. Execution ---
-        if st.button("🚀 Execute All Signals", type="primary", use_container_width=True, disabled=not signals):
+        if st.button(
+            "🚀 Execute All Signals",
+            type="primary",
+            use_container_width=True,
+            disabled=not signals,
+        ):
             with st.spinner("Executing trades..."):
                 try:
                     # For each signal, execute the trade
@@ -2064,24 +2502,40 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         symbol = trade["Symbol"]
                         amount = trade["Size"]
                         # For simplicity, treat size as fraction of available USDT
-                        usdt_balance = float(tracker.binance_client.get_asset_balance(asset="USDT").get("free", 0.0))
-                        min_trade_usd = config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
+                        usdt_balance = float(
+                            tracker.binance_client.get_asset_balance(asset="USDT").get(
+                                "free", 0.0
+                            )
+                        )
+                        min_trade_usd = config.get("portfolio", {}).get(
+                            "minimum_trade_usd", 10.0
+                        )
                         if trade_amount_mode == "% of USDT balance":
-                            usdt_to_spend = max((trade_pct / 100.0) * usdt_balance, min_trade_usd)
+                            usdt_to_spend = max(
+                                (trade_pct / 100.0) * usdt_balance, min_trade_usd
+                            )
                         else:
                             usdt_to_spend = max(trade_amount, min_trade_usd)
                         trade_ticker = f"{symbol}USDT"
-                        is_live = config.get("portfolio", {}).get("live_trading_enabled", False)
+                        is_live = config.get("portfolio", {}).get(
+                            "live_trading_enabled", False
+                        )
                         # Use the same async execution as manual trade
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                         import io, sys
+
                         old_stdout = sys.stdout
                         sys.stdout = mystdout = io.StringIO()
                         try:
                             loop.run_until_complete(
                                 tracker._execute_manual_trade(
-                                    trade_type, symbol, trade_ticker, usdt_to_spend, True, is_live
+                                    trade_type,
+                                    symbol,
+                                    trade_ticker,
+                                    usdt_to_spend,
+                                    True,
+                                    is_live,
                                 )
                             )
                             sys.stdout = old_stdout
@@ -2094,7 +2548,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 f"{execution_output}"
                             )
                         except Exception as e:
-                            results.append(f"{trade_type} {symbol}: ❌ Execution Error: {e}")
+                            results.append(
+                                f"{trade_type} {symbol}: ❌ Execution Error: {e}"
+                            )
                         finally:
                             loop.close()
                     st.session_state.trading_results = "\n".join(results)
@@ -2113,13 +2569,19 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             else:
                 st.success("✅ All strategy trades executed successfully!")
             st.markdown("### 🔄 Portfolio Update")
-            st.info("💡 Recommendation: After executing trades, sync your portfolio to see updated balances and positions.")
+            st.info(
+                "💡 Recommendation: After executing trades, sync your portfolio to see updated balances and positions."
+            )
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
+                if st.button(
+                    "🔄 Sync Portfolio", type="primary", use_container_width=True
+                ):
                     self._sync_portfolio_and_reset()
             with col2:
-                if st.button("🆕 New Strategy Run", type="secondary", use_container_width=True):
+                if st.button(
+                    "🆕 New Strategy Run", type="secondary", use_container_width=True
+                ):
                     st.session_state.trading_results = None
                     st.session_state.strategy_signals = None
                     st.rerun()
@@ -2129,18 +2591,24 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         import pandas as pd
         import asyncio
         from crypto_portfolio_tracker.strategy_backtester import StrategyBacktester
-        from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
+        from crypto_portfolio_tracker.rebalancing_backtester import (
+            RebalancingBacktester,
+        )
         from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 
         st.markdown("## 🧪 Backtesting")
-        st.markdown("Test your trading strategies and rebalancing approaches with historical data")
+        st.markdown(
+            "Test your trading strategies and rebalancing approaches with historical data"
+        )
 
         tab1, tab2 = st.tabs(["⚖️ Rebalancing Backtest", "🧪 Strategy Backtest"])
 
         # --- Rebalancing Backtest Tab ---
         with tab1:
             st.header("⚖️ Rebalancing Backtest")
-            st.markdown("Test portfolio rebalancing strategies with customizable drift thresholds and market conditions")
+            st.markdown(
+                "Test portfolio rebalancing strategies with customizable drift thresholds and market conditions"
+            )
 
             # Basic Settings Section
             with st.container():
@@ -2154,7 +2622,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         value=10000.0,
                         step=500.0,
                         key="rebalance_initial_capital",
-                        help="Starting capital for the rebalancing backtest"
+                        help="Starting capital for the rebalancing backtest",
                     )
 
                 with col2:
@@ -2164,7 +2632,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         period_options,
                         index=2,  # Default to 3y
                         key="rebalance_period_dropdown",
-                        help="Historical period for rebalancing analysis"
+                        help="Historical period for rebalancing analysis",
                     )
 
                     if selected_period_option == "Custom":
@@ -2172,7 +2640,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "Custom Period (e.g., 7y)",
                             value="6y",
                             key="rebalance_period_custom",
-                            help="Enter custom period: Xy for years"
+                            help="Enter custom period: Xy for years",
                         )
                     else:
                         period = selected_period_option
@@ -2180,27 +2648,42 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             # Advanced Parameters Section
             with st.expander("🔧 Advanced Rebalancing Parameters", expanded=False):
                 # Create tabs within the expander for better organization
-                param_tab1, param_tab2, param_tab3, param_tab4 = st.tabs(["📊 Drift Settings", "💱 Trade Control", "🐻 Market Rules", "🎯 Asset Allocation"])
+                param_tab1, param_tab2, param_tab3, param_tab4 = st.tabs(
+                    [
+                        "📊 Drift Settings",
+                        "💱 Trade Control",
+                        "🐻 Market Rules",
+                        "🎯 Asset Allocation",
+                    ]
+                )
 
                 with param_tab1:
-                    st.markdown("#### Set allocation drift thresholds that trigger rebalancing")
+                    st.markdown(
+                        "#### Set allocation drift thresholds that trigger rebalancing"
+                    )
 
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown("**🪙 Major Coins (BTC/ETH)**")
                         majors_drift_threshold = st.slider(
                             "Drift Threshold (%)",
-                            min_value=1.0, max_value=20.0, value=3.0, step=0.5,
+                            min_value=1.0,
+                            max_value=20.0,
+                            value=3.0,
+                            step=0.5,
                             help="Drift threshold for BTC/ETH before rebalancing triggers",
-                            key="majors_drift"
+                            key="majors_drift",
                         )
                     with col2:
                         st.markdown("**🚀 Altcoins**")
                         alts_drift_threshold = st.slider(
                             "Drift Threshold (%)",
-                            min_value=1.0, max_value=20.0, value=5.0, step=0.5,
+                            min_value=1.0,
+                            max_value=20.0,
+                            value=5.0,
+                            step=0.5,
                             help="Drift threshold for altcoins before rebalancing triggers",
-                            key="alts_drift"
+                            key="alts_drift",
                         )
 
                 with param_tab2:
@@ -2211,29 +2694,41 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         st.markdown("**🪙 Major Coins (BTC/ETH)**")
                         majors_sell_multiplier = st.slider(
                             "Sell Multiplier",
-                            min_value=0.1, max_value=2.0, value=0.5, step=0.1,
+                            min_value=0.1,
+                            max_value=2.0,
+                            value=0.5,
+                            step=0.1,
                             help="Portion of overweight amount to sell (0.5 = sell 50%)",
-                            key="majors_sell"
+                            key="majors_sell",
                         )
                         majors_buy_multiplier = st.slider(
                             "Buy Multiplier",
-                            min_value=0.1, max_value=2.0, value=0.75, step=0.1,
+                            min_value=0.1,
+                            max_value=2.0,
+                            value=0.75,
+                            step=0.1,
                             help="Portion of underweight amount to buy (0.75 = buy 75%)",
-                            key="majors_buy"
+                            key="majors_buy",
                         )
                     with col2:
                         st.markdown("**🚀 Altcoins**")
                         alts_sell_multiplier = st.slider(
                             "Sell Multiplier",
-                            min_value=0.1, max_value=2.0, value=0.5, step=0.1,
+                            min_value=0.1,
+                            max_value=2.0,
+                            value=0.5,
+                            step=0.1,
                             help="Portion of overweight amount to sell for altcoins",
-                            key="alts_sell"
+                            key="alts_sell",
                         )
                         alts_buy_multiplier = st.slider(
                             "Buy Multiplier",
-                            min_value=0.1, max_value=2.0, value=1.0, step=0.1,
+                            min_value=0.1,
+                            max_value=2.0,
+                            value=1.0,
+                            step=0.1,
                             help="Portion of underweight amount to buy for altcoins",
-                            key="alts_buy"
+                            key="alts_buy",
                         )
 
                 with param_tab3:
@@ -2241,19 +2736,28 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     suppress_buys_in_bear = st.checkbox(
                         "🐻 Suppress Buys in Bear Market",
                         value=True,
-                        help="Avoid buying during bearish market conditions (except oversold scenarios)"
+                        help="Avoid buying during bearish market conditions (except oversold scenarios)",
                     )
 
                 with param_tab4:
                     st.markdown("#### Customize your portfolio allocation")
-                    st.info("💡 Modify allocations below or leave as-is to use your default configuration")
+                    st.info(
+                        "💡 Modify allocations below or leave as-is to use your default configuration"
+                    )
 
                     # Get all available symbols (e.g., from symbol_mapper)
-                    all_symbols = list(self.config_manager.symbol_mapper.get_all_mappings().keys())
-                    default_allocation = self.config_manager.config.get("target_allocation", {})
+                    all_symbols = list(
+                        self.config_manager.symbol_mapper.get_all_mappings().keys()
+                    )
+                    default_allocation = self.config_manager.config.get(
+                        "target_allocation", {}
+                    )
 
                     # Use session state to persist custom allocation edits
-                    if "custom_allocation" not in st.session_state or not st.session_state.custom_allocation:
+                    if (
+                        "custom_allocation" not in st.session_state
+                        or not st.session_state.custom_allocation
+                    ):
                         st.session_state.custom_allocation = default_allocation.copy()
 
                     custom_allocation = st.session_state.custom_allocation
@@ -2267,10 +2771,16 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             with cols[0]:
                                 st.markdown(f"**{asset.upper()}**")
                             with cols[1]:
+
                                 def update_allocation(asset_name):
                                     def callback():
-                                        new_value = st.session_state[f"alloc_{asset_name}"]
-                                        st.session_state.custom_allocation[asset_name] = new_value / 100.0
+                                        new_value = st.session_state[
+                                            f"alloc_{asset_name}"
+                                        ]
+                                        st.session_state.custom_allocation[
+                                            asset_name
+                                        ] = new_value / 100.0
+
                                     return callback
 
                                 new_alloc = st.number_input(
@@ -2281,12 +2791,16 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                     step=0.1,
                                     key=f"alloc_{asset}",
                                     label_visibility="collapsed",
-                                    on_change=update_allocation(asset)
+                                    on_change=update_allocation(asset),
                                 )
                             with cols[2]:
                                 st.markdown(f"*{new_alloc:.1f}%*")
                             with cols[3]:
-                                if st.button("❌", key=f"remove_{asset}", help=f"Remove {asset.upper()}"):
+                                if st.button(
+                                    "❌",
+                                    key=f"remove_{asset}",
+                                    help=f"Remove {asset.upper()}",
+                                ):
                                     assets_to_remove.append(asset)
 
                         for asset in assets_to_remove:
@@ -2299,7 +2813,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     # Add asset functionality - PROPER ALIGNMENT
                     st.markdown("---")
                     st.markdown("**Add New Asset:**")
-                    available_to_add = [s for s in all_symbols if s not in custom_allocation]
+                    available_to_add = [
+                        s for s in all_symbols if s not in custom_allocation
+                    ]
                     if available_to_add:
                         # Use a container for better layout control
                         with st.container():
@@ -2311,20 +2827,34 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                     "",  # Empty label to avoid extra spacing
                                     ["Select an asset..."] + available_to_add,
                                     key=f"add_asset_select_{st.session_state.get('add_asset_counter', 0)}",
-                                    label_visibility="collapsed"  # Hide the label completely
+                                    label_visibility="collapsed",  # Hide the label completely
                                 )
                             with col2:
                                 # Show button only when a valid asset is selected
                                 if add_asset and add_asset != "Select an asset...":
                                     if st.button("➕ Add", key="add_asset_btn"):
-                                        if add_asset and add_asset != "Select an asset...":
-                                            custom_allocation[add_asset] = 0.0  # Default to 0% allocation
+                                        if (
+                                            add_asset
+                                            and add_asset != "Select an asset..."
+                                        ):
+                                            custom_allocation[add_asset] = (
+                                                0.0  # Default to 0% allocation
+                                            )
                                             # Increment counter to force selectbox reset
-                                            st.session_state["add_asset_counter"] = st.session_state.get("add_asset_counter", 0) + 1
+                                            st.session_state["add_asset_counter"] = (
+                                                st.session_state.get(
+                                                    "add_asset_counter", 0
+                                                )
+                                                + 1
+                                            )
                                             st.rerun()  # Force rerun to update the UI
                                 else:
                                     # Show disabled button when no asset selected
-                                    st.button("➕ Add", key="add_asset_btn_disabled", disabled=True)
+                                    st.button(
+                                        "➕ Add",
+                                        key="add_asset_btn_disabled",
+                                        disabled=True,
+                                    )
                     else:
                         st.info("All available assets are already in your allocation")
 
@@ -2339,7 +2869,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             st.success(f"✅ Total: {total_alloc:.2%}")
                     with col2:
                         if st.button("🔄 Reset to Default", key="reset_allocation"):
-                            st.session_state.custom_allocation = default_allocation.copy()
+                            st.session_state.custom_allocation = (
+                                default_allocation.copy()
+                            )
                             st.rerun()
 
             # Run Rebalancing Backtest Button
@@ -2349,14 +2881,18 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 run_rebalance_backtest = st.button(
                     "🚀 Run Rebalancing Backtest",
                     type="primary",
-                    use_container_width=True
+                    use_container_width=True,
                 )
 
             if run_rebalance_backtest:
                 # Validate allocation before running backtest
-                total_alloc = sum(custom_allocation.values()) if custom_allocation else 0
+                total_alloc = (
+                    sum(custom_allocation.values()) if custom_allocation else 0
+                )
                 if total_alloc > 1.0:
-                    st.error(f"❌ Cannot run backtest: Total allocation is {total_alloc:.2%} which exceeds 100%. Please adjust your allocations.")
+                    st.error(
+                        f"❌ Cannot run backtest: Total allocation is {total_alloc:.2%} which exceeds 100%. Please adjust your allocations."
+                    )
                 else:
                     with st.spinner("🔄 Running rebalancing backtest analysis..."):
                         try:
@@ -2371,13 +2907,13 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 "majors": {
                                     "allocation_drift_threshold_pct": majors_drift_threshold,
                                     "sell_percentage_multiplier": majors_sell_multiplier,
-                                    "buy_amount_multiplier": majors_buy_multiplier
+                                    "buy_amount_multiplier": majors_buy_multiplier,
                                 },
                                 "alts": {
                                     "allocation_drift_threshold_pct": alts_drift_threshold,
                                     "sell_percentage_multiplier": alts_sell_multiplier,
-                                    "buy_amount_multiplier": alts_buy_multiplier
-                                }
+                                    "buy_amount_multiplier": alts_buy_multiplier,
+                                },
                             }
 
                             # Update target allocation if user customized it
@@ -2385,9 +2921,13 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 custom_config["target_allocation"] = custom_allocation
 
                             backtester = RebalancingBacktester(config=custom_config)
-                            backtester.run(initial_capital=initial_capital, period=period)
+                            backtester.run(
+                                initial_capital=initial_capital, period=period
+                            )
 
-                            st.success("✅ Rebalancing backtest completed successfully!")
+                            st.success(
+                                "✅ Rebalancing backtest completed successfully!"
+                            )
 
                             # Results Section
                             if hasattr(backtester, "summary_stats"):
@@ -2401,64 +2941,75 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                     st.metric(
                                         "Strategy Return",
                                         f"{stats['Strategy Total Return']:.1%}",
-                                        delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H"
+                                        delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H",
                                     )
 
                                 with metric_cols[1]:
                                     st.metric(
                                         "Final Value",
                                         f"${stats['Final Portfolio Value']:,.0f}",
-                                        delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}"
+                                        delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}",
                                     )
 
                                 with metric_cols[2]:
                                     st.metric(
                                         "Max Drawdown",
-                                        f"{stats['Maximum Drawdown']:.1%}"
+                                        f"{stats['Maximum Drawdown']:.1%}",
                                     )
 
                                 with metric_cols[3]:
                                     st.metric(
                                         "Total Trades",
-                                        f"{stats['Total Trades Executed']}"
+                                        f"{stats['Total Trades Executed']}",
                                     )
 
                                 # Detailed Results Table
-                                with st.expander("📋 Detailed Performance Metrics", expanded=True):
-                                    st.table({
-                                        "Metric": [
-                                            "Initial Capital",
-                                            "Final Portfolio Value",
-                                            "Strategy Total Return",
-                                            "Buy & Hold Return",
-                                            "Strategy Outperformance",
-                                            "Maximum Drawdown",
-                                            "Annualized Volatility",
-                                            "Sharpe Ratio",
-                                            "Total Trades Executed"
-                                        ],
-                                        "Value": [
-                                            f"${stats['Initial Capital']:,.2f}",
-                                            f"${stats['Final Portfolio Value']:,.2f}",
-                                            f"{stats['Strategy Total Return']:.2%}",
-                                            f"{stats['Buy & Hold Return']:.2%}",
-                                            f"{stats['Strategy Outperformance']:+.2%}",
-                                            f"{stats['Maximum Drawdown']:.2%}",
-                                            f"{stats['Annualized Volatility']:.2%}",
-                                            f"{stats['Sharpe Ratio']:.2f}",
-                                            f"{stats['Total Trades Executed']}"
-                                        ]
-                                    })
+                                with st.expander(
+                                    "📋 Detailed Performance Metrics", expanded=True
+                                ):
+                                    st.table(
+                                        {
+                                            "Metric": [
+                                                "Initial Capital",
+                                                "Final Portfolio Value",
+                                                "Strategy Total Return",
+                                                "Buy & Hold Return",
+                                                "Strategy Outperformance",
+                                                "Maximum Drawdown",
+                                                "Annualized Volatility",
+                                                "Sharpe Ratio",
+                                                "Total Trades Executed",
+                                            ],
+                                            "Value": [
+                                                f"${stats['Initial Capital']:,.2f}",
+                                                f"${stats['Final Portfolio Value']:,.2f}",
+                                                f"{stats['Strategy Total Return']:.2%}",
+                                                f"{stats['Buy & Hold Return']:.2%}",
+                                                f"{stats['Strategy Outperformance']:+.2%}",
+                                                f"{stats['Maximum Drawdown']:.2%}",
+                                                f"{stats['Annualized Volatility']:.2%}",
+                                                f"{stats['Sharpe Ratio']:.2f}",
+                                                f"{stats['Total Trades Executed']}",
+                                            ],
+                                        }
+                                    )
 
                             # Equity Curve
                             if hasattr(backtester, "portfolio_value_history"):
                                 st.markdown("### 📈 Portfolio Equity Curve")
-                                if isinstance(backtester.portfolio_value_history, list) and backtester.portfolio_value_history:
+                                if (
+                                    isinstance(backtester.portfolio_value_history, list)
+                                    and backtester.portfolio_value_history
+                                ):
                                     # Convert to DataFrame with proper date index
-                                    df = pd.DataFrame(backtester.portfolio_value_history)
-                                    df['date'] = pd.to_datetime(df['date'])
-                                    df = df.set_index('date')
-                                    df = df.rename(columns={'value': 'Portfolio Value ($)'})
+                                    df = pd.DataFrame(
+                                        backtester.portfolio_value_history
+                                    )
+                                    df["date"] = pd.to_datetime(df["date"])
+                                    df = df.set_index("date")
+                                    df = df.rename(
+                                        columns={"value": "Portfolio Value ($)"}
+                                    )
 
                                     # Create the chart with proper date axis
                                     st.line_chart(df, use_container_width=True)
@@ -2466,29 +3017,39 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             # Trade Log
                             if hasattr(backtester, "trade_log"):
                                 with st.expander("📝 Rebalancing Trade Log"):
-                                    st.code("\n".join(backtester.trade_log), language="text")
+                                    st.code(
+                                        "\n".join(backtester.trade_log), language="text"
+                                    )
 
                         except Exception as e:
                             st.error(f"❌ Rebalancing backtest failed: {str(e)}")
-                            st.info("💡 Try adjusting the parameters or check your allocation settings")
+                            st.info(
+                                "💡 Try adjusting the parameters or check your allocation settings"
+                            )
 
         # --- Strategy Backtest Tab ---
         with tab2:
             st.header("🧪 Strategy Backtest")
-            st.markdown("Select a trading strategy and customize its parameters to test performance against historical data")
+            st.markdown(
+                "Select a trading strategy and customize its parameters to test performance against historical data"
+            )
 
             # Strategy Selection Section
             with st.container():
                 st.subheader("📈 Strategy Selection")
                 all_strategies = {
-                    name: obj for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
-                    if issubclass(obj, trading_strategies.Strategy) and obj is not trading_strategies.Strategy
+                    name: obj
+                    for name, obj in inspect.getmembers(
+                        trading_strategies, inspect.isclass
+                    )
+                    if issubclass(obj, trading_strategies.Strategy)
+                    and obj is not trading_strategies.Strategy
                 }
                 strategy_names = list(all_strategies.keys())
                 selected_strategy_name = st.selectbox(
                     "Choose Trading Strategy",
                     strategy_names,
-                    help="Select the trading strategy you want to backtest"
+                    help="Select the trading strategy you want to backtest",
                 )
                 strategy_class = all_strategies[selected_strategy_name]
 
@@ -2512,31 +3073,19 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
                             if spec.get("type") == "float":
                                 param_inputs[param] = st.number_input(
-                                    label,
-                                    value=float(default),
-                                    key=key,
-                                    help=help_text
+                                    label, value=float(default), key=key, help=help_text
                                 )
                             elif spec.get("type") == "int":
                                 param_inputs[param] = st.number_input(
-                                    label,
-                                    value=int(default),
-                                    key=key,
-                                    help=help_text
+                                    label, value=int(default), key=key, help=help_text
                                 )
                             elif spec.get("type") == "bool":
                                 param_inputs[param] = st.checkbox(
-                                    label,
-                                    value=bool(default),
-                                    key=key,
-                                    help=help_text
+                                    label, value=bool(default), key=key, help=help_text
                                 )
                             else:
                                 param_inputs[param] = st.text_input(
-                                    label,
-                                    value=str(default),
-                                    key=key,
-                                    help=help_text
+                                    label, value=str(default), key=key, help=help_text
                                 )
                         col_idx += 1
             else:
@@ -2553,7 +3102,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     interval = st.selectbox(
                         "Data Interval",
                         valid_intervals,
-                        help="Time interval for price data (higher frequency = more granular analysis)"
+                        help="Time interval for price data (higher frequency = more granular analysis)",
                     )
 
                 with col2:
@@ -2564,14 +3113,18 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     all_symbols = list(symbol_mapper.get_all_mappings().keys())
                     if not all_symbols:
                         all_coin_dicts = symbol_mapper._fetch_master_coins_list()
-                        all_symbols = [f"{coin['symbol'].upper()}-USD" for coin in all_coin_dicts if 'symbol' in coin]
+                        all_symbols = [
+                            f"{coin['symbol'].upper()}-USD"
+                            for coin in all_coin_dicts
+                            if "symbol" in coin
+                        ]
                     non_core_symbols = sorted(set(all_symbols) - set(core_coins_upper))
                     coin_options = core_coins_upper + non_core_symbols
 
                     selected_coin = st.selectbox(
                         "Select Cryptocurrency",
                         coin_options,
-                        help="Choose the cryptocurrency to backtest the strategy on"
+                        help="Choose the cryptocurrency to backtest the strategy on",
                     )
 
                 with col3:
@@ -2580,7 +3133,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         "Backtest Period",
                         period_options,
                         index=1,  # Default to 3y
-                        help="Historical period to run the backtest over"
+                        help="Historical period to run the backtest over",
                     )
 
                     if selected_period_option == "Custom":
@@ -2588,14 +3141,20 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "Custom Period (e.g., 7y, 30d)",
                             value="30d",
                             key="strategy_period_custom",
-                            help="Enter custom period: Xy for years, Xd for days"
+                            help="Enter custom period: Xy for years, Xd for days",
                         )
                     else:
                         period = selected_period_option
 
                 # --- Warn about yfinance data limits for high-frequency intervals ---
-                if ("15m" in interval and "y" in period) or ("1h" in interval and "y" in period and int(period.replace("y", "")) > 2):
-                    st.warning("⚠️ For 15m interval, use a period ≤ 60d. For 1h interval, use a period ≤ 729d. Adjust your selection to avoid data errors.")
+                if ("15m" in interval and "y" in period) or (
+                    "1h" in interval
+                    and "y" in period
+                    and int(period.replace("y", "")) > 2
+                ):
+                    st.warning(
+                        "⚠️ For 15m interval, use a period ≤ 60d. For 1h interval, use a period ≤ 729d. Adjust your selection to avoid data errors."
+                    )
 
                 # Capital input in its own row for better visibility
                 st.markdown("##### 💰 Initial Investment")
@@ -2604,7 +3163,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     min_value=100.0,
                     value=10000.0,
                     step=500.0,
-                    help="Starting capital for the backtest simulation"
+                    help="Starting capital for the backtest simulation",
                 )
 
             # Run Backtest Button
@@ -2612,24 +3171,30 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
                 run_backtest = st.button(
-                    "🚀 Run Strategy Backtest",
-                    type="primary",
-                    use_container_width=True
+                    "🚀 Run Strategy Backtest", type="primary", use_container_width=True
                 )
 
             if run_backtest:
                 with st.spinner("🔄 Running backtest analysis..."):
                     try:
-                        analyzer = CryptoTrendAnalyzer(config=config, binance_client=None)
-                        backtester = StrategyBacktester(config=config, analyzer=analyzer)
-                        strategy_instance = strategy_class(analyzer=analyzer, **param_inputs)
-                        asyncio.run(backtester.run(
-                            strategy=strategy_instance,
-                            symbol=selected_coin,
-                            initial_capital=initial_capital,
-                            period=period,
-                            interval=interval
-                        ))
+                        analyzer = CryptoTrendAnalyzer(
+                            config=config, binance_client=None
+                        )
+                        backtester = StrategyBacktester(
+                            config=config, analyzer=analyzer
+                        )
+                        strategy_instance = strategy_class(
+                            analyzer=analyzer, **param_inputs
+                        )
+                        asyncio.run(
+                            backtester.run(
+                                strategy=strategy_instance,
+                                symbol=selected_coin,
+                                initial_capital=initial_capital,
+                                period=period,
+                                interval=interval,
+                            )
+                        )
 
                         backtester.generate_report()
 
@@ -2647,54 +3212,56 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 st.metric(
                                     "Strategy Return",
                                     f"{stats['Strategy Total Return']:.1%}",
-                                    delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H"
+                                    delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H",
                                 )
 
                             with metric_cols[1]:
                                 st.metric(
                                     "Final Value",
                                     f"${stats['Final Portfolio Value']:,.0f}",
-                                    delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}"
+                                    delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}",
                                 )
 
                             with metric_cols[2]:
                                 st.metric(
-                                    "Max Drawdown",
-                                    f"{stats['Maximum Drawdown']:.1%}"
+                                    "Max Drawdown", f"{stats['Maximum Drawdown']:.1%}"
                                 )
 
                             with metric_cols[3]:
                                 st.metric(
-                                    "Sharpe Ratio",
-                                    f"{stats['Sharpe Ratio']:.2f}"
+                                    "Sharpe Ratio", f"{stats['Sharpe Ratio']:.2f}"
                                 )
 
                             # Detailed Results Table
-                            with st.expander("📋 Detailed Performance Metrics", expanded=True):
-                                st.table({
-                                    "Metric": [
-                                        "Initial Capital",
-                                        "Final Portfolio Value",
-                                        "Strategy Total Return",
-                                        "Buy & Hold Return",
-                                        "Strategy Outperformance",
-                                        "Maximum Drawdown",
-                                        "Annualized Volatility",
-                                        "Sharpe Ratio",
-                                        "Total Trades Executed"
-                                    ],
-                                    "Value": [
-                                        f"${stats['Initial Capital']:,.2f}",
-                                        f"${stats['Final Portfolio Value']:,.2f}",
-                                        f"{stats['Strategy Total Return']:.2%}",
-                                        f"{stats['Buy & Hold Return']:.2%}",
-                                        f"{stats['Strategy Outperformance']:+.2%}",
-                                        f"{stats['Maximum Drawdown']:.2%}",
-                                        f"{stats['Annualized Volatility']:.2%}",
-                                        f"{stats['Sharpe Ratio']:.2f}",
-                                        f"{stats['Total Trades Executed']}"
-                                    ]
-                                })
+                            with st.expander(
+                                "📋 Detailed Performance Metrics", expanded=True
+                            ):
+                                st.table(
+                                    {
+                                        "Metric": [
+                                            "Initial Capital",
+                                            "Final Portfolio Value",
+                                            "Strategy Total Return",
+                                            "Buy & Hold Return",
+                                            "Strategy Outperformance",
+                                            "Maximum Drawdown",
+                                            "Annualized Volatility",
+                                            "Sharpe Ratio",
+                                            "Total Trades Executed",
+                                        ],
+                                        "Value": [
+                                            f"${stats['Initial Capital']:,.2f}",
+                                            f"${stats['Final Portfolio Value']:,.2f}",
+                                            f"{stats['Strategy Total Return']:.2%}",
+                                            f"{stats['Buy & Hold Return']:.2%}",
+                                            f"{stats['Strategy Outperformance']:+.2%}",
+                                            f"{stats['Maximum Drawdown']:.2%}",
+                                            f"{stats['Annualized Volatility']:.2%}",
+                                            f"{stats['Sharpe Ratio']:.2f}",
+                                            f"{stats['Total Trades Executed']}",
+                                        ],
+                                    }
+                                )
 
                         # Equity Curve
                         if hasattr(backtester, "portfolio_value_history"):
@@ -2707,19 +3274,27 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             ):
                                 # Use the price data's index as the x-axis
                                 df = pd.DataFrame(
-                                    {"Portfolio Value ($)": backtester.portfolio_value_history},
-                                    index=backtester.data.index[:len(backtester.portfolio_value_history)]
+                                    {
+                                        "Portfolio Value ($)": backtester.portfolio_value_history
+                                    },
+                                    index=backtester.data.index[
+                                        : len(backtester.portfolio_value_history)
+                                    ],
                                 )
                                 st.line_chart(df, use_container_width=True)
 
                         # Trade Log
                         if hasattr(backtester, "trade_log"):
                             with st.expander("📝 Trade Execution Log"):
-                                st.code("\n".join(backtester.trade_log), language="text")
+                                st.code(
+                                    "\n".join(backtester.trade_log), language="text"
+                                )
 
                     except Exception as e:
                         st.error(f"❌ Backtest failed: {str(e)}")
-                        st.info("💡 Try adjusting the parameters or selecting a different time period")
+                        st.info(
+                            "💡 Try adjusting the parameters or selecting a different time period"
+                        )
 
     def render_data_management(self):
         import pandas as pd
@@ -2731,9 +3306,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         db_path = tracker.db_manager.db_path
         backup_dir = tracker.db_manager.backup_dir
 
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "💾 Backup & Restore", "⬆️ Import / ⬇️ Export", "📸 Snapshots", "ℹ️ Info"
-        ])
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["💾 Backup & Restore", "⬆️ Import / ⬇️ Export", "📸 Snapshots", "ℹ️ Info"]
+        )
 
         # --- 1. Backup & Restore ---
         with tab1:
@@ -2756,9 +3331,18 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     with open(backup_path, "rb") as f:
-                        st.download_button("Download", f, file_name=selected_backup, use_container_width=True)
+                        st.download_button(
+                            "Download",
+                            f,
+                            file_name=selected_backup,
+                            use_container_width=True,
+                        )
                 with col2:
-                    if st.button("Delete", key=f"delete_{selected_backup}", use_container_width=True):
+                    if st.button(
+                        "Delete",
+                        key=f"delete_{selected_backup}",
+                        use_container_width=True,
+                    ):
                         try:
                             backup_path.unlink()
                             st.success(f"Deleted {selected_backup}")
@@ -2766,66 +3350,90 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         except Exception as e:
                             st.error(f"Failed to delete: {e}")
                 with col3:
-                    if st.button("Restore", key=f"restore_{selected_backup}", use_container_width=True):
-                        st.warning("⚠️ This will overwrite your current database. This action is irreversible!")
-                        if st.button("Confirm Restore", key=f"confirm_restore_{selected_backup}"):
-                            success = tracker.db_manager.restore_from_backup(backup_path)
+                    if st.button(
+                        "Restore",
+                        key=f"restore_{selected_backup}",
+                        use_container_width=True,
+                    ):
+                        st.warning(
+                            "⚠️ This will overwrite your current database. This action is irreversible!"
+                        )
+                        if st.button(
+                            "Confirm Restore", key=f"confirm_restore_{selected_backup}"
+                        ):
+                            success = tracker.db_manager.restore_from_backup(
+                                backup_path
+                            )
                             if success:
-                                st.success("Database restored. Please restart the app to use the restored data.")
+                                st.success(
+                                    "Database restored. Please restart the app to use the restored data."
+                                )
                             else:
                                 st.error("Restore failed. See logs for details.")
 
         # --- 2. Import/Export ---
         with tab2:
             st.header("⬆️ Import / ⬇️ Export Raw Data")
-            export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
+            export_dir = Path(
+                self.config_manager.config.get("exports", {}).get(
+                    "path", "data/exports/"
+                )
+            )
             data_export_dir = export_dir / "data_management"
             data_export_dir.mkdir(parents=True, exist_ok=True)
 
             st.markdown("#### Create New Export")
-            
+
             col1, col2 = st.columns(2)
             with col1:
-                export_type = st.selectbox("Select data to export", ["Holdings", "Transactions"])
+                export_type = st.selectbox(
+                    "Select data to export", ["Holdings", "Transactions"]
+                )
             with col2:
-                export_format = st.radio("Select format", ["CSV", "Excel"], horizontal=True)
+                export_format = st.radio(
+                    "Select format", ["CSV", "Excel"], horizontal=True
+                )
 
-            if st.button("🚀 Generate Export", use_container_width=True, type="primary"):
+            if st.button(
+                "🚀 Generate Export", use_container_width=True, type="primary"
+            ):
                 with st.spinner(f"Generating {export_type} export..."):
                     df = None
                     if export_type == "Holdings":
                         df = tracker.db_manager.get_holdings()
-                    else: # Transactions
+                    else:  # Transactions
                         df = tracker.db_manager.get_all_transactions()
 
                     if df is not None and not df.empty:
                         now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                         file_extension = "xlsx" if export_format == "Excel" else "csv"
-                        filename = f"{export_type.lower()}_export_{now_str}.{file_extension}"
+                        filename = (
+                            f"{export_type.lower()}_export_{now_str}.{file_extension}"
+                        )
                         filepath = data_export_dir / filename
 
                         # Create a copy and handle timezones for Excel compatibility
                         export_df = df.copy()
-                        for col in export_df.select_dtypes(['datetimetz']).columns:
+                        for col in export_df.select_dtypes(["datetimetz"]).columns:
                             export_df[col] = export_df[col].dt.tz_localize(None)
 
                         if export_format == "CSV":
                             export_df.to_csv(filepath, index=False)
-                        else: # Excel
+                        else:  # Excel
                             export_df.to_excel(filepath, index=False, engine="openpyxl")
-                        
+
                         st.success(f"Successfully created export: `{filename}`")
                         st.rerun()
                     else:
                         st.warning(f"No {export_type} data available to export.")
-            
+
             st.markdown("---")
             st.markdown("#### My Exports")
 
             all_files = sorted(
                 list(data_export_dir.glob("*_export_*.*")),
                 key=lambda x: x.stat().st_mtime,
-                reverse=True
+                reverse=True,
             )
 
             if not all_files:
@@ -2834,7 +3442,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 selected_export = st.selectbox(
                     "Select an export file:",
                     options=all_files,
-                    format_func=lambda x: f"{x.name} ({x.stat().st_size/1024:.1f} KB, {datetime.fromtimestamp(x.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})"
+                    format_func=lambda x: f"{x.name} ({x.stat().st_size / 1024:.1f} KB, {datetime.fromtimestamp(x.stat().st_mtime).strftime('%Y-%m-%d %H:%M')})",
                 )
 
                 if "preview_file" not in st.session_state:
@@ -2852,8 +3460,10 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             label="⬇️ Download",
                             data=file_bytes,
                             file_name=selected_export.name,
-                            mime=f"text/{selected_export.suffix[1:].lower()}" if selected_export.suffix == ".csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
+                            mime=f"text/{selected_export.suffix[1:].lower()}"
+                            if selected_export.suffix == ".csv"
+                            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
                         )
                 with col3:
                     if st.button("🗑️ Delete", use_container_width=True):
@@ -2883,7 +3493,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
             st.markdown("---")
             st.markdown("### Import")
-            uploaded_holdings = st.file_uploader("Import Holdings (CSV/Excel)", type=["csv", "xlsx"], key="import_holdings")
+            uploaded_holdings = st.file_uploader(
+                "Import Holdings (CSV/Excel)",
+                type=["csv", "xlsx"],
+                key="import_holdings",
+            )
             if uploaded_holdings:
                 try:
                     if uploaded_holdings.name.endswith(".csv"):
@@ -2897,7 +3511,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 except Exception as e:
                     st.error(f"Failed to import holdings: {e}")
 
-            uploaded_tx = st.file_uploader("Import Transactions (CSV/Excel)", type=["csv", "xlsx"], key="import_tx")
+            uploaded_tx = st.file_uploader(
+                "Import Transactions (CSV/Excel)", type=["csv", "xlsx"], key="import_tx"
+            )
             if uploaded_tx:
                 try:
                     if uploaded_tx.name.endswith(".csv"):
@@ -2917,7 +3533,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             st.header("📸 Snapshots")
             try:
                 snapshots = tracker.db_manager.get_all_snapshots()
-                snapshots = snapshots[~pd.isna(snapshots['timestamp'])].copy()
+                snapshots = snapshots[~pd.isna(snapshots["timestamp"])].copy()
                 snapshots = snapshots.drop_duplicates(subset=["timestamp"])
             except Exception as e:
                 st.error(f"Failed to load snapshots: {e}")
@@ -2926,19 +3542,19 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 st.info("No snapshots found. Take a snapshot from the dashboard first.")
             else:
                 snapshots = snapshots.sort_values("timestamp")
-                
+
                 # Include ALL snapshots (including NaT ones) so users can delete them
                 snapshot_labels = []
                 for _, row in snapshots.iterrows():
                     # Check for invalid snapshots: no timestamp OR all zero values
-                    is_no_timestamp = pd.isna(row['timestamp'])
+                    is_no_timestamp = pd.isna(row["timestamp"])
                     is_zero_values = (
-                        row['total_value_usd'] == 0.0 and 
-                        row['total_cost_basis_usd'] == 0.0 and 
-                        row['unrealized_pl_usd'] == 0.0 and 
-                        row['unrealized_pl_percent'] == 0.0
+                        row["total_value_usd"] == 0.0
+                        and row["total_cost_basis_usd"] == 0.0
+                        and row["unrealized_pl_usd"] == 0.0
+                        and row["unrealized_pl_percent"] == 0.0
                     )
-                    
+
                     if is_no_timestamp:
                         label = f"⚠️ Invalid Snapshot (No Timestamp) | Value: ${row['total_value_usd']:,.2f}"
                     elif is_zero_values:
@@ -2946,8 +3562,12 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     else:
                         label = f"{row['timestamp']} | Value: ${row['total_value_usd']:,.2f}"
                     snapshot_labels.append(label)
-                
-                selected_idx = st.selectbox("Select Snapshot", range(len(snapshots)), format_func=lambda i: snapshot_labels[i])
+
+                selected_idx = st.selectbox(
+                    "Select Snapshot",
+                    range(len(snapshots)),
+                    format_func=lambda i: snapshot_labels[i],
+                )
                 selected_row = snapshots.iloc[selected_idx]
 
                 st.write("### Snapshot Details")
@@ -2962,7 +3582,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.download_button("Download Snapshot (CSV)", selected_row.to_frame().T.to_csv(index=False), "portfolio_snapshot.csv")
+                    st.download_button(
+                        "Download Snapshot (CSV)",
+                        selected_row.to_frame().T.to_csv(index=False),
+                        "portfolio_snapshot.csv",
+                    )
                 with col2:
                     if st.button("Delete Selected Snapshot"):
                         try:
@@ -2977,54 +3601,64 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 st.success("✅ Successfully deleted snapshot.")
                                 st.rerun()
                             else:
-                                st.warning("⚠️ No rows were deleted. The snapshot may have already been removed or the query didn't match any records.")
+                                st.warning(
+                                    "⚠️ No rows were deleted. The snapshot may have already been removed or the query didn't match any records."
+                                )
                         except Exception as e:
                             st.error(f"❌ Failed to delete snapshot: {e}")
 
             st.markdown("---")
-            
+
             # --- Improved Data Cleanup with Context and Confirmation ---
             st.subheader("🗑️ Data Cleanup")
-            
+
             # Get cleanup configuration
             cleanup_days = tracker.config.get("database", {}).get("cleanup_days", 90)
-            
+
             # Show current configuration
             st.info(f"**Current Retention Period:** {cleanup_days} days")
             if cleanup_days <= 0:
                 st.warning("⚠️ Data cleanup is currently disabled (cleanup_days = 0)")
                 st.stop()
-            
+
             # Calculate what would be deleted
             cutoff_date = datetime.now() - timedelta(days=cleanup_days)
-            
+
             # Get cleanup statistics
             stats = tracker.db_manager.get_cleanup_statistics()
-            
+
             if not stats["cleanup_enabled"]:
                 st.warning("⚠️ Data cleanup is currently disabled (cleanup_days = 0)")
                 st.stop()
-            
+
             if "error" in stats:
                 st.error(f"Could not analyze database: {stats['error']}")
                 st.stop()
-            
+
             old_transactions = stats["old_transactions"]
             old_snapshots = stats["old_snapshots"]
             total_transactions = stats["total_transactions"]
             total_snapshots = stats["total_snapshots"]
             cutoff_date = stats["cutoff_date"]
-            
+
             # Display what will be deleted
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("📊 Old Transactions", f"{old_transactions:,}", f"of {total_transactions:,} total")
+                st.metric(
+                    "📊 Old Transactions",
+                    f"{old_transactions:,}",
+                    f"of {total_transactions:,} total",
+                )
             with col2:
-                st.metric("📸 Old Snapshots", f"{old_snapshots:,}", f"of {total_snapshots:,} total")
-            
+                st.metric(
+                    "📸 Old Snapshots",
+                    f"{old_snapshots:,}",
+                    f"of {total_snapshots:,} total",
+                )
+
             # Show cutoff date
             st.write(f"**Cutoff Date:** {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}")
-            
+
             # Warning about what this affects
             if old_transactions > 0 or old_snapshots > 0:
                 st.warning("""
@@ -3033,17 +3667,19 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 - Portfolio snapshots older than the retention period
                 - **Impact:** This may affect tax reporting, historical analysis, and portfolio tracking
                 """)
-                
+
                 # Confirmation section
                 st.markdown("---")
                 st.subheader("🔐 Confirmation Required")
-                
+
                 # Two-step confirmation
                 if "cleanup_confirmed" not in st.session_state:
                     st.session_state.cleanup_confirmed = False
-                
+
                 if not st.session_state.cleanup_confirmed:
-                    if st.button("🗑️ I understand - Show Final Confirmation", type="secondary"):
+                    if st.button(
+                        "🗑️ I understand - Show Final Confirmation", type="secondary"
+                    ):
                         st.session_state.cleanup_confirmed = True
                         st.rerun()
                 else:
@@ -3053,7 +3689,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     - No backup will be created automatically
                     - Consider creating a backup first
                     """)
-                    
+
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button("✅ CONFIRM DELETION", type="primary"):
@@ -3062,7 +3698,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 backup_path = tracker.db_manager.backup_database()
                                 if backup_path:
                                     st.success(f"✅ Backup created: {backup_path}")
-                                
+
                                 # Perform cleanup
                                 tracker.cleanup_old_data()
                                 st.success("✅ Data cleanup completed successfully!")
@@ -3071,7 +3707,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             except Exception as e:
                                 st.error(f"❌ Cleanup failed: {e}")
                                 st.session_state.cleanup_confirmed = False
-                    
+
                     with col2:
                         if st.button("❌ Cancel", type="secondary"):
                             st.session_state.cleanup_confirmed = False
@@ -3085,13 +3721,17 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             st.header("ℹ️ Database Info")
             st.write(f"**Database Path:** `{db_path}`")
             if os.path.exists(db_path):
-                st.write(f"**Size:** {os.path.getsize(db_path)/1024:.1f} KB")
-                st.write(f"**Last Modified:** {pd.to_datetime(os.path.getmtime(db_path), unit='s')}")
+                st.write(f"**Size:** {os.path.getsize(db_path) / 1024:.1f} KB")
+                st.write(
+                    f"**Last Modified:** {pd.to_datetime(os.path.getmtime(db_path), unit='s')}"
+                )
             else:
                 st.warning("Database file not found.")
             st.write(f"**Backup Directory:** `{backup_dir}`")
             if backup_dir.exists():
-                st.write(f"**Backups Available:** {len(list(backup_dir.glob('*.bak')))}")
+                st.write(
+                    f"**Backups Available:** {len(list(backup_dir.glob('*.bak')))}"
+                )
             else:
                 st.warning("Backup directory not found.")
 
@@ -3124,67 +3764,95 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             # Create responsive columns for configuration sections
             col_portfolio, col_api = st.columns(2)
 
-             # --- Portfolio Settings ---
+            # --- Portfolio Settings ---
             with col_portfolio:
                 with st.container():
                     st.subheader("💼 Portfolio Settings")
 
                     with st.expander("💰 Trading Configuration", expanded=False):
-                        min_trade_usd = config.get("portfolio", {}).get("minimum_trade_usd", 5.0)
+                        min_trade_usd = config.get("portfolio", {}).get(
+                            "minimum_trade_usd", 5.0
+                        )
                         new_min_trade_usd = st.number_input(
                             "💵 Minimum Trade (USD)",
-                            min_value=1.0, max_value=10000.0, value=float(min_trade_usd),
+                            min_value=1.0,
+                            max_value=10000.0,
+                            value=float(min_trade_usd),
                             step=1.0,
-                            help="💵 Minimum USD value for trades. Smaller trades are ignored."
+                            help="💵 Minimum USD value for trades. Smaller trades are ignored.",
                         )
 
                     with st.expander("⚙️ Trading Mode", expanded=False):
-                        live_enabled_config = config.get("portfolio", {}).get("live_trading_enabled", False)
+                        live_enabled_config = config.get("portfolio", {}).get(
+                            "live_trading_enabled", False
+                        )
                         new_live = st.toggle(
                             "🔴 Enable Live Trading",
                             value=live_enabled_config,
-                            help="🔴 Enable real trades; otherwise, trades are simulated (dry run)."
+                            help="🔴 Enable real trades; otherwise, trades are simulated (dry run).",
                         )
 
-                        testnet_config = config.get("portfolio", {}).get("testnet_mode", False)
+                        testnet_config = config.get("portfolio", {}).get(
+                            "testnet_mode", False
+                        )
                         new_testnet = st.toggle(
                             "🧪 Enable Binance Testnet Mode",
                             value=testnet_config,
-                            help="🧪 Switch between Binance mainnet and testnet."
+                            help="🧪 Switch between Binance mainnet and testnet.",
                         )
 
                     with st.expander("💱 Currency Settings", expanded=False):
-                        p2p_fiat = config.get("portfolio", {}).get("p2p_fiat_currency", "USD")
+                        p2p_fiat = config.get("portfolio", {}).get(
+                            "p2p_fiat_currency", "USD"
+                        )
                         new_p2p_fiat = st.text_input(
                             "💱 P2P Fiat Currency",
                             value=p2p_fiat,
-                            help="💱 Fiat currency code (e.g., USD, EUR, PHP) for P2P trades."
+                            help="💱 Fiat currency code (e.g., USD, EUR, PHP) for P2P trades.",
                         )
 
-                        crypto_quotes = config.get("portfolio", {}).get("crypto_quotes", [])
+                        crypto_quotes = config.get("portfolio", {}).get(
+                            "crypto_quotes", []
+                        )
                         new_crypto_quotes = st.text_input(
                             "₿ Crypto Quotes (comma-separated)",
                             value=", ".join(crypto_quotes),
-                            help="₿ Crypto quote symbols (e.g., BTC, ETH, USDT), comma-separated."
+                            help="₿ Crypto quote symbols (e.g., BTC, ETH, USDT), comma-separated.",
                         )
 
-                        stablecoins = config.get("portfolio", {}).get("stablecoin_symbols", ["USDT"])
+                        stablecoins = config.get("portfolio", {}).get(
+                            "stablecoin_symbols", ["USDT"]
+                        )
                         new_stablecoins = st.text_input(
                             "🟢 Stablecoin Symbols (comma-separated)",
                             value=", ".join(stablecoins),
-                            help="🟢 Stablecoin symbols (e.g., USDT, USDC), comma-separated."
+                            help="🟢 Stablecoin symbols (e.g., USDT, USDC), comma-separated.",
                         )
 
                     # Save Portfolio Settings
                     st.markdown("---")
-                    if st.button("💾 Save Portfolio Settings", use_container_width=True, type="primary"):
+                    if st.button(
+                        "💾 Save Portfolio Settings",
+                        use_container_width=True,
+                        type="primary",
+                    ):
                         try:
                             config["portfolio"]["minimum_trade_usd"] = new_min_trade_usd
                             config["portfolio"]["live_trading_enabled"] = new_live
                             config["portfolio"]["testnet_mode"] = new_testnet
-                            config["portfolio"]["p2p_fiat_currency"] = new_p2p_fiat.strip().upper()
-                            config["portfolio"]["crypto_quotes"] = [s.strip().upper() for s in new_crypto_quotes.split(",") if s.strip()]
-                            config["portfolio"]["stablecoin_symbols"] = [s.strip().upper() for s in new_stablecoins.split(",") if s.strip()]
+                            config["portfolio"]["p2p_fiat_currency"] = (
+                                new_p2p_fiat.strip().upper()
+                            )
+                            config["portfolio"]["crypto_quotes"] = [
+                                s.strip().upper()
+                                for s in new_crypto_quotes.split(",")
+                                if s.strip()
+                            ]
+                            config["portfolio"]["stablecoin_symbols"] = [
+                                s.strip().upper()
+                                for s in new_stablecoins.split(",")
+                                if s.strip()
+                            ]
                             self.config_manager.save_config()
                             st.success("✅ Portfolio settings updated and applied!")
                             st.rerun()
@@ -3197,57 +3865,94 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     st.subheader("🔌 API Settings")
 
                     with st.expander("⏱️ Timeout Settings", expanded=False):
-                        coingecko_timeout = config.get("apis", {}).get("coingecko", {}).get("timeout", 30)
-                        binance_timeout = config.get("apis", {}).get("binance", {}).get("timeout", 60)
+                        coingecko_timeout = (
+                            config.get("apis", {})
+                            .get("coingecko", {})
+                            .get("timeout", 30)
+                        )
+                        binance_timeout = (
+                            config.get("apis", {}).get("binance", {}).get("timeout", 60)
+                        )
 
                         new_cg_timeout = st.number_input(
                             "CoinGecko Timeout (s)",
-                            min_value=5, max_value=120, value=coingecko_timeout,
+                            min_value=5,
+                            max_value=120,
+                            value=coingecko_timeout,
                             key="cg_timeout",
-                            help="⏰ Maximum time (in seconds) to wait for a response from CoinGecko API."
+                            help="⏰ Maximum time (in seconds) to wait for a response from CoinGecko API.",
                         )
                         new_bi_timeout = st.number_input(
                             "Binance Timeout (s)",
-                            min_value=5, max_value=120, value=binance_timeout,
+                            min_value=5,
+                            max_value=120,
+                            value=binance_timeout,
                             key="bi_timeout",
-                            help="⏰ Maximum time (in seconds) to wait for a response from Binance API."
+                            help="⏰ Maximum time (in seconds) to wait for a response from Binance API.",
                         )
 
                     with st.expander("⚡ Performance Settings", expanded=False):
-                        binance_recv_window = config.get("apis", {}).get("binance", {}).get("recv_window", 20000)
+                        binance_recv_window = (
+                            config.get("apis", {})
+                            .get("binance", {})
+                            .get("recv_window", 20000)
+                        )
                         new_bi_recv_window = st.number_input(
                             "Binance Recv Window (ms)",
-                            min_value=1000, max_value=120000, value=binance_recv_window,
-                            step=1000, key="bi_recv_window",
-                            help="📡 Binance API recvWindow parameter (ms). Increase if timestamp errors occur."
+                            min_value=1000,
+                            max_value=120000,
+                            value=binance_recv_window,
+                            step=1000,
+                            key="bi_recv_window",
+                            help="📡 Binance API recvWindow parameter (ms). Increase if timestamp errors occur.",
                         )
 
-                        binance_delay = config.get("apis", {}).get("binance", {}).get("request_delay_ms", 500)
-                        coingecko_delay = config.get("apis", {}).get("coingecko", {}).get("request_delay_ms", 1500)
+                        binance_delay = (
+                            config.get("apis", {})
+                            .get("binance", {})
+                            .get("request_delay_ms", 500)
+                        )
+                        coingecko_delay = (
+                            config.get("apis", {})
+                            .get("coingecko", {})
+                            .get("request_delay_ms", 1500)
+                        )
 
                         new_bi_delay = st.number_input(
                             "Binance Request Delay (ms)",
-                            min_value=0, max_value=10000, value=binance_delay,
-                            step=100, key="bi_delay",
-                            help="⚡ Delay (ms) between Binance API requests to avoid rate limits."
+                            min_value=0,
+                            max_value=10000,
+                            value=binance_delay,
+                            step=100,
+                            key="bi_delay",
+                            help="⚡ Delay (ms) between Binance API requests to avoid rate limits.",
                         )
                         new_cg_delay = st.number_input(
                             "CoinGecko Request Delay (ms)",
-                            min_value=0, max_value=10000, value=coingecko_delay,
-                            step=100, key="cg_delay",
-                            help="⚡ Delay (ms) between CoinGecko API requests to avoid rate limits."
+                            min_value=0,
+                            max_value=10000,
+                            value=coingecko_delay,
+                            step=100,
+                            key="cg_delay",
+                            help="⚡ Delay (ms) between CoinGecko API requests to avoid rate limits.",
                         )
 
                     with st.expander("📅 Historical Data Settings", expanded=False):
                         st.markdown("**Data Lookback Periods**")
                         lookback = config.get("history_lookback_days", {})
                         lookback_types = [
-                            ("trades", 90, "💼"), ("deposits", 90, "💰"), ("withdrawals", 90, "💸"),
-                            ("p2p_buys", 90, "🤝"), ("internal_transfers", 90, "🔄"),
-                            ("spot_futures_transfers", 90, "📈"), ("spot_convert_history", 90, "🔄"),
-                            ("simple_earn_rewards", 90, "💎"), ("simple_earn_subscriptions", 90, "📊"),
-                            ("simple_earn_redemptions", 90, "💰"), ("dividend_history", 90, "📈"),
-                            ("staking_history", 90, "🏦")
+                            ("trades", 90, "💼"),
+                            ("deposits", 90, "💰"),
+                            ("withdrawals", 90, "💸"),
+                            ("p2p_buys", 90, "🤝"),
+                            ("internal_transfers", 90, "🔄"),
+                            ("spot_futures_transfers", 90, "📈"),
+                            ("spot_convert_history", 90, "🔄"),
+                            ("simple_earn_rewards", 90, "💎"),
+                            ("simple_earn_subscriptions", 90, "📊"),
+                            ("simple_earn_redemptions", 90, "💰"),
+                            ("dividend_history", 90, "📈"),
+                            ("staking_history", 90, "🏦"),
                         ]
 
                         new_lookback = {}
@@ -3255,20 +3960,28 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             display_name = f"{emoji} {key.replace('_', ' ').title()}"
                             new_lookback[key] = st.number_input(
                                 display_name,
-                                min_value=1, max_value=3650, value=int(lookback.get(key, default)),
+                                min_value=1,
+                                max_value=3650,
+                                value=int(lookback.get(key, default)),
                                 key=f"lookback_{key}",
-                                help=f"📅 Days of {key.replace('_', ' ')} history to fetch from API."
+                                help=f"📅 Days of {key.replace('_', ' ')} history to fetch from API.",
                             )
 
                     # Save API Settings with improved styling
                     st.markdown("---")
-                    if st.button("💾 Save API Settings", use_container_width=True, type="primary"):
+                    if st.button(
+                        "💾 Save API Settings", use_container_width=True, type="primary"
+                    ):
                         try:
                             config["apis"]["coingecko"]["timeout"] = new_cg_timeout
                             config["apis"]["binance"]["timeout"] = new_bi_timeout
-                            config["apis"]["binance"]["recv_window"] = new_bi_recv_window
+                            config["apis"]["binance"]["recv_window"] = (
+                                new_bi_recv_window
+                            )
                             config["apis"]["binance"]["request_delay_ms"] = new_bi_delay
-                            config["apis"]["coingecko"]["request_delay_ms"] = new_cg_delay
+                            config["apis"]["coingecko"]["request_delay_ms"] = (
+                                new_cg_delay
+                            )
                             config["history_lookback_days"] = new_lookback
                             self.config_manager.save_config()
                             st.success("✅ API settings updated and applied!")
@@ -3285,7 +3998,13 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
                     with st.expander("📊 Log Configuration", expanded=False):
                         log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-                        level_icons = {"DEBUG": "🔍", "INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
+                        level_icons = {
+                            "DEBUG": "🔍",
+                            "INFO": "ℹ️",
+                            "WARNING": "⚠️",
+                            "ERROR": "❌",
+                            "CRITICAL": "🚨",
+                        }
                         current_level = config.get("logging", {}).get("level", "INFO")
 
                         new_level = st.selectbox(
@@ -3294,7 +4013,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             index=log_levels.index(current_level),
                             format_func=lambda x: f"{level_icons.get(x, '')} {x}",
                             key="log_level",
-                            help="📊 Set verbosity of logs. DEBUG is most verbose, CRITICAL is least."
+                            help="📊 Set verbosity of logs. DEBUG is most verbose, CRITICAL is least.",
                         )
 
                         file_config = config.get("logging", {}).get("file_config", {})
@@ -3303,7 +4022,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "📄 Enable File Logging",
                             value=file_enabled,
                             key="file_logging_toggle",
-                            help="📄 Write logs to a file for persistent storage."
+                            help="📄 Write logs to a file for persistent storage.",
                         )
 
                         log_path = file_config.get("path", "logs/portfolio_tracker.log")
@@ -3311,24 +4030,28 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "📁 Log File Path",
                             value=log_path,
                             key="log_file_path",
-                            help="📁 Path to store log file. Ensure directory is writable."
+                            help="📁 Path to store log file. Ensure directory is writable.",
                         )
 
-                        console_config = config.get("logging", {}).get("console_config", {})
+                        console_config = config.get("logging", {}).get(
+                            "console_config", {}
+                        )
                         console_enabled = console_config.get("enabled", True)
                         new_console_enabled = st.toggle(
                             "🖥️ Enable Console Logging",
                             value=console_enabled,
                             key="console_logging_toggle",
-                            help="🖥️ Output logs to console for real-time monitoring."
+                            help="🖥️ Output logs to console for real-time monitoring.",
                         )
 
                     with st.expander("👀 Log Preview", expanded=False):
                         preview_lines = st.number_input(
                             "📄 Log Preview Lines",
-                            min_value=1, max_value=100, value=10,
+                            min_value=1,
+                            max_value=100,
+                            value=10,
                             key="log_preview_lines",
-                            help="📄 Number of recent log lines to display in preview."
+                            help="📄 Number of recent log lines to display in preview.",
                         )
 
                         if os.path.exists(log_path):
@@ -3348,7 +4071,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     st.markdown("---")
                     # col_save, col_clear = st.columns(2)
                     # with col_save:
-                    if st.button("💾 Save Logging Settings", use_container_width=True, type="primary"):
+                    if st.button(
+                        "💾 Save Logging Settings",
+                        use_container_width=True,
+                        type="primary",
+                    ):
                         try:
                             # Validate log file path
                             log_path_obj = Path(new_log_path).parent
@@ -3357,12 +4084,18 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 st.error("❌ Log file directory is not writable!")
                             else:
                                 config["logging"]["level"] = new_level
-                                config["logging"]["file_config"]["enabled"] = new_file_enabled
+                                config["logging"]["file_config"]["enabled"] = (
+                                    new_file_enabled
+                                )
                                 config["logging"]["file_config"]["path"] = new_log_path
-                                config["logging"]["console_config"]["enabled"] = new_console_enabled
+                                config["logging"]["console_config"]["enabled"] = (
+                                    new_console_enabled
+                                )
                                 self.config_manager.save_config()
                                 self.setup_logging(level_override=new_level)
-                                st.success(f"✅ Logging settings updated! Level: {level_icons.get(new_level, '')} {new_level}")
+                                st.success(
+                                    f"✅ Logging settings updated! Level: {level_icons.get(new_level, '')} {new_level}"
+                                )
                                 st.rerun()
                         except Exception as e:
                             st.error(f"❌ Failed to save logging settings: {str(e)}")
@@ -3379,115 +4112,166 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "₿ Cryptocurrencies (comma-separated)",
                             value=", ".join(cryptocurrencies),
                             key="trend_cryptos",
-                            help="₿ Cryptocurrencies to analyze (e.g., BTC, ETH, SOL)."
+                            help="₿ Cryptocurrencies to analyze (e.g., BTC, ETH, SOL).",
                         )
 
                     with st.expander("📊 RSI Settings", expanded=False):
                         rsi_period = trend_config.get("rsi_period", 14)
                         new_rsi_period = st.number_input(
                             "⏱️ RSI Period",
-                            min_value=1, max_value=50, value=rsi_period,
+                            min_value=1,
+                            max_value=50,
+                            value=rsi_period,
                             key="rsi_period",
-                            help="⏱️ Period for Relative Strength Index calculation."
+                            help="⏱️ Period for Relative Strength Index calculation.",
                         )
 
                         rsi_oversold = trend_config.get("rsi_oversold", 30)
                         new_rsi_oversold = st.number_input(
                             "📉 RSI Oversold Threshold",
-                            min_value=0, max_value=100, value=rsi_oversold,
+                            min_value=0,
+                            max_value=100,
+                            value=rsi_oversold,
                             key="rsi_oversold",
-                            help="📉 RSI value below which an asset is considered oversold."
+                            help="📉 RSI value below which an asset is considered oversold.",
                         )
 
                         rsi_overbought = trend_config.get("rsi_overbought", 70)
                         new_rsi_overbought = st.number_input(
                             "📈 RSI Overbought Threshold",
-                            min_value=0, max_value=100, value=rsi_overbought,
+                            min_value=0,
+                            max_value=100,
+                            value=rsi_overbought,
                             key="rsi_overbought",
-                            help="📈 RSI value above which an asset is considered overbought."
+                            help="📈 RSI value above which an asset is considered overbought.",
                         )
 
                     with st.expander("⏰ Timeframe Settings", expanded=False):
                         timeframe_settings = trend_config.get("timeframe_settings", {})
-                        timeframe_icons = {"long_term": "📅", "swing": "📊", "day": "⚡"}
+                        timeframe_icons = {
+                            "long_term": "📅",
+                            "swing": "📊",
+                            "day": "⚡",
+                        }
 
                         for timeframe in ["long_term", "swing", "day"]:
                             # Ensure default settings exist
                             if timeframe not in timeframe_settings:
                                 timeframe_settings[timeframe] = {
-                                    "period": "1y" if timeframe == "long_term" else "90d" if timeframe == "swing" else "7d",
+                                    "period": "1y"
+                                    if timeframe == "long_term"
+                                    else "90d"
+                                    if timeframe == "swing"
+                                    else "7d",
                                     "sma_short_window": 10,
-                                    "sma_long_window": 30
+                                    "sma_long_window": 30,
                                 }
 
                             settings = timeframe_settings[timeframe]
-                            current_period = settings.get("period", "1y" if timeframe == "long_term" else "90d" if timeframe == "swing" else "7d")
+                            current_period = settings.get(
+                                "period",
+                                "1y"
+                                if timeframe == "long_term"
+                                else "90d"
+                                if timeframe == "swing"
+                                else "7d",
+                            )
 
-                            with st.expander(f"{timeframe_icons.get(timeframe, '📊')} {timeframe.replace('_', ' ').title()}", expanded=False):
+                            with st.expander(
+                                f"{timeframe_icons.get(timeframe, '📊')} {timeframe.replace('_', ' ').title()}",
+                                expanded=False,
+                            ):
                                 new_period = st.text_input(
                                     f"⏰ Period",
                                     value=current_period,
                                     key=f"timeframe_{timeframe}_period",
-                                    help="⏰ Period for analysis (e.g., 4y for years, 60d for days, 3mo for months)."
+                                    help="⏰ Period for analysis (e.g., 4y for years, 60d for days, 3mo for months).",
                                 )
 
                                 col_sma1, col_sma2 = st.columns(2)
                                 with col_sma1:
                                     new_sma_short = st.number_input(
                                         f"📊 SMA Short",
-                                        min_value=1, max_value=200,
+                                        min_value=1,
+                                        max_value=200,
                                         value=settings.get("sma_short_window", 10),
                                         key=f"timeframe_{timeframe}_sma_short",
-                                        help="📊 Short-term Simple Moving Average window."
+                                        help="📊 Short-term Simple Moving Average window.",
                                     )
                                 with col_sma2:
                                     new_sma_long = st.number_input(
                                         f"📈 SMA Long",
-                                        min_value=1, max_value=200,
+                                        min_value=1,
+                                        max_value=200,
                                         value=settings.get("sma_long_window", 30),
                                         key=f"timeframe_{timeframe}_sma_long",
-                                        help="📈 Long-term Simple Moving Average window."
+                                        help="📈 Long-term Simple Moving Average window.",
                                     )
 
                                 timeframe_settings[timeframe] = {
                                     "period": new_period.strip(),
                                     "sma_short_window": new_sma_short,
-                                    "sma_long_window": new_sma_long
+                                    "sma_long_window": new_sma_long,
                                 }
 
                     # Validation and Save
                     validation_errors = []
 
                     if new_rsi_oversold >= new_rsi_overbought:
-                        validation_errors.append("RSI Oversold must be less than RSI Overbought!")
+                        validation_errors.append(
+                            "RSI Oversold must be less than RSI Overbought!"
+                        )
 
                     for timeframe, settings in timeframe_settings.items():
                         period = settings.get("period", "").strip()
                         if not period:
-                            validation_errors.append(f"Period for {timeframe} cannot be empty!")
+                            validation_errors.append(
+                                f"Period for {timeframe} cannot be empty!"
+                            )
                         elif not re.match(r"^\d+(y|d|mo)$", period):
-                            validation_errors.append(f"Invalid period format for {timeframe}: Use Xy, Xd, or Xmo")
+                            validation_errors.append(
+                                f"Invalid period format for {timeframe}: Use Xy, Xd, or Xmo"
+                            )
 
                         if settings["sma_short_window"] >= settings["sma_long_window"]:
-                            validation_errors.append(f"Short SMA must be less than Long SMA for {timeframe}!")
+                            validation_errors.append(
+                                f"Short SMA must be less than Long SMA for {timeframe}!"
+                            )
 
                     if validation_errors:
                         for error in validation_errors:
                             st.error(f"❌ {error}")
 
                     st.markdown("---")
-                    if st.button("💾 Save Trend Analyzer Settings", use_container_width=True, type="primary", disabled=bool(validation_errors)):
+                    if st.button(
+                        "💾 Save Trend Analyzer Settings",
+                        use_container_width=True,
+                        type="primary",
+                        disabled=bool(validation_errors),
+                    ):
                         try:
-                            config["trend_analyzer"]["cryptocurrencies"] = [s.strip().upper() for s in new_cryptocurrencies.split(",") if s.strip()]
+                            config["trend_analyzer"]["cryptocurrencies"] = [
+                                s.strip().upper()
+                                for s in new_cryptocurrencies.split(",")
+                                if s.strip()
+                            ]
                             config["trend_analyzer"]["rsi_period"] = new_rsi_period
                             config["trend_analyzer"]["rsi_oversold"] = new_rsi_oversold
-                            config["trend_analyzer"]["rsi_overbought"] = new_rsi_overbought
-                            config["trend_analyzer"]["timeframe_settings"] = timeframe_settings
+                            config["trend_analyzer"]["rsi_overbought"] = (
+                                new_rsi_overbought
+                            )
+                            config["trend_analyzer"]["timeframe_settings"] = (
+                                timeframe_settings
+                            )
                             self.config_manager.save_config()
-                            st.success("✅ Trend Analyzer settings updated and applied!")
+                            st.success(
+                                "✅ Trend Analyzer settings updated and applied!"
+                            )
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Failed to save trend analyzer settings: {str(e)}")
+                            st.error(
+                                f"❌ Failed to save trend analyzer settings: {str(e)}"
+                            )
 
             # --- Import/Export Config ---
             st.markdown("---")
@@ -3499,12 +4283,14 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 with st.expander("📤 Export Configuration", expanded=False):
                     export_dir = config.get("exports", {}).get("path", "data/exports")
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    default_export_path = Path(export_dir) / f"config_export_{timestamp}.json"
+                    default_export_path = (
+                        Path(export_dir) / f"config_export_{timestamp}.json"
+                    )
 
                     export_path = st.text_input(
                         "📁 Export Path",
                         value=str(default_export_path),
-                        help="📁 Path to save the exported JSON config."
+                        help="📁 Path to save the exported JSON config.",
                     )
 
                     if st.button("📤 Export Configuration", use_container_width=True):
@@ -3520,7 +4306,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             with open(export_path_obj, "w") as f:
                                 json.dump(export_config, f, indent=2)
 
-                            st.success(f"✅ Configuration exported to `{export_path_obj}`")
+                            st.success(
+                                f"✅ Configuration exported to `{export_path_obj}`"
+                            )
                         except Exception as e:
                             st.error(f"❌ Failed to export configuration: {str(e)}")
 
@@ -3529,7 +4317,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     uploaded_file = st.file_uploader(
                         "📥 Upload Configuration (JSON)",
                         type="json",
-                        help="📥 Upload a previously exported configuration file"
+                        help="📥 Upload a previously exported configuration file",
                     )
 
                     if uploaded_file:
@@ -3538,8 +4326,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
 
                             # Validation
                             default_config = self.config_manager.config
-                            required_keys = {key: type(value) for key, value in default_config.items()
-                                           if key not in ["main_api_keys", "sub_accounts"]}
+                            required_keys = {
+                                key: type(value)
+                                for key, value in default_config.items()
+                                if key not in ["main_api_keys", "sub_accounts"]
+                            }
 
                             validation_passed = True
                             validation_messages = []
@@ -3547,10 +4338,14 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             # Validate structure
                             for key, expected_type in required_keys.items():
                                 if key not in new_config:
-                                    validation_messages.append(f"❌ Missing required key: '{key}'")
+                                    validation_messages.append(
+                                        f"❌ Missing required key: '{key}'"
+                                    )
                                     validation_passed = False
                                 elif not isinstance(new_config[key], expected_type):
-                                    validation_messages.append(f"❌ Invalid type for '{key}': expected {expected_type.__name__}")
+                                    validation_messages.append(
+                                        f"❌ Invalid type for '{key}': expected {expected_type.__name__}"
+                                    )
                                     validation_passed = False
 
                             # Display validation results
@@ -3558,27 +4353,41 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                 st.success("✅ Configuration file is valid!")
 
                                 # Preview configuration
-                                with st.expander("👀 Preview Configuration", expanded=False):
+                                with st.expander(
+                                    "👀 Preview Configuration", expanded=False
+                                ):
                                     st.json(new_config)
 
                                 confirm_import = st.checkbox(
                                     "⚠️ Confirm Import (will overwrite current config)",
-                                    help="⚠️ This will replace your current settings with the imported configuration."
+                                    help="⚠️ This will replace your current settings with the imported configuration.",
                                 )
 
-                                if confirm_import and st.button("📥 Apply Configuration", use_container_width=True, type="primary"):
+                                if confirm_import and st.button(
+                                    "📥 Apply Configuration",
+                                    use_container_width=True,
+                                    type="primary",
+                                ):
                                     try:
                                         # Preserve sensitive data
-                                        new_config["main_api_keys"] = config.get("main_api_keys", {})
-                                        new_config["sub_accounts"] = config.get("sub_accounts", {})
+                                        new_config["main_api_keys"] = config.get(
+                                            "main_api_keys", {}
+                                        )
+                                        new_config["sub_accounts"] = config.get(
+                                            "sub_accounts", {}
+                                        )
 
                                         config.update(new_config)
                                         self.config_manager.save_config()
 
-                                        st.success("✅ Configuration imported successfully! Please restart the application.")
+                                        st.success(
+                                            "✅ Configuration imported successfully! Please restart the application."
+                                        )
                                         st.rerun()
                                     except Exception as e:
-                                        st.error(f"❌ Failed to apply configuration: {str(e)}")
+                                        st.error(
+                                            f"❌ Failed to apply configuration: {str(e)}"
+                                        )
                             else:
                                 st.error("❌ Configuration file validation failed:")
                                 for msg in validation_messages:
@@ -3587,7 +4396,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                         except json.JSONDecodeError as e:
                             st.error(f"❌ Invalid JSON file: {str(e)}")
                         except Exception as e:
-                            st.error(f"❌ Failed to process configuration file: {str(e)}")
+                            st.error(
+                                f"❌ Failed to process configuration file: {str(e)}"
+                            )
 
         # --- System Status Tab ---
         with tab_status:
@@ -3609,7 +4420,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             "User": getpass.getuser(),
                             "Python": platform.python_version(),
                             "OS": platform.platform(terse=True),
-                            "System Boot": datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S")
+                            "System Boot": datetime.fromtimestamp(
+                                psutil.boot_time()
+                            ).strftime("%Y-%m-%d %H:%M:%S"),
                         }
                         for label, value in app_metrics.items():
                             st.text(f"{label}: {value}")
@@ -3622,10 +4435,18 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             st.metric("🖥️ CPU", f"{cpu_percent:.1f}%")
                         with res_col_ram:
                             ram_info = psutil.virtual_memory()
-                            st.metric("💾 RAM", f"{ram_info.percent}%", f"{ram_info.used / (1024**3):.1f} GB")
+                            st.metric(
+                                "💾 RAM",
+                                f"{ram_info.percent}%",
+                                f"{ram_info.used / (1024**3):.1f} GB",
+                            )
                         with res_col_disk:
-                            disk_info = psutil.disk_usage('/')
-                            st.metric("💿 Disk", f"{disk_info.percent}%", f"{disk_info.used / (1024**3):.1f} GB")
+                            disk_info = psutil.disk_usage("/")
+                            st.metric(
+                                "💿 Disk",
+                                f"{disk_info.percent}%",
+                                f"{disk_info.used / (1024**3):.1f} GB",
+                            )
 
             # --- Services & Storage Column ---
             with col_services:
@@ -3653,21 +4474,26 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             st.warning(f"❌ CoinGecko: Not Available")
                         st.info("📈 YFinance: API available")
 
-
                     # Database & Storage Expander
                     with st.expander("💾 Database & Storage", expanded=True):
                         db_path = self.tracker.db_manager.db_path
                         if os.path.exists(db_path):
                             db_size_kb = os.path.getsize(db_path) / 1024
-                            db_modified = datetime.fromtimestamp(os.path.getmtime(db_path))
+                            db_modified = datetime.fromtimestamp(
+                                os.path.getmtime(db_path)
+                            )
                             st.success(f"Database: `{os.path.basename(db_path)}`")
                             st.text(f"Size: {db_size_kb:.1f} KB")
-                            st.text(f"Last Modified: {db_modified.strftime('%Y-%m-%d %H:%M:%S')}")
+                            st.text(
+                                f"Last Modified: {db_modified.strftime('%Y-%m-%d %H:%M:%S')}"
+                            )
                         else:
                             st.error("❌ Database file not found")
 
                         st.markdown("---")
-                        export_dir = config.get("exports", {}).get("path", "data/exports/")
+                        export_dir = config.get("exports", {}).get(
+                            "path", "data/exports/"
+                        )
                         cache_dir = config.get("cache", {}).get("path", "data/cache")
                         st.info(f"📁 Export Path: `{export_dir}`")
                         st.info(f"🗂️ Cache Path: `{cache_dir}`")
@@ -3675,10 +4501,20 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             # --- Logging Status (Full Width) ---
             st.markdown("---")
             with st.expander("📝 Logging Status", expanded=False):
-                log_path = config.get("logging", {}).get("file_config", {}).get("path", "logs/portfolio_tracker.log")
+                log_path = (
+                    config.get("logging", {})
+                    .get("file_config", {})
+                    .get("path", "logs/portfolio_tracker.log")
+                )
 
                 log_level = config.get("logging", {}).get("level", "INFO")
-                level_icons = {"DEBUG": "🔍", "INFO": "ℹ️", "WARNING": "⚠️", "ERROR": "❌", "CRITICAL": "🚨"}
+                level_icons = {
+                    "DEBUG": "🔍",
+                    "INFO": "ℹ️",
+                    "WARNING": "⚠️",
+                    "ERROR": "❌",
+                    "CRITICAL": "🚨",
+                }
                 icon = level_icons.get(log_level, "📝")
                 st.info(f"**Current Log Level:** {icon} {log_level}")
                 st.info(f"**Log File Path:** `{log_path}`")
@@ -3686,7 +4522,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 if os.path.exists(log_path):
                     try:
                         with open(log_path, "r") as f:
-                            lines = f.readlines()[-15:] # Increased lines for better context
+                            lines = f.readlines()[
+                                -15:
+                            ]  # Increased lines for better context
                         if lines:
                             st.code("".join(lines), language="log")
                         else:
@@ -3716,6 +4554,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             page_mapping[selected_page]()
         else:
             st.error("Page not found")
+
 
 # Run the dashboard
 if __name__ == "__main__":

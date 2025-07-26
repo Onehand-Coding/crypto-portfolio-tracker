@@ -1,10 +1,21 @@
 {
   "version": "2.1.0",
+  "portfolio": {
+    "minimum_trade_usd": 5.0,
+    "live_trading_enabled": true,
+    "testnet_mode": true,
+    "p2p_fiat_currency": "PHP",
+    "crypto_quotes": [],
+    "stablecoin_symbols": [
+      "USDT"
+    ]
+  },
   "apis": {
     "coingecko": {
       "base_url": "https://api.coingecko.com/api/v3",
       "timeout": 30,
-      "request_delay_ms": 1500
+      "request_delay_ms": 1500,
+      "api_key": "CG-8Xh6M6TNWR4tWvYNCgNYonkg"
     },
     "binance": {
       "timeout": 60,
@@ -16,11 +27,11 @@
     }
   },
   "cache": {
-    "path": "data/cache"
+    "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/cache"
   },
   "database": {
-    "path": "data/portfolio.db",
-    "testnet_path": "data/testnet_portfolio.db",
+    "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/portfolio.db",
+    "testnet_path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/testnet_portfolio.db",
     "backup_enabled": true,
     "cleanup_days": 90
   },
@@ -28,25 +39,18 @@
     "level": "INFO",
     "file_config": {
       "enabled": true,
-      "path": "logs/portfolio_tracker.log"
+      "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/logs/portfolio_tracker.log"
     },
     "console_config": {
       "enabled": true
     }
   },
   "exports": {
-    "path": "data/exports/"
-  },
-  "portfolio": {
-    "minimum_trade_usd": 5.0,
-    "live_trading_enabled": true,
-    "p2p_fiat_currency": "PHP",
-    "crypto_quotes": [],
-    "stablecoin_symbols": ["USDT"]
+    "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/exports"
   },
   "target_allocation": {
     "BTC": 0.35,
-    "ETH": 0.20,
+    "ETH": 0.2,
     "SOL": 0.12,
     "RENDER": 0.08,
     "TAO": 0.08,
@@ -55,12 +59,15 @@
     "ONDO": 0.05
   },
   "asset_classes": {
-    "majors": ["BTC", "ETH"]
+    "majors": [
+      "BTC",
+      "ETH"
+    ]
   },
   "rebalance_technical": {
     "market_regime_rules": {
-    "suppress_buys_in_bear": true
-  },
+      "suppress_buys_in_bear": true
+    },
     "majors": {
       "allocation_drift_threshold_pct": 3.0,
       "sell_percentage_multiplier": 0.5,

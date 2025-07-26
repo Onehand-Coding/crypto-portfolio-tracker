@@ -4,7 +4,10 @@ import pytest
 import pandas as pd
 
 from crypto_portfolio_tracker.config import ConfigManager
-from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker, calculate_fifo_cost_basis
+from crypto_portfolio_tracker.portfolio_tracker import (
+    CryptoPortfolioTracker,
+    calculate_fifo_cost_basis,
+)
 
 
 def test_calculate_fifo_cost_basis():
@@ -13,9 +16,30 @@ def test_calculate_fifo_cost_basis():
     """
     # 1. Arrange: Create sample transaction data
     transactions = [
-        {'timestamp': '2025-01-01', 'type': 'BUY', 'quantity': 2, 'price_usd': 100, 'fee_usd': 5, 'symbol': 'TEST'}, # Total cost: 2*100 + 5 = 205
-        {'timestamp': '2025-01-05', 'type': 'BUY', 'quantity': 1, 'price_usd': 110, 'fee_usd': 2, 'symbol': 'TEST'}, # Total cost: 1*110 + 2 = 112
-        {'timestamp': '2025-01-10', 'type': 'SELL', 'quantity': 1.5, 'price_usd': 120, 'fee_usd': 3, 'symbol': 'TEST'}
+        {
+            "timestamp": "2025-01-01",
+            "type": "BUY",
+            "quantity": 2,
+            "price_usd": 100,
+            "fee_usd": 5,
+            "symbol": "TEST",
+        },  # Total cost: 2*100 + 5 = 205
+        {
+            "timestamp": "2025-01-05",
+            "type": "BUY",
+            "quantity": 1,
+            "price_usd": 110,
+            "fee_usd": 2,
+            "symbol": "TEST",
+        },  # Total cost: 1*110 + 2 = 112
+        {
+            "timestamp": "2025-01-10",
+            "type": "SELL",
+            "quantity": 1.5,
+            "price_usd": 120,
+            "fee_usd": 3,
+            "symbol": "TEST",
+        },
     ]
     transactions_df = pd.DataFrame(transactions)
 
@@ -41,8 +65,22 @@ def test_calculate_fifo_cost_basis_sell_all():
     """
     # 1. Arrange: Create transactions where we sell exactly what we bought
     transactions = [
-        {'timestamp': '2025-01-01', 'type': 'BUY', 'quantity': 2, 'price_usd': 100, 'fee_usd': 5, 'symbol': 'TEST'},
-        {'timestamp': '2025-01-05', 'type': 'SELL', 'quantity': 2, 'price_usd': 110, 'fee_usd': 2, 'symbol': 'TEST'},
+        {
+            "timestamp": "2025-01-01",
+            "type": "BUY",
+            "quantity": 2,
+            "price_usd": 100,
+            "fee_usd": 5,
+            "symbol": "TEST",
+        },
+        {
+            "timestamp": "2025-01-05",
+            "type": "SELL",
+            "quantity": 2,
+            "price_usd": 110,
+            "fee_usd": 2,
+            "symbol": "TEST",
+        },
     ]
     transactions_df = pd.DataFrame(transactions)
 

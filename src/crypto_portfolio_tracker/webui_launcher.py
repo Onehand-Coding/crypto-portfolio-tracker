@@ -2,6 +2,7 @@ import sys
 import subprocess
 from pathlib import Path
 
+
 def main():
     script_path = Path(__file__).parent / "webui.py"
     try:
@@ -12,10 +13,12 @@ def main():
                 "streamlit",
                 "run",
                 str(script_path),
-                "--server.address", "0.0.0.0",
-                "--server.port", "8502"
+                "--server.address",
+                "0.0.0.0",
+                "--server.port",
+                "8502",
             ],
-            check=True
+            check=True,
         )
     except KeyboardInterrupt:
         print("\n[!] Interrupted.")

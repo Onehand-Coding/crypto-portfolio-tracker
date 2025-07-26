@@ -2,6 +2,7 @@
 Exporters Module
 Handles exporting portfolio data to various formats like Excel, HTML, and CSV.
 """
+
 import logging
 import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from crypto_portfolio_tracker.utils import clean_export_df
 
 class Exporter:
     """Base class for exporters."""
+
     def __init__(self, config: Dict[str, Any]):
         self.logger = logging.getLogger(__name__)
         self.export_path = Path(config.get("exports", {}).get("path", "data/exports/"))
@@ -30,8 +32,10 @@ class Exporter:
         """Main export method to be implemented by subclasses."""
         raise NotImplementedError
 
+
 class ExcelExporter(Exporter):
     """Exports data to an Excel file."""
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.excel_config = self.config.get("formats", {}).get("excel", {})
@@ -50,21 +54,30 @@ class ExcelExporter(Exporter):
         if summary_df is not None:
             summary_df = clean_export_df(summary_df)
         try:
-            with pd.ExcelWriter(filepath, engine='xlsxwriter') as writer:
+            with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
                 if summary_df is not None:
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                    summary_df.to_excel(writer, sheet_name="Summary", index=False)
                 if holdings_df is not None:
-                    holdings_df.to_excel(writer, sheet_name='Holdings', index=False)
-                pd.DataFrame({
-                    "Metric": list(metrics.keys()),
-                    "Value": [str(v) if not isinstance(v, (pd.DataFrame, pd.Series)) else "See Sheet" for k, v in metrics.items()]
-                }).to_excel(writer, sheet_name='Metrics', index=False)
+                    holdings_df.to_excel(writer, sheet_name="Holdings", index=False)
+                pd.DataFrame(
+                    {
+                        "Metric": list(metrics.keys()),
+                        "Value": [
+                            str(v)
+                            if not isinstance(v, (pd.DataFrame, pd.Series))
+                            else "See Sheet"
+                            for k, v in metrics.items()
+                        ],
+                    }
+                ).to_excel(writer, sheet_name="Metrics", index=False)
             self.logger.info(f"Excel report exported successfully to: {filepath}")
         except Exception as e:
             self.logger.error(f"Error exporting to Excel: {e}")
 
+
 class HtmlExporter(Exporter):
     """Exports data to an HTML file."""
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.html_config = self.config.get("formats", {}).get("html", {})
@@ -89,17 +102,25 @@ class HtmlExporter(Exporter):
             template = self.jinja_env.get_template("report_template.html")
             html_content = template.render(
                 metrics=metrics,
-                holdings_table=holdings_df.to_html(index=False, classes='table table-striped') if holdings_df is not None else "",
-                summary_table=summary_df.to_html(index=False, classes='table table-striped') if summary_df is not None else "",
-                timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                holdings_table=holdings_df.to_html(
+                    index=False, classes="table table-striped"
+                )
+                if holdings_df is not None
+                else "",
+                summary_table=summary_df.to_html(
+                    index=False, classes="table table-striped"
+                )
+                if summary_df is not None
+                else "",
+                timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
-            with open(filepath, 'w') as f:
+            with open(filepath, "w") as f:
                 f.write(html_content)
             self.logger.info(f"HTML report exported successfully to: {filepath}")
         except Exception as e:
             self.logger.error(f"Error exporting to HTML: {e}")
             self.logger.warning("Make sure 'templates/report_template.html' exists.")
-    
+
     def export_trend_report(self, report: dict, df_export: pd.DataFrame):
         """
         Exports a market trend report to an HTML file using the trend_report_template.html.
@@ -109,10 +130,12 @@ class HtmlExporter(Exporter):
             template = self.jinja_env.get_template("trend_report_template.html")
             html_content = template.render(
                 report=report,
-                coin_table=df_export.to_html(index=False, classes='table table-striped') if df_export is not None else "",
-                timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                coin_table=df_export.to_html(index=False, classes="table table-striped")
+                if df_export is not None
+                else "",
+                timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
-            with open(filepath, 'w') as f:
+            with open(filepath, "w") as f:
                 f.write(html_content)
             self.logger.info(f"Trend HTML report exported successfully to: {filepath}")
         except Exception as e:
@@ -120,8 +143,10 @@ class HtmlExporter(Exporter):
             return None
         return filepath
 
+
 class CsvExporter(Exporter):
     """Exports data to CSV files."""
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.csv_config = self.config.get("formats", {}).get("csv", {})
