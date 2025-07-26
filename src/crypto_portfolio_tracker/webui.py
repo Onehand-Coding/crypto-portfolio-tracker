@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 import plotly.express as px
@@ -421,8 +421,8 @@ class PortfolioDashboard:
         target_allocation = self.config_manager.config.get("target_allocation", {})
         try:
             snapshots = tracker.db_manager.get_all_snapshots()
-            if snapshots is not None and not snapshots.empty:
-                snapshots['timestamp'] = pd.to_datetime(snapshots['timestamp'])
+            snapshots = snapshots[~pd.isna(snapshots['timestamp'])].copy()
+            snapshots = snapshots.drop_duplicates(subset=["timestamp"])
         except Exception:
             snapshots = None
 
@@ -486,7 +486,7 @@ class PortfolioDashboard:
                     fig.savefig(buf, format="png", bbox_inches="tight")
                     buf.seek(0)
                     st.download_button(
-                        "Download Pie Chart (PNG, universal)",
+                        "Download Pie Chart",
                         buf,
                         file_name="portfolio_allocation_pie.png",
                         mime="image/png"
@@ -541,7 +541,7 @@ class PortfolioDashboard:
                     fig.savefig(buf, format="png", bbox_inches="tight")
                     buf.seek(0)
                     st.download_button(
-                        "Download Allocation Comparison (PNG, universal)",
+                        "Download Allocation Comparison",
                         buf,
                         file_name="allocation_comparison_bar.png",
                         mime="image/png"
@@ -580,7 +580,7 @@ class PortfolioDashboard:
                     fig.savefig(buf, format="png", bbox_inches="tight")
                     buf.seek(0)
                     st.download_button(
-                        "Download P/L Chart (PNG, universal)",
+                        "Download P/L Chart",
                         buf,
                         file_name="pl_by_asset_bar.png",
                         mime="image/png"
@@ -599,14 +599,6 @@ class PortfolioDashboard:
 
                     # Drop duplicate timestamps, keeping the last entry for each timestamp
                     snapshots = snapshots.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
-
-                    # Debug output (optional, for development)
-                    # st.write("Snapshot Data Preview", snapshots.head(20))
-                    # st.write("Unique timestamps:", snapshots["timestamp"].nunique(), "Total rows:", len(snapshots))
-                    # duplicates = snapshots[snapshots.duplicated(subset=["timestamp"], keep=False)]
-                    # if not duplicates.empty:
-                    #     st.warning("Duplicate timestamps found in snapshots!")
-                    #     st.dataframe(duplicates)
 
                     # Plotly chart for interactivity
                     fig_plotly = px.line(
@@ -635,7 +627,7 @@ class PortfolioDashboard:
                     fig.savefig(buf, format="png", bbox_inches="tight")
                     buf.seek(0)
                     st.download_button(
-                        "Download Value History (PNG, universal)",
+                        "Download Value History",
                         buf,
                         file_name="portfolio_value_history.png",
                         mime="image/png"
@@ -657,6 +649,10 @@ class PortfolioDashboard:
                     if tax_df.empty:
                         st.info("No taxable events (sales) found.")
                     else:
+                        # Remove timezone from datetime columns before processing
+                        if 'date' in tax_df.columns and hasattr(tax_df['date'], 'dt'):
+                            tax_df['date'] = tax_df['date'].dt.tz_localize(None)
+
                         tax_df["year"] = pd.to_datetime(tax_df["date"]).dt.year
 
                         # Rename columns for user-friendliness
@@ -693,6 +689,11 @@ class PortfolioDashboard:
                         export_dir = Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/"))
                         export_dir.mkdir(parents=True, exist_ok=True)
                         if st.button("Export Full Tax Report to Excel"):
+                            # Make sure all datetime columns are timezone-unaware before export
+                            datetime_cols = tax_df.select_dtypes(include=['datetime64[ns, UTC]']).columns
+                            for col in datetime_cols:
+                                tax_df[col] = tax_df[col].dt.tz_localize(None)
+
                             filename = f"tax_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
                             tax_df.to_excel(export_dir / filename, index=False)
                             st.success(f"Excel tax report exported as {filename}!")
@@ -1857,6 +1858,11 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             st.session_state.strategy_reset_flag = False
             st.stop()  # <--- This halts the UI for this rerun
         st.markdown("### 🤖 Live Strategy Trading")
+        st.markdown("#### 💰 Available USDT")
+        if usdt_balance is not None:
+            st.success(f"${usdt_balance:,.2f}")
+        else:
+            st.info("USDT balance unavailable.")
 
         # --- 1. Account Selection ---
         tracker = self.initialize_tracker()
@@ -1915,12 +1921,6 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
         except Exception as e:
             st.info(f"USDT balance unavailable. Error: {e}")
             usdt_balance = None
-
-        st.markdown("#### 💰 Available USDT")
-        if usdt_balance is not None:
-            st.success(f"${usdt_balance:,.2f}")
-        else:
-            st.info("USDT balance unavailable.")
 
         # --- 3. Coin and Parameter Selection (all in one form) ---
         symbol_mapper = self.config_manager.symbol_mapper
@@ -2267,6 +2267,12 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             with cols[0]:
                                 st.markdown(f"**{asset.upper()}**")
                             with cols[1]:
+                                def update_allocation(asset_name):
+                                    def callback():
+                                        new_value = st.session_state[f"alloc_{asset_name}"]
+                                        st.session_state.custom_allocation[asset_name] = new_value / 100.0
+                                    return callback
+
                                 new_alloc = st.number_input(
                                     f"Allocation",
                                     min_value=0.0,
@@ -2274,9 +2280,9 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                                     value=alloc * 100,
                                     step=0.1,
                                     key=f"alloc_{asset}",
-                                    label_visibility="collapsed"
+                                    label_visibility="collapsed",
+                                    on_change=update_allocation(asset)
                                 )
-                                custom_allocation[asset] = new_alloc / 100.0
                             with cols[2]:
                                 st.markdown(f"*{new_alloc:.1f}%*")
                             with cols[3]:
@@ -2287,26 +2293,38 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                             del custom_allocation[asset]
                             st.rerun()  # Force rerun to update the UI immediately
 
-                    # Add asset functionality - FIXED
+                    # Recalculate total_alloc after updates
+                    total_alloc = sum(st.session_state.custom_allocation.values())
+
+                    # Add asset functionality - PROPER ALIGNMENT
                     st.markdown("---")
                     st.markdown("**Add New Asset:**")
                     available_to_add = [s for s in all_symbols if s not in custom_allocation]
                     if available_to_add:
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            add_asset = st.selectbox(
-                                "Select Asset to Add",
-                                ["Select an asset..."] + available_to_add,
-                                key="add_asset_select"
-                            )
-                        with col2:
-                            if st.button("➕ Add", key="add_asset_btn", disabled=(add_asset == "Select an asset...")):
+                        # Use a container for better layout control
+                        with st.container():
+                            # Create a custom layout with proper alignment
+                            st.markdown("Select Asset to Add:")
+                            col1, col2 = st.columns([3, 1])
+                            with col1:
+                                add_asset = st.selectbox(
+                                    "",  # Empty label to avoid extra spacing
+                                    ["Select an asset..."] + available_to_add,
+                                    key=f"add_asset_select_{st.session_state.get('add_asset_counter', 0)}",
+                                    label_visibility="collapsed"  # Hide the label completely
+                                )
+                            with col2:
+                                # Show button only when a valid asset is selected
                                 if add_asset and add_asset != "Select an asset...":
-                                    custom_allocation[add_asset] = 0.0  # Default to 0% allocation
-                                    # Reset the selectbox by clearing its value from session state
-                                    if "add_asset_select" in st.session_state:
-                                        st.session_state["add_asset_select"] = "Select an asset..."
-                                    st.rerun()  # Force rerun to update the UI
+                                    if st.button("➕ Add", key="add_asset_btn"):
+                                        if add_asset and add_asset != "Select an asset...":
+                                            custom_allocation[add_asset] = 0.0  # Default to 0% allocation
+                                            # Increment counter to force selectbox reset
+                                            st.session_state["add_asset_counter"] = st.session_state.get("add_asset_counter", 0) + 1
+                                            st.rerun()  # Force rerun to update the UI
+                                else:
+                                    # Show disabled button when no asset selected
+                                    st.button("➕ Add", key="add_asset_btn_disabled", disabled=True)
                     else:
                         st.info("All available assets are already in your allocation")
 
@@ -2315,7 +2333,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     total_alloc = sum(custom_allocation.values())
                     col1, col2 = st.columns(2)
                     with col1:
-                        if abs(total_alloc - 1.0) > 0.001:
+                        if abs(total_alloc - 1.0) > 0.0001:
                             st.warning(f"⚠️ Total: {total_alloc:.2%} (must be 100%)")
                         else:
                             st.success(f"✅ Total: {total_alloc:.2%}")
@@ -2335,119 +2353,124 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 )
 
             if run_rebalance_backtest:
-                with st.spinner("🔄 Running rebalancing backtest analysis..."):
-                    try:
-                        # Create custom config with user parameters
-                        custom_config = self.config_manager.config.copy()
+                # Validate allocation before running backtest
+                total_alloc = sum(custom_allocation.values()) if custom_allocation else 0
+                if total_alloc > 1.0:
+                    st.error(f"❌ Cannot run backtest: Total allocation is {total_alloc:.2%} which exceeds 100%. Please adjust your allocations.")
+                else:
+                    with st.spinner("🔄 Running rebalancing backtest analysis..."):
+                        try:
+                            # Create custom config with user parameters
+                            custom_config = self.config_manager.config.copy()
 
-                        # Update rebalancing parameters
-                        custom_config["rebalance_technical"] = {
-                            "market_regime_rules": {
-                                "suppress_buys_in_bear": suppress_buys_in_bear
-                            },
-                            "majors": {
-                                "allocation_drift_threshold_pct": majors_drift_threshold,
-                                "sell_percentage_multiplier": majors_sell_multiplier,
-                                "buy_amount_multiplier": majors_buy_multiplier
-                            },
-                            "alts": {
-                                "allocation_drift_threshold_pct": alts_drift_threshold,
-                                "sell_percentage_multiplier": alts_sell_multiplier,
-                                "buy_amount_multiplier": alts_buy_multiplier
+                            # Update rebalancing parameters
+                            custom_config["rebalance_technical"] = {
+                                "market_regime_rules": {
+                                    "suppress_buys_in_bear": suppress_buys_in_bear
+                                },
+                                "majors": {
+                                    "allocation_drift_threshold_pct": majors_drift_threshold,
+                                    "sell_percentage_multiplier": majors_sell_multiplier,
+                                    "buy_amount_multiplier": majors_buy_multiplier
+                                },
+                                "alts": {
+                                    "allocation_drift_threshold_pct": alts_drift_threshold,
+                                    "sell_percentage_multiplier": alts_sell_multiplier,
+                                    "buy_amount_multiplier": alts_buy_multiplier
+                                }
                             }
-                        }
 
-                        # Update target allocation if user customized it
-                        if abs(sum(custom_allocation.values()) - 1.0) < 0.001:
-                            custom_config["target_allocation"] = custom_allocation
+                            # Update target allocation if user customized it
+                            if abs(sum(custom_allocation.values()) - 1.0) < 0.001:
+                                custom_config["target_allocation"] = custom_allocation
 
-                        backtester = RebalancingBacktester(config=custom_config)
-                        backtester.run(initial_capital=initial_capital, period=period)
+                            backtester = RebalancingBacktester(config=custom_config)
+                            backtester.run(initial_capital=initial_capital, period=period)
 
-                        st.success("✅ Rebalancing backtest completed successfully!")
+                            st.success("✅ Rebalancing backtest completed successfully!")
 
-                        # Results Section
-                        if hasattr(backtester, "summary_stats"):
-                            st.markdown("## 📊 Rebalancing Results")
+                            # Results Section
+                            if hasattr(backtester, "summary_stats"):
+                                st.markdown("## 📊 Rebalancing Results")
 
-                            # Key metrics in columns
-                            stats = backtester.summary_stats
-                            metric_cols = st.columns(4)
+                                # Key metrics in columns
+                                stats = backtester.summary_stats
+                                metric_cols = st.columns(4)
 
-                            with metric_cols[0]:
-                                st.metric(
-                                    "Strategy Return",
-                                    f"{stats['Strategy Total Return']:.1%}",
-                                    delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H"
-                                )
+                                with metric_cols[0]:
+                                    st.metric(
+                                        "Strategy Return",
+                                        f"{stats['Strategy Total Return']:.1%}",
+                                        delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H"
+                                    )
 
-                            with metric_cols[1]:
-                                st.metric(
-                                    "Final Value",
-                                    f"${stats['Final Portfolio Value']:,.0f}",
-                                    delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}"
-                                )
+                                with metric_cols[1]:
+                                    st.metric(
+                                        "Final Value",
+                                        f"${stats['Final Portfolio Value']:,.0f}",
+                                        delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}"
+                                    )
 
-                            with metric_cols[2]:
-                                st.metric(
-                                    "Max Drawdown",
-                                    f"{stats['Maximum Drawdown']:.1%}"
-                                )
+                                with metric_cols[2]:
+                                    st.metric(
+                                        "Max Drawdown",
+                                        f"{stats['Maximum Drawdown']:.1%}"
+                                    )
 
-                            with metric_cols[3]:
-                                st.metric(
-                                    "Total Trades",
-                                    f"{stats['Total Trades Executed']}"
-                                )
-
-                            # Detailed Results Table
-                            with st.expander("📋 Detailed Performance Metrics", expanded=True):
-                                st.table({
-                                    "Metric": [
-                                        "Initial Capital",
-                                        "Final Portfolio Value",
-                                        "Strategy Total Return",
-                                        "Buy & Hold Return",
-                                        "Strategy Outperformance",
-                                        "Maximum Drawdown",
-                                        "Annualized Volatility",
-                                        "Sharpe Ratio",
-                                        "Total Trades Executed"
-                                    ],
-                                    "Value": [
-                                        f"${stats['Initial Capital']:,.2f}",
-                                        f"${stats['Final Portfolio Value']:,.2f}",
-                                        f"{stats['Strategy Total Return']:.2%}",
-                                        f"{stats['Buy & Hold Return']:.2%}",
-                                        f"{stats['Strategy Outperformance']:+.2%}",
-                                        f"{stats['Maximum Drawdown']:.2%}",
-                                        f"{stats['Annualized Volatility']:.2%}",
-                                        f"{stats['Sharpe Ratio']:.2f}",
+                                with metric_cols[3]:
+                                    st.metric(
+                                        "Total Trades",
                                         f"{stats['Total Trades Executed']}"
-                                    ]
-                                })
+                                    )
 
-                        # Equity Curve
-                        if hasattr(backtester, "portfolio_value_history"):
-                            st.markdown("### 📈 Portfolio Equity Curve")
-                            if isinstance(backtester.portfolio_value_history, list) and backtester.portfolio_value_history:
-                                # Convert to DataFrame with proper date index
-                                df = pd.DataFrame(backtester.portfolio_value_history)
-                                df['date'] = pd.to_datetime(df['date'])
-                                df = df.set_index('date')
-                                df = df.rename(columns={'value': 'Portfolio Value ($)'})
+                                # Detailed Results Table
+                                with st.expander("📋 Detailed Performance Metrics", expanded=True):
+                                    st.table({
+                                        "Metric": [
+                                            "Initial Capital",
+                                            "Final Portfolio Value",
+                                            "Strategy Total Return",
+                                            "Buy & Hold Return",
+                                            "Strategy Outperformance",
+                                            "Maximum Drawdown",
+                                            "Annualized Volatility",
+                                            "Sharpe Ratio",
+                                            "Total Trades Executed"
+                                        ],
+                                        "Value": [
+                                            f"${stats['Initial Capital']:,.2f}",
+                                            f"${stats['Final Portfolio Value']:,.2f}",
+                                            f"{stats['Strategy Total Return']:.2%}",
+                                            f"{stats['Buy & Hold Return']:.2%}",
+                                            f"{stats['Strategy Outperformance']:+.2%}",
+                                            f"{stats['Maximum Drawdown']:.2%}",
+                                            f"{stats['Annualized Volatility']:.2%}",
+                                            f"{stats['Sharpe Ratio']:.2f}",
+                                            f"{stats['Total Trades Executed']}"
+                                        ]
+                                    })
 
-                                # Create the chart with proper date axis
-                                st.line_chart(df, use_container_width=True)
+                            # Equity Curve
+                            if hasattr(backtester, "portfolio_value_history"):
+                                st.markdown("### 📈 Portfolio Equity Curve")
+                                if isinstance(backtester.portfolio_value_history, list) and backtester.portfolio_value_history:
+                                    # Convert to DataFrame with proper date index
+                                    df = pd.DataFrame(backtester.portfolio_value_history)
+                                    df['date'] = pd.to_datetime(df['date'])
+                                    df = df.set_index('date')
+                                    df = df.rename(columns={'value': 'Portfolio Value ($)'})
 
-                        # Trade Log
-                        if hasattr(backtester, "trade_log"):
-                            with st.expander("📝 Rebalancing Trade Log"):
-                                st.code("\n".join(backtester.trade_log), language="text")
+                                    # Create the chart with proper date axis
+                                    st.line_chart(df, use_container_width=True)
 
-                    except Exception as e:
-                        st.error(f"❌ Rebalancing backtest failed: {str(e)}")
-                        st.info("💡 Try adjusting the parameters or check your allocation settings")
+                            # Trade Log
+                            if hasattr(backtester, "trade_log"):
+                                with st.expander("📝 Rebalancing Trade Log"):
+                                    st.code("\n".join(backtester.trade_log), language="text")
+
+                        except Exception as e:
+                            st.error(f"❌ Rebalancing backtest failed: {str(e)}")
+                            st.info("💡 Try adjusting the parameters or check your allocation settings")
 
         # --- Strategy Backtest Tab ---
         with tab2:
@@ -2894,6 +2917,7 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
             st.header("📸 Snapshots")
             try:
                 snapshots = tracker.db_manager.get_all_snapshots()
+                snapshots = snapshots[~pd.isna(snapshots['timestamp'])].copy()
                 snapshots = snapshots.drop_duplicates(subset=["timestamp"])
             except Exception as e:
                 st.error(f"Failed to load snapshots: {e}")
@@ -2902,14 +2926,27 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                 st.info("No snapshots found. Take a snapshot from the dashboard first.")
             else:
                 snapshots = snapshots.sort_values("timestamp")
-                # Improved label for NaT/NaN
+                
+                # Include ALL snapshots (including NaT ones) so users can delete them
                 snapshot_labels = []
                 for _, row in snapshots.iterrows():
-                    if pd.isna(row['timestamp']):
+                    # Check for invalid snapshots: no timestamp OR all zero values
+                    is_no_timestamp = pd.isna(row['timestamp'])
+                    is_zero_values = (
+                        row['total_value_usd'] == 0.0 and 
+                        row['total_cost_basis_usd'] == 0.0 and 
+                        row['unrealized_pl_usd'] == 0.0 and 
+                        row['unrealized_pl_percent'] == 0.0
+                    )
+                    
+                    if is_no_timestamp:
                         label = f"⚠️ Invalid Snapshot (No Timestamp) | Value: ${row['total_value_usd']:,.2f}"
+                    elif is_zero_values:
+                        label = f"⚠️ Invalid Snapshot (Zero Values) | {row['timestamp']} | Value: ${row['total_value_usd']:,.2f}"
                     else:
                         label = f"{row['timestamp']} | Value: ${row['total_value_usd']:,.2f}"
                     snapshot_labels.append(label)
+                
                 selected_idx = st.selectbox("Select Snapshot", range(len(snapshots)), format_func=lambda i: snapshot_labels[i])
                 selected_row = snapshots.iloc[selected_idx]
 
@@ -2928,30 +2965,120 @@ Executed {result.data.get('trades_executed', 0)} trade(s)
                     st.download_button("Download Snapshot (CSV)", selected_row.to_frame().T.to_csv(index=False), "portfolio_snapshot.csv")
                 with col2:
                     if st.button("Delete Selected Snapshot"):
-                        timestamp_to_delete = selected_row["timestamp"]
                         try:
-                            with tracker.db_manager._get_connection() as conn:
-                                if pd.isna(timestamp_to_delete):
-                                    sql = "DELETE FROM portfolio_snapshots WHERE timestamp IS NULL"
-                                    params = ()
-                                else:
-                                    naive_timestamp = pd.to_datetime(timestamp_to_delete).to_pydatetime().replace(tzinfo=None)
-                                    sql = "DELETE FROM portfolio_snapshots WHERE timestamp = ?"
-                                    params = (naive_timestamp,)
-                                conn.execute(sql, params)
-                                conn.commit()
-                            st.success(f"Deleted snapshot {selected_row['timestamp']}")
-                            st.rerun()
+                            rows_deleted = tracker.db_manager.delete_snapshot(
+                                selected_row["timestamp"],
+                                selected_row["total_value_usd"],
+                                selected_row["total_cost_basis_usd"],
+                                selected_row["unrealized_pl_usd"],
+                                selected_row["unrealized_pl_percent"],
+                            )
+                            if rows_deleted > 0:
+                                st.success("✅ Successfully deleted snapshot.")
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ No rows were deleted. The snapshot may have already been removed or the query didn't match any records.")
                         except Exception as e:
-                            st.error(f"Failed to delete snapshot: {e}")
+                            st.error(f"❌ Failed to delete snapshot: {e}")
 
             st.markdown("---")
-            if st.button("Delete all Snapshot"):
-                try:
-                    tracker.cleanup_old_data()
-                    st.success("All Snapshot cleaned up successfully!")
-                except Exception as e:
-                    st.error(f"Failed to clean old Snapshot: {e}")
+            
+            # --- Improved Data Cleanup with Context and Confirmation ---
+            st.subheader("🗑️ Data Cleanup")
+            
+            # Get cleanup configuration
+            cleanup_days = tracker.config.get("database", {}).get("cleanup_days", 90)
+            
+            # Show current configuration
+            st.info(f"**Current Retention Period:** {cleanup_days} days")
+            if cleanup_days <= 0:
+                st.warning("⚠️ Data cleanup is currently disabled (cleanup_days = 0)")
+                st.stop()
+            
+            # Calculate what would be deleted
+            cutoff_date = datetime.now() - timedelta(days=cleanup_days)
+            
+            # Get cleanup statistics
+            stats = tracker.db_manager.get_cleanup_statistics()
+            
+            if not stats["cleanup_enabled"]:
+                st.warning("⚠️ Data cleanup is currently disabled (cleanup_days = 0)")
+                st.stop()
+            
+            if "error" in stats:
+                st.error(f"Could not analyze database: {stats['error']}")
+                st.stop()
+            
+            old_transactions = stats["old_transactions"]
+            old_snapshots = stats["old_snapshots"]
+            total_transactions = stats["total_transactions"]
+            total_snapshots = stats["total_snapshots"]
+            cutoff_date = stats["cutoff_date"]
+            
+            # Display what will be deleted
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("📊 Old Transactions", f"{old_transactions:,}", f"of {total_transactions:,} total")
+            with col2:
+                st.metric("📸 Old Snapshots", f"{old_snapshots:,}", f"of {total_snapshots:,} total")
+            
+            # Show cutoff date
+            st.write(f"**Cutoff Date:** {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Warning about what this affects
+            if old_transactions > 0 or old_snapshots > 0:
+                st.warning("""
+                ⚠️ **This will permanently delete:**
+                - Historical transaction data older than the retention period
+                - Portfolio snapshots older than the retention period
+                - **Impact:** This may affect tax reporting, historical analysis, and portfolio tracking
+                """)
+                
+                # Confirmation section
+                st.markdown("---")
+                st.subheader("🔐 Confirmation Required")
+                
+                # Two-step confirmation
+                if "cleanup_confirmed" not in st.session_state:
+                    st.session_state.cleanup_confirmed = False
+                
+                if not st.session_state.cleanup_confirmed:
+                    if st.button("🗑️ I understand - Show Final Confirmation", type="secondary"):
+                        st.session_state.cleanup_confirmed = True
+                        st.rerun()
+                else:
+                    st.error("""
+                    🚨 **FINAL WARNING:**
+                    - This action is **IRREVERSIBLE**
+                    - No backup will be created automatically
+                    - Consider creating a backup first
+                    """)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ CONFIRM DELETION", type="primary"):
+                            try:
+                                # Create backup before deletion
+                                backup_path = tracker.db_manager.backup_database()
+                                if backup_path:
+                                    st.success(f"✅ Backup created: {backup_path}")
+                                
+                                # Perform cleanup
+                                tracker.cleanup_old_data()
+                                st.success("✅ Data cleanup completed successfully!")
+                                st.session_state.cleanup_confirmed = False
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Cleanup failed: {e}")
+                                st.session_state.cleanup_confirmed = False
+                    
+                    with col2:
+                        if st.button("❌ Cancel", type="secondary"):
+                            st.session_state.cleanup_confirmed = False
+                            st.rerun()
+            else:
+                st.success("✅ No old data to clean up!")
+                st.info("All your data is within the retention period.")
 
         # --- 4. Database Info ---
         with tab4:

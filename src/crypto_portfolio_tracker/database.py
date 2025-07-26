@@ -12,22 +12,29 @@ from .exceptions import DatabaseOperationError
 class DatabaseManager:
     """Manages SQLite database operations"""
 
-    def __init__(self, config: Dict[str, Any]):
-        """Initialize database manager"""
+    def __init__(self, db_path: Path, backup_dir: Optional[Path] = None, connection_timeout: int = 30, cleanup_days: int = 90):
+        """
+        Initialize database manager with explicit database path.
 
-        # --- Setup database based on wether in testnet mode or not. ---
+        Args:
+            db_path: Path to the database file
+            backup_dir: Directory for backups (defaults to db_path.parent / "db_backups")
+            connection_timeout: Database connection timeout in seconds
+            cleanup_days: Number of days to keep data (0 to disable cleanup)
+        """
         self.logger = logging.getLogger(__name__)
-        if not config.get("portfolio",{}).get("testnet_mode", False):
-            self.db_path = Path(config.get("database", {}).get("path", "data/portfolio.db"))
-        else:
-            self.db_path = Path(config.get("database", {}).get("testnet_path", "data/testnet_portfolio.db"))
-        self.db_config = config.get("database", {}) # Store the 'database' sub-dictionary
+        self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # --- Create a dedicated directory for backups ---
-        self.backup_dir = self.db_path.parent / "db_backups"
+        # Setup backup directory
+        if backup_dir is None:
+            self.backup_dir = self.db_path.parent / "db_backups"
+        else:
+            self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(exist_ok=True)
-        self.connection_timeout = self.db_config.get("connection_timeout", 30)
+
+        self.connection_timeout = connection_timeout
+        self.cleanup_days = cleanup_days
 
         # Define table names as instance attributes
         self.ASSETS_TABLE_NAME = "assets"
@@ -284,47 +291,6 @@ class DatabaseManager:
             with self._get_connection() as conn: df = pd.read_sql_query(query, conn, params=(asset_id, start_date, end_date), parse_dates=['date']); df.set_index('date', inplace=True); return df
         except sqlite3.Error as e: self.logger.error(f"Error fetching historical prices for {symbol}: {e}"); return pd.DataFrame()
 
-    def backup_database(self):
-        """Create a backup of the database file."""
-        # Assuming self.config is available from __init__; if not, it should be self.db_config
-        if not self.db_config.get("backup_enabled", False): self.logger.info("Database backup is disabled."); return
-        backup_dir = self.db_path.parent / "backups"; backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = backup_dir / f"{self.db_path.stem}_backup_{timestamp}.db"
-        try: shutil.copy2(self.db_path, backup_path); self.logger.info(f"Database backup created successfully at: {backup_path}")
-        except Exception as e: self.logger.error(f"Failed to create database backup: {e}")
-
-    def cleanup_old_data(self):
-        """Clean up old data based on configuration."""
-        cleanup_days = self.db_config.get("cleanup_days", 90) # Use self.db_config
-        if cleanup_days <= 0: self.logger.info("Data cleanup is disabled."); return
-        cutoff_date_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=cleanup_days)
-        cutoff_date_str = cutoff_date_dt.isoformat(sep=' ', timespec='milliseconds') # Match inserted format
-
-        commands = [
-            f"DELETE FROM {self.TRANSACTIONS_TABLE_NAME} WHERE timestamp < '{cutoff_date_str}';",
-            f"DELETE FROM {self.PORTFOLIO_SNAPSHOTS_TABLE_NAME} WHERE timestamp < '{cutoff_date_str}';"
-            # Add historical_prices cleanup if desired:
-            # f"DELETE FROM {self.HISTORICAL_PRICES_TABLE_NAME} WHERE date < '{cutoff_date_dt.strftime('%Y-%m-%d')}';"
-        ]
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor(); total_deleted = 0
-                for command in commands:
-                    self.logger.debug(f"Executing cleanup command: {command}")
-                    cursor.execute(command);
-                    # SELECT changes() is more reliable for DELETE statements
-                    changes_cursor = conn.cursor()
-                    changes_cursor.execute("SELECT changes()")
-                    changes_result = changes_cursor.fetchone()
-                    deleted_this_command = changes_result[0] if changes_result else 0
-                    total_deleted += deleted_this_command
-                    self.logger.debug(f"Command affected {deleted_this_command} rows.")
-                conn.commit()
-                if total_deleted > 0: self.logger.info(f"Cleaned up {total_deleted} old records.")
-                else: self.logger.info("No old data found to clean up.")
-        except sqlite3.Error as e: self.logger.error(f"Error cleaning up old data: {e}")
-
     def get_latest_timestamp_for_source(self, source_name: str) -> Optional[datetime.datetime]:
         """Fetch the latest transaction timestamp for a given source."""
         query = f"""
@@ -428,6 +394,103 @@ class DatabaseManager:
             self.logger.error(f"Error calculating net invested capital: {e}", exc_info=True)
             return 0.0
 
+    def get_cleanup_statistics(self) -> Dict[str, Any]:
+        """Get statistics about what would be cleaned up."""
+        if self.cleanup_days <= 0:
+            return {
+                "cleanup_enabled": False,
+                "cleanup_days": self.cleanup_days,
+                "old_transactions": 0,
+                "old_snapshots": 0,
+                "total_transactions": 0,
+                "total_snapshots": 0,
+                "cutoff_date": None
+            }
+        
+        cutoff_date_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=self.cleanup_days)
+        cutoff_date_str = cutoff_date_dt.isoformat(sep=' ', timespec='milliseconds')
+        
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Count old transactions
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {self.TRANSACTIONS_TABLE_NAME} WHERE timestamp < ?",
+                    (cutoff_date_str,)
+                )
+                old_transactions = cursor.fetchone()[0]
+                
+                # Count old snapshots
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {self.PORTFOLIO_SNAPSHOTS_TABLE_NAME} WHERE timestamp < ?",
+                    (cutoff_date_str,)
+                )
+                old_snapshots = cursor.fetchone()[0]
+                
+                # Count total records for context
+                cursor.execute(f"SELECT COUNT(*) FROM {self.TRANSACTIONS_TABLE_NAME}")
+                total_transactions = cursor.fetchone()[0]
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.PORTFOLIO_SNAPSHOTS_TABLE_NAME}")
+                total_snapshots = cursor.fetchone()[0]
+                
+                return {
+                    "cleanup_enabled": True,
+                    "cleanup_days": self.cleanup_days,
+                    "old_transactions": old_transactions,
+                    "old_snapshots": old_snapshots,
+                    "total_transactions": total_transactions,
+                    "total_snapshots": total_snapshots,
+                    "cutoff_date": cutoff_date_dt
+                }
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Error getting cleanup statistics: {e}")
+            return {
+                "cleanup_enabled": True,
+                "cleanup_days": self.cleanup_days,
+                "old_transactions": 0,
+                "old_snapshots": 0,
+                "total_transactions": 0,
+                "total_snapshots": 0,
+                "cutoff_date": cutoff_date_dt,
+                "error": str(e)
+            }
+
+    def cleanup_old_data(self):
+        """Clean up old data based on configuration."""
+        if self.cleanup_days <= 0:
+            self.logger.info("Data cleanup is disabled.")
+            return
+
+        cutoff_date_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=self.cleanup_days)
+        cutoff_date_str = cutoff_date_dt.isoformat(sep=' ', timespec='milliseconds') # Match inserted format
+
+        commands = [
+            f"DELETE FROM {self.TRANSACTIONS_TABLE_NAME} WHERE timestamp < '{cutoff_date_str}';",
+            f"DELETE FROM {self.PORTFOLIO_SNAPSHOTS_TABLE_NAME} WHERE timestamp < '{cutoff_date_str}';"
+            # Add historical_prices cleanup if desired:
+            # f"DELETE FROM {self.HISTORICAL_PRICES_TABLE_NAME} WHERE date < '{cutoff_date_dt.strftime('%Y-%m-%d')}';"
+        ]
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor(); total_deleted = 0
+                for command in commands:
+                    self.logger.debug(f"Executing cleanup command: {command}")
+                    cursor.execute(command);
+                    # SELECT changes() is more reliable for DELETE statements
+                    changes_cursor = conn.cursor()
+                    changes_cursor.execute("SELECT changes()")
+                    changes_result = changes_cursor.fetchone()
+                    deleted_this_command = changes_result[0] if changes_result else 0
+                    total_deleted += deleted_this_command
+                    self.logger.debug(f"Command affected {deleted_this_command} rows.")
+                conn.commit()
+                if total_deleted > 0: self.logger.info(f"Cleaned up {total_deleted} old records.")
+                else: self.logger.info("No old data found to clean up.")
+        except sqlite3.Error as e: self.logger.error(f"Error cleaning up old data: {e}")
+
     def backup_database(self) -> Optional[str]:
         """
         Creates a timestamped backup of the current database file in the backup directory.
@@ -527,3 +590,69 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Error fetching all snapshots: {e}")
             return pd.DataFrame()
+
+    def delete_snapshot(self, timestamp, total_value_usd, total_cost_basis_usd, unrealized_pl_usd, unrealized_pl_percent):
+        """
+        Delete a specific snapshot. Handles both NULL timestamps and exact value matching.
+        Returns the number of rows deleted.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Convert pandas.Timestamp to string if needed
+                ts = timestamp
+                if not pd.isna(ts) and hasattr(ts, "isoformat"):
+                    ts = ts.isoformat(sep=' ', timespec='microseconds')
+                
+                if pd.isna(timestamp):
+                    # For NULL timestamps, use ROUND() for floating-point comparison
+                    sql = """
+                        DELETE FROM portfolio_snapshots
+                        WHERE timestamp IS NULL
+                        AND ROUND(total_value_usd, 2) = ROUND(?, 2)
+                        AND ROUND(total_cost_basis_usd, 2) = ROUND(?, 2)
+                        AND ROUND(unrealized_pl_usd, 2) = ROUND(?, 2)
+                        AND ROUND(unrealized_pl_percent, 2) = ROUND(?, 2)
+                    """
+                    params = (total_value_usd, total_cost_basis_usd, unrealized_pl_usd, unrealized_pl_percent)
+                else:
+                    # For valid timestamps, use ROUND() for floating-point comparison
+                    sql = """
+                        DELETE FROM portfolio_snapshots
+                        WHERE timestamp = ?
+                        AND ROUND(total_value_usd, 2) = ROUND(?, 2)
+                        AND ROUND(total_cost_basis_usd, 2) = ROUND(?, 2)
+                        AND ROUND(unrealized_pl_usd, 2) = ROUND(?, 2)
+                        AND ROUND(unrealized_pl_percent, 2) = ROUND(?, 2)
+                    """
+                    params = (ts, total_value_usd, total_cost_basis_usd, unrealized_pl_usd, unrealized_pl_percent)
+                
+                cursor.execute(sql, params)
+                rows_deleted = cursor.rowcount
+                
+                return rows_deleted
+                
+        except Exception as e:
+            self.logger.error(f"Error deleting snapshot: {e}")
+            raise
+
+    def debug_snapshots(self):
+        """Debug method to see what snapshots exist in the database."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM portfolio_snapshots ORDER BY timestamp")
+                rows = cursor.fetchall()
+                
+                self.logger.info(f"Found {len(rows)} snapshots in database:")
+                for i, row in enumerate(rows):
+                    self.logger.info(f"  {i+1}. timestamp={row[0]}, "
+                                   f"total_value_usd={row[1]}, "
+                                   f"total_cost_basis_usd={row[2]}, "
+                                   f"unrealized_pl_usd={row[3]}, "
+                                   f"unrealized_pl_percent={row[4]}")
+                return rows
+        except Exception as e:
+            self.logger.error(f"Failed to debug snapshots: {e}")
+            return []

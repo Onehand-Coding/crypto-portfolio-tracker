@@ -977,8 +977,66 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
                 case 9:
                     run_backup_and_restore_session(tracker)
                 case 10:
-                    print("\n🧹 Cleaning old data...")
-                    tracker.cleanup_old_data()
+                    print("\n🧹 Data Cleanup")
+                    print("="*50)
+                    
+                    # Get cleanup configuration
+                    cleanup_days = tracker.config.get("database", {}).get("cleanup_days", 90)
+                    print(f"📊 Current Retention Period: {cleanup_days} days")
+                    
+                    if cleanup_days <= 0:
+                        print("⚠️  Data cleanup is currently disabled (cleanup_days = 0)")
+                        continue
+                    
+                    # Calculate what would be deleted
+                    from datetime import datetime, timedelta
+                    cutoff_date = datetime.now() - timedelta(days=cleanup_days)
+                    print(f"📅 Cutoff Date: {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    # Get cleanup statistics
+                    stats = tracker.db_manager.get_cleanup_statistics()
+                    
+                    if not stats["cleanup_enabled"]:
+                        print("⚠️  Data cleanup is currently disabled (cleanup_days = 0)")
+                        continue
+                    
+                    if "error" in stats:
+                        print(f"❌ Could not analyze database: {stats['error']}")
+                        continue
+                    
+                    old_transactions = stats["old_transactions"]
+                    old_snapshots = stats["old_snapshots"]
+                    total_transactions = stats["total_transactions"]
+                    total_snapshots = stats["total_snapshots"]
+                    cutoff_date = stats["cutoff_date"]
+                    
+                    # Display what will be deleted
+                    print(f"\n📊 Old Transactions: {old_transactions:,} of {total_transactions:,} total")
+                    print(f"📸 Old Snapshots: {old_snapshots:,} of {total_snapshots:,} total")
+                    
+                    if old_transactions > 0 or old_snapshots > 0:
+                        print("\n⚠️  WARNING: This will permanently delete:")
+                        print("   - Historical transaction data older than the retention period")
+                        print("   - Portfolio snapshots older than the retention period")
+                        print("   - Impact: This may affect tax reporting, historical analysis, and portfolio tracking")
+                        
+                        print("\n🔐 Confirmation Required")
+                        confirm = input("Type 'DELETE' to confirm, or press Enter to cancel: ").strip()
+                        
+                        if confirm == "DELETE":
+                            # Create backup before deletion
+                            backup_path = tracker.db_manager.backup_database()
+                            if backup_path:
+                                print(f"✅ Backup created: {backup_path}")
+                            
+                            # Perform cleanup
+                            tracker.cleanup_old_data()
+                            print("✅ Data cleanup completed successfully!")
+                        else:
+                            print("🛑 Cleanup cancelled.")
+                    else:
+                        print("\n✅ No old data to clean up!")
+                        print("ℹ️  All your data is within the retention period.")
                 case 11:
                     print_configuration(tracker)
                 case 12:

@@ -36,15 +36,6 @@ class ConfigManager:
         if "apis" in self.config and "coingecko" in self.config["apis"]:
             self.config["apis"]["coingecko"]["api_key"] = os.getenv("COINGECKO_API_KEY")
 
-        # If in testnet mode, swap the database path with the testnet path. Currently handled by database manager.
-        if self.is_testnet_mode:
-            logging.info("TESTNET mode active. Switching to testnet database.")
-            testnet_db_path = self.config.get("database", {}).get("testnet_path")
-            if testnet_db_path:
-                logging.info("Testnet DB found.")
-            else:
-                logging.warning("Testnet mode is active, but no 'testnet_path' found in database config.")
-
         self.config = self._resolve_paths(self.config)
 
         self.main_api_keys: Dict[str, Optional[str]] = {
@@ -67,8 +58,24 @@ class ConfigManager:
 
     @property
     def is_testnet_mode(self):
-        """Tell if """
+        """Check if the application is in testnet mode"""
         return self.config.get("portfolio", {}).get("testnet_mode", False)
+
+    def get_database_path(self) -> Path:
+        """Get the appropriate database path based on testnet mode"""
+        if self.is_testnet_mode:
+            db_path = self.config.get("database", {}).get("testnet_path", "data/testnet_portfolio.db")
+            logging.info("TESTNET mode active. Using testnet database.")
+        else:
+            db_path = self.config.get("database", {}).get("path", "data/portfolio.db")
+            logging.info("MAINNET mode active. Using production database.")
+
+        return Path(db_path)
+
+    def get_backup_dir(self) -> Path:
+        """Get the backup directory path"""
+        db_path = self.get_database_path()
+        return db_path.parent / "db_backups"
 
     def _load_json_config(self) -> Dict[str, Any]:
         """Loads the base configuration from the JSON file."""

@@ -64,7 +64,20 @@ class CryptoPortfolioTracker:
         self.logger = logging.getLogger(__name__)
 
         self.offline_mode = force_offline
-        self.db_manager = DatabaseManager(self.config)
+
+        # Initialize database with explicit path
+        db_path = self.config_manager.get_database_path()
+        backup_dir = self.config_manager.get_backup_dir()
+        connection_timeout = self.config.get("database", {}).get("connection_timeout", 30)
+        cleanup_days = self.config.get("database", {}).get("cleanup_days", 90)
+
+        self.db_manager = DatabaseManager(
+            db_path=db_path,
+            backup_dir=backup_dir,
+            connection_timeout=connection_timeout,
+            cleanup_days=cleanup_days
+        )
+
         self.symbol_mappings = self.config_manager.symbol_mapper
 
         if not self.offline_mode:
@@ -611,7 +624,7 @@ class CryptoPortfolioTracker:
         if is_live:
             result.messages.append("🔴🔴🔴 WARNING: Live Trading is ENABLED. 🔴🔴🔴")
         else:
-            result.messages.append("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡��🟡")
+            result.messages.append("🟡🟡🟡 NOTE: Live Trading is DISABLED. 🟡🟡🟡")
         result.messages.append("="*80)
 
         items_to_process = []
