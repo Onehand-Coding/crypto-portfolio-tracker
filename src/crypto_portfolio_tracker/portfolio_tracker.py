@@ -1670,6 +1670,91 @@ class CryptoPortfolioTracker:
             holdings_df=self.db_manager.get_holdings(),
         )
 
+    def export_trend_report(self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML") -> Optional[Path]:
+        """
+        Exports a trend analysis report to various formats.
+        
+        Args:
+            report: The trend analysis report dictionary from CryptoTrendAnalyzer
+            timeframe: The timeframe of the analysis (e.g., 'long_term', 'swing', 'day')
+            export_format: The export format ('CSV', 'JSON', 'HTML')
+        
+        Returns:
+            Path to the exported file, or None if export failed
+        """
+        try:
+            # Get export directory from config
+            export_dir = Path(self.config.get("exports", {}).get("path", "data/exports/"))
+            export_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create DataFrame from coin analyses for export
+            coin_analyses = report.get("coin_analyses", {})
+            df_export = pd.DataFrame([
+                {
+                    "Symbol": symbol,
+                    "Price": analysis.get("current_price", 0),
+                    "Change (%)": analysis.get("price_change_pct", 0),
+                    "RSI": analysis.get("rsi", 0),
+                    "Support": analysis.get("support_level", 0),
+                    "Resistance": analysis.get("resistance_level", 0),
+                    "Active Conditions": ", ".join(analysis.get("active_conditions", [])),
+                }
+                for symbol, analysis in coin_analyses.items()
+            ])
+            
+            # Generate timestamp for filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"trend_report_{timeframe}_{timestamp}.{export_format.lower()}"
+            exported_file = export_dir / filename
+            
+            if export_format.upper() == "CSV":
+                df_export.to_csv(exported_file, index=False)
+                self.logger.info(f"Trend report exported to CSV: {exported_file}")
+                
+            elif export_format.upper() == "JSON":
+                with open(exported_file, "w") as f:
+                    json.dump(report, f, indent=2)
+                self.logger.info(f"Trend report exported to JSON: {exported_file}")
+                
+            elif export_format.upper() == "HTML":
+                exported_file = self.html_exporter.export_trend_report(report, df_export)
+                if exported_file:
+                    self.logger.info(f"Trend report exported to HTML: {exported_file}")
+                else:
+                    self.logger.error("Failed to export trend report to HTML")
+                    return None
+            else:
+                self.logger.error(f"Unsupported export format: {export_format}")
+                return None
+            
+            return exported_file
+            
+        except Exception as e:
+            self.logger.error(f"Error exporting trend report: {e}", exc_info=True)
+            return None
+
+    def export_trend_report_all_formats(self, report: Dict[str, Any], timeframe: str) -> Dict[str, Optional[Path]]:
+        """
+        Exports a trend analysis report to all available formats.
+        
+        Args:
+            report: The trend analysis report dictionary
+            timeframe: The timeframe of the analysis
+        
+        Returns:
+            Dictionary mapping format to exported file path
+        """
+        results = {}
+        for format_type in ["CSV", "JSON", "HTML"]:
+            try:
+                file_path = self.export_trend_report(report, timeframe, format_type)
+                results[format_type] = file_path
+            except Exception as e:
+                self.logger.error(f"Failed to export {format_type}: {e}")
+                results[format_type] = None
+        
+        return results
+
     def cleanup_old_data(self):
         self.db_manager.cleanup_old_data()
 

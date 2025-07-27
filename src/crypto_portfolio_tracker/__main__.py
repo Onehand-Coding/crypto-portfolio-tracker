@@ -89,22 +89,19 @@ def print_main_menu(offline_mode=False):
         print("⚠️  OFFLINE MODE: Network features are disabled.")
     print("=" * 50)
     print("1. 🔄 Full Sync & Analysis")
-    print("2. 📊 Quick Portfolio Summary")
-    print("3. 📈 View Crypto Trends")
-    print("4. 🤖 Execute Rebalancing Trades")
-    print("5. 🔀 Trading")
-    print("6. 🧪 Backtesting")
-    print("7. 📋 Export Reports / Data")
-    print("8. 📈 Generate Charts")
-    print("9. 🗄️  Backup / Restore Database")
-    print("10. 🧹 Clean Old Data")
+    print("2. 💰 Quick Portfolio Summary")
+    print("3. 📈 View Trends")
+    print("4. ⚖️ Rebalance")
+    print("5. 🔀 Trade")
+    print("6. 🧪 Backtest")
+    print("7. 📋 Reports")
+    print("8. 📊 Charts")
+    print("9. 🗄️  Database")
+    print("10. 🧹 Data Cleanup")
     print("11. ⚙️  View Configuration")
-    print("12. 🔧 Test API Connections")
+    print("12. 🔧 Test Connections")
     print("13. ❌ Exit")
     print("=" * 50)
-
-
-# --- Moved Interactive Methods from CryptoPortfolioTracker ---
 
 
 def _print_wallet_summary(
@@ -267,7 +264,7 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
     _print_wallet_summary("Funding Wallet Summary", funding_balances, "free")
 
 
-def print_trend_report(tracker: CryptoPortfolioTracker, report: Dict[str, Any]):
+def print_trend_report(report: Dict[str, Any]):
     """Prints a formatted trend analysis report to the console."""
     if not report:
         print("\n--- No Trend Report Data ---")
@@ -439,12 +436,14 @@ async def view_trends(tracker: CryptoPortfolioTracker):
                 report = await analyzer.generate_report(timeframe)
 
                 if report:
-                    tracker.print_trend_report(report)
+                    print_trend_report(report)
                     export_choice = input(
                         "\nDo you want to export this report? (y/n): "
                     ).lower()
                     if export_choice == "y":
-                        tracker.export_trend_report(report, timeframe)
+                        success = export_trend_report_interactive(tracker, report, timeframe)
+                        if not success:
+                            print("💡 Try using the web interface for more export options")
                 else:
                     print(
                         f"❌ Could not generate the {timeframe} trend report. See logs for details."
@@ -1020,6 +1019,66 @@ def _restore_database_interactive(tracker: CryptoPortfolioTracker):
         print("❌ Invalid input.")
 
 
+def export_trend_report_interactive(tracker: CryptoPortfolioTracker, report: Dict[str, Any], timeframe: str) -> bool:
+    """
+    Interactive trend report export for CLI with format selection.
+    
+    Args:
+        report: The trend analysis report dictionary
+        timeframe: The timeframe of the analysis
+    
+    Returns:
+        True if export was successful, False otherwise
+    """
+    try:
+        print("\n--- �� Export Options ---")
+        print("1. Export as HTML (recommended)")
+        print("2. Export as CSV")
+        print("3. Export as JSON")
+        print("4. Export ALL formats")
+        
+        choice = input("Select option (1-): ").strip()
+
+        if not choice:
+            return
+        
+        if choice == "1":
+            exported_file = tracker.export_trend_report(report, timeframe, "HTML")
+            if exported_file:
+                print(f"✅ HTML report exported to: {exported_file}")
+                return True
+                
+        elif choice == "2":
+            exported_file = tracker.export_trend_report(report, timeframe, "CSV")
+            if exported_file:
+                print(f"✅ CSV report exported to: {exported_file}")
+                return True
+                
+        elif choice == "3":
+            exported_file = tracker.export_trend_report(report, timeframe, "JSON")
+            if exported_file:
+                print(f"✅ JSON report exported to: {exported_file}")
+                return True
+                
+        elif choice == "4":
+            results = tracker.export_trend_report_all_formats(report, timeframe)
+            success_count = sum(1 for path in results.values() if path is not None)
+            print(f"✅ Exported {success_count}/3 formats successfully")
+            for format_type, file_path in results.items():
+                if file_path:
+                    print(f"   {format_type}: {file_path}")
+            return success_count > 0
+            
+        else:
+            print("❌ Invalid option")
+            return False
+            
+    except Exception as e:
+        tracker.logger.error(f"Interactive export failed: {e}", exc_info=True)
+        print(f"❌ Export failed: {e}")
+        return False
+
+
 def run_backup_and_restore_session(tracker: CryptoPortfolioTracker):
     """Orchestrates creating a backup or restoring from one."""
     print("\n--- 🗄️ Database Backup & Restore ---\n")
@@ -1081,9 +1140,6 @@ async def test_connections(tracker: CryptoPortfolioTracker):
     print("-" * 30)
 
 
-# --- End of Moved Methods ---
-
-
 async def run_interactive_mode(tracker: CryptoPortfolioTracker):
     """Runs the main interactive menu loop, now fully asynchronous."""
     loop = asyncio.get_event_loop()
@@ -1128,26 +1184,50 @@ async def run_interactive_mode(tracker: CryptoPortfolioTracker):
                         await run_live_strategy(tracker)
                 case 6:
                     print("\n--- 🧪 Backtesting ---")
-                    print("1. Strategy Backtest")
-                    print("2. Rebalancing Backtest")
+                    print("1. Rebalancing Backtest")
+                    print("2. Strategy Backtest")
                     sub_choice = await loop.run_in_executor(
                         None, input, "Select option (1-2) or Enter to return: "
                     )
                     if sub_choice == "1":
-                        await run_trading_strategy_backtest(tracker)
-                    elif sub_choice == "2":
                         await run_rebalancing_backtest(tracker)
+                    elif sub_choice == "2":
+                        await run_trading_strategy_backtest(tracker)
                 case 7:
                     print("\n--- 📋 Export Reports / Data ---")
+                    print("1. Export as Excel")
+                    print("1. Export as HTML")
+                    print("1. Export as CSV")
                     print("1. Export ALL (Excel, HTML, CSV)")
                     sub_choice = await loop.run_in_executor(
-                        None, input, "Select option (1) or Enter to return: "
+                        None, input, "Select option (1-4) or Enter to return: "
                     )
+                    metrics = await tracker.calculate_portfolio_metrics()
                     if sub_choice == "1":
+                        format = "Excel"
+                        print(f"Exporting to {format}...")
+                        metrics = await tracker.calculate_portfolio_metrics()
+                        tracker.export_to_excel(metrics)
+                        print(f"Portfolio Metrics Exported to {format}.")
+                    elif sub_choice == "2":
+                        format = "HTML"
+                        print(f"Exporting to {format}...")
+                        metrics = await tracker.calculate_portfolio_metrics()
+                        tracker.export_to_html(metrics)
+                        print(f"Portfolio Metrics Exported to {format}")
+                    elif sub_choice == "3":
+                        format = "CSV"
+                        print(f"Exporting to {format}...")
+                        metrics = await tracker.calculate_portfolio_metrics()
+                        tracker.export_csv_backup()
+                        print(f"Portfolio Metrics Exported to {format}")
+                    elif sub_choice == "4":
+                        print(f"Exporting to (Excel, HTML, CSV)...")
                         metrics = await tracker.calculate_portfolio_metrics()
                         tracker.export_to_excel(metrics)
                         tracker.export_to_html(metrics)
                         tracker.export_csv_backup()
+                        print(f"Portfolio Metrics Exported to (Excel, HTML, CSV).")
                 case 8:
                     print("\n📈 Generating charts...")
                     metrics = await tracker.calculate_portfolio_metrics()

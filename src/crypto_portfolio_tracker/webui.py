@@ -1220,28 +1220,17 @@ class PortfolioDashboard:
                 if st.button("🚀 Generate Export", use_container_width=True):
                     with st.spinner(f"Creating {export_format} export..."):
                         try:
-                            now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            filename = f"trend_report_{now_str}.{export_format.lower()}"
-                            exported_file = export_dir / filename
-
-                            if export_format == "CSV":
-                                df_export.to_csv(exported_file, index=False)
-                            elif export_format == "JSON":
-                                with open(exported_file, "w") as f:
-                                    json.dump(report, f, indent=2)
-                            elif export_format == "HTML":
-                                from crypto_portfolio_tracker.exporters import (
-                                    HtmlExporter,
-                                )
-
-                                exporter = HtmlExporter(self.config_manager.config)
-                                exported_file = exporter.export_trend_report(
-                                    report, df_export
-                                )
-
-                            st.success(f"Successfully created {filename}")
-                            st.rerun()
-
+                            # Use the unified export method from tracker
+                            exported_file = self.tracker.export_trend_report(
+                                report, timeframe, export_format
+                            )
+                            
+                            if exported_file:
+                                st.success(f"Successfully created {exported_file.name}")
+                                st.rerun()
+                            else:
+                                st.error("Export failed")
+                                
                         except Exception as e:
                             st.error(f"Export failed: {str(e)}")
 

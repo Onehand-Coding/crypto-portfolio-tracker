@@ -353,15 +353,15 @@ python main.py
 🚀 Crypto Portfolio Tracker v2.1.0
 ==================================================
 1. 🔄 Full Sync & Analysis
-2. 📊 Quick Portfolio Summary
-3. 📈 View Crypto Trends
-4. 🤖 Execute Rebalancing Trades
-5. 🔀 Trading
-6. 🧪 Backtesting
-7. 📋 Export Reports / Data
-8. 📈 Generate Charts
+2. 💰 Quick Portfolio Summary
+3. 📈 View Trends
+4. ⚖️ Rebalance
+5. 🔀 Trade
+6. 🧪 Backtest
+7. 📋 📋 Reports
+8. 📊 Charts
 9. 🗄️  Backup / Restore Database
-10. 🧹 Clean Old Data
+10. 🧹 Data Cleanup
 11. ⚙️  View Configuration
 12. 🔧 Test API Connections
 13. ❌ Exit
