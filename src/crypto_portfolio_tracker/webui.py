@@ -1574,10 +1574,21 @@ class PortfolioDashboard:
                         st.markdown("**Current Value**")
                         st.markdown(f"${row['Current Value (USD)']:,.0f}")
 
-                        # Show estimated trade size (this would need to be calculated)
-                        if "Estimated Trade Size" in row:
-                            st.markdown("**Est. Trade Size**")
-                            st.markdown(f"${row['Estimated Trade Size']:,.0f}")
+                        # Show the actual USDT amount for the trade
+                        if row["Signal"] in ["BUY", "SELL"] and "action_usd_value" in row:
+                            trade_amount = row["action_usd_value"]
+                            if trade_amount > 0:
+                                st.markdown("**Trade Amount**")
+                                if row["Signal"] == "BUY":
+                                    st.markdown(f"💵 **${trade_amount:,.2f} USDT**")
+                                else:  # SELL
+                                    st.markdown(f"💵 **${trade_amount:,.2f} USDT**")
+                                
+                                # Also show the coin quantity for SELL orders
+                                if row["Signal"] == "SELL" and "action_coin_quantity" in row:
+                                    coin_qty = row["action_coin_quantity"]
+                                    if coin_qty > 0:
+                                        st.markdown(f" **{coin_qty:.8f} {row['Symbol']}**")
 
                     with col4:
                         # Enhanced signal display
@@ -1748,6 +1759,8 @@ class PortfolioDashboard:
                             )
                         )
                         output = "\n".join(result.messages)
+                        errors_output = "\n".join(result.errors) if result.errors else ""
+
                         if result.success:
                             st.session_state.rebalance_results = f"""=== REBALANCING EXECUTION COMPLETED ===
 Executed {result.data.get("trades_executed", 0)} trade(s)
@@ -1755,7 +1768,17 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
 {output}
     === END EXECUTION LOG ===
-                            """
+    """
+                        else:
+                            # Show both messages and errors
+                            st.session_state.rebalance_results = f"""=== REBALANCING EXECUTION RESULTS ===
+Executed {result.data.get("trades_executed", 0)} trade(s)
+    Timestamp: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+{output}
+{errors_output if errors_output else ""}
+    === END EXECUTION LOG ===
+    """
                     else:
                         st.session_state.rebalance_results = (
                             f"❌ Rebalancing failed:\n" + "\n".join(result.errors)
@@ -2171,38 +2194,122 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 st.session_state.last_sync = datetime.now().strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
-                # Reset trading page state
-                st.session_state.trading_results = None
-                st.session_state.manual_trade_data = {}
-                st.session_state.trading_mode = None
-                st.session_state.strategy_signals = None
-                st.session_state.strategy_selected_coins = []
-                st.session_state.strategy_trade_amount_mode = "% of USDT balance"
-                st.session_state.strategy_trade_pct = 20.0
-                st.session_state.strategy_trade_amount = 50.0
-                for key in list(st.session_state.keys()):
-                    if key.startswith("strategy_param_"):
+
+                # Get current trading mode to determine what to reset
+                current_trading_mode = st.session_state.get("trading_mode", "manual")
+
+                if current_trading_mode == "strategy":
+                    # Reset only strategy-related state
+                    st.session_state.trading_results = None
+                    st.session_state.strategy_signals = None
+                    st.session_state.strategy_reset_flag = True
+
+                    # Clean up strategy parameter session state
+                    keys_to_delete = []
+                    for key in st.session_state.keys():
+                        if key.startswith("strategy_param_"):
+                            keys_to_delete.append(key)
+
+                    for key in keys_to_delete:
                         del st.session_state[key]
-                st.session_state.strategy_reset_flag = True  # <--- ADD THIS LINE
-                st.success(
-                    "✅ Portfolio synced successfully! Trading page reset to initial state."
-                )
+
+                    st.success("✅ Portfolio synced successfully! Strategy trading page reset.")
+
+                else:  # manual or any other mode
+                    # Reset only manual trading state
+                    st.session_state.trading_results = None
+                    st.session_state.manual_trade_data = {}
+
+                    # Clean up any manual trading related keys if they exist
+                    manual_keys = ["manual_trade_symbol", "manual_trade_amount", "manual_trade_type"]
+                    for key in manual_keys:
+                        if key in st.session_state:
+                            del st.session_state[key]
+
+                    st.success("✅ Portfolio synced successfully! Manual trading page reset.")
+
                 st.rerun()
+
             except Exception as e:
                 st.error(f"❌ Portfolio sync failed: {str(e)}")
+
+    # Also update the reset flag handling in the main method
+    def _render_live_strategy_trading(self):
+        if st.session_state.get("strategy_reset_flag"):
+            st.session_state.strategy_signals = None
+            st.session_state.trading_results = None
+            st.session_state.strategy_reset_flag = False
+
+            # Reset widget-tied session state by removing them entirely
+            # This allows the widgets to reinitialize with default values
+            widget_keys_to_reset = [
+                "strategy_selected_coins",
+                "strategy_trade_amount_mode",
+                "strategy_trade_pct",
+                "strategy_trade_amount",
+                "strategy_account",
+                "strategy_name"
+            ]
+
+            for key in widget_keys_to_reset:
+                if key in st.session_state:
+                    del st.session_state[key]
+
+            # Also clean up any remaining strategy parameter keys
+            keys_to_delete = []
+            for key in st.session_state.keys():
+                if key.startswith("strategy_param_"):
+                    keys_to_delete.append(key)
+
+            for key in keys_to_delete:
+                del st.session_state[key]
+
+        st.markdown("### 🤖 Live Strategy Trading")
+
+        # ... rest of the method remains the same ...
+
+    # Also update the reset flag handling in the main method
+    def _render_live_strategy_trading(self):
+        if st.session_state.get("strategy_reset_flag"):
+            st.session_state.strategy_signals = None
+            st.session_state.trading_results = None
+            st.session_state.strategy_reset_flag = False
+
+            # Reset widget-tied session state by removing them entirely
+            # This allows the widgets to reinitialize with default values
+            widget_keys_to_reset = [
+                "strategy_selected_coins",
+                "strategy_trade_amount_mode",
+                "strategy_trade_pct",
+                "strategy_trade_amount",
+                "strategy_account",
+                "strategy_name"
+            ]
+
+            for key in widget_keys_to_reset:
+                if key in st.session_state:
+                    del st.session_state[key]
+
+            # Also clean up any remaining strategy parameter keys
+            keys_to_delete = []
+            for key in st.session_state.keys():
+                if key.startswith("strategy_param_"):
+                    keys_to_delete.append(key)
+
+            for key in keys_to_delete:
+                del st.session_state[key]
+
+        st.markdown("### 🤖 Live Strategy Trading")
+
+        # ... rest of the method remains the same ...
 
     def _render_live_strategy_trading(self):
         if st.session_state.get("strategy_reset_flag"):
             st.session_state.strategy_signals = None
             st.session_state.trading_results = None
             st.session_state.strategy_reset_flag = False
-            st.stop()  # <--- This halts the UI for this rerun
+
         st.markdown("### 🤖 Live Strategy Trading")
-        st.markdown("#### 💰 Available USDT")
-        if usdt_balance is not None:
-            st.success(f"${usdt_balance:,.2f}")
-        else:
-            st.info("USDT balance unavailable.")
 
         # --- 1. Account Selection ---
         tracker = self.initialize_tracker()
@@ -2217,9 +2324,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
         # Defensive: No API keys
         if not any(acc.get("api_key") or acc.get("binance_key") for acc in accounts):
-            st.error(
-                "❌ No API keys found for any account. Cannot run live strategies."
-            )
+            st.error("❌ No API keys found for any account. Cannot run live strategies.")
             return
 
         account_names = [acc["name"] for acc in accounts]
@@ -2231,36 +2336,20 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         )
         account_type = selected_account.get("type", "main")
 
-        # --- 2. Strategy Selection ---
-        # Discover all strategies
-        all_strategies = {
-            name: obj
-            for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
-            if issubclass(obj, trading_strategies.Strategy)
-            and obj is not trading_strategies.Strategy
-        }
-        # Filter by account type
-        if account_type == "main":
-            available_strategies = all_strategies
-        elif account_type == "swing":
-            available_strategies = {
-                k: v
-                for k, v in all_strategies.items()
-                if getattr(v, "strategy_type", None) in ["swing", "general"]
-            }
-        elif account_type == "day":
-            available_strategies = {
-                k: v
-                for k, v in all_strategies.items()
-                if getattr(v, "strategy_type", None) in ["day", "general"]
-            }
+        # --- Show Available USDT Balance ---
+        usdt_balance = self._get_usdt_balance(tracker, selected_account)
+
+        st.markdown("#### 💰 Available USDT")
+        if usdt_balance is not None:
+            st.success(f"${usdt_balance:,.2f}")
         else:
-            available_strategies = all_strategies
+            st.info("USDT balance unavailable.")
+
+        # --- 2. Strategy Selection ---
+        available_strategies = self._get_available_strategies(account_type)
 
         if not available_strategies:
-            st.error(
-                f"❌ No suitable strategies found for account type '{account_type}'."
-            )
+            st.error(f"❌ No suitable strategies found for account type '{account_type}'.")
             return
 
         strategy_names = list(available_strategies.keys())
@@ -2269,35 +2358,121 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         )
         strategy_class = available_strategies[selected_strategy_name]
 
-        # --- Show Available USDT Balance ---
-        usdt_balance = None
+        # --- 3. Coin Selection ---
+        coin_options = self._get_coin_options(config)
+
+        if "strategy_selected_coins" not in st.session_state:
+            core_coins = list(config.get("target_allocation", {}).keys())
+            core_coins_upper = [f"{c.upper()}-USD" for c in core_coins]
+            st.session_state.strategy_selected_coins = core_coins_upper
+
+        st.markdown("#### 🪙 Select Coins for Strategy Trading")
+        selected_coins = st.multiselect(
+            "Coins to include",
+            options=coin_options,
+            default=st.session_state.get("strategy_selected_coins", []),
+            key="strategy_selected_coins",
+        )
+
+        # Defensive: Require at least one coin
+        if not selected_coins:
+            st.warning("Please select at least one coin to run the strategy on.")
+            return
+
+        # --- 4. Strategy Parameters and Signal Generation ---
+        param_specs = getattr(strategy_class, "strategy_param_specs", {})
+
+        with st.form("strategy_params_form"):
+            st.markdown("#### ⚙️ Strategy Parameters")
+
+            param_inputs = {}
+            for param, spec in param_specs.items():
+                param_inputs[param] = self._render_parameter_input(param, spec)
+
+            # Trade amount configuration
+            trade_config = self._render_trade_amount_config()
+
+            submitted = st.form_submit_button("Generate Signals")
+
+        # --- 5. Signal Generation ---
+        if submitted:
+            signals = self._generate_signals(
+                tracker, selected_account, config, strategy_class,
+                selected_coins, param_inputs, param_specs
+            )
+            st.session_state.strategy_signals = signals
+
+        # --- 6. Signal Review ---
+        signals = st.session_state.get("strategy_signals", [])
+        if not signals:
+            if submitted:
+                st.info("No actionable BUY or SELL signals generated by the strategy.")
+            return
+
+        st.markdown("#### 🚨 Proposed Trades")
+        st.dataframe(signals, use_container_width=True)
+
+        # --- 7. Execution ---
+        if st.button(
+            "🚀 Execute All Signals",
+            type="primary",
+            use_container_width=True,
+            disabled=not signals,
+        ):
+            self._execute_strategy_signals(
+                tracker, selected_account, config, signals, trade_config, usdt_balance
+            )
+
+        # --- 8. Show Execution Results ---
+        self._display_execution_results()
+
+    def _get_usdt_balance(self, tracker, selected_account):
+        """Get USDT balance for the selected account."""
         try:
             if selected_account["name"] == "Main Account":
-                # Use the already-initialized client for main account
-                usdt_balance = float(
-                    tracker.binance_client.get_asset_balance(asset="USDT").get(
-                        "free", 0.0
-                    )
-                )
+                balance = tracker.binance_client.get_asset_balance(asset="USDT")
+                return float(balance.get("free", 0.0))
             else:
-                # For sub-accounts, initialize a new client with sub-account keys
                 live_client = tracker._init_binance_client(
-                    api_key=selected_account.get("api_key")
-                    or selected_account.get("binance_key"),
-                    api_secret=selected_account.get("api_secret")
-                    or selected_account.get("binance_secret"),
+                    api_key=selected_account.get("api_key") or selected_account.get("binance_key"),
+                    api_secret=selected_account.get("api_secret") or selected_account.get("binance_secret"),
                 )
-                usdt_balance = float(
-                    live_client.get_asset_balance(asset="USDT").get("free", 0.0)
-                )
+                balance = live_client.get_asset_balance(asset="USDT")
+                return float(balance.get("free", 0.0))
         except Exception as e:
             st.info(f"USDT balance unavailable. Error: {e}")
-            usdt_balance = None
+            return None
 
-        # --- 3. Coin and Parameter Selection (all in one form) ---
+    def _get_available_strategies(self, account_type):
+        """Get strategies available for the account type."""
+        all_strategies = {
+            name: obj
+            for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
+            if issubclass(obj, trading_strategies.Strategy)
+            and obj is not trading_strategies.Strategy
+        }
+
+        if account_type == "main":
+            return all_strategies
+        elif account_type == "swing":
+            return {
+                k: v for k, v in all_strategies.items()
+                if getattr(v, "strategy_type", None) in ["swing", "general"]
+            }
+        elif account_type == "day":
+            return {
+                k: v for k, v in all_strategies.items()
+                if getattr(v, "strategy_type", None) in ["day", "general"]
+            }
+        else:
+            return all_strategies
+
+    def _get_coin_options(self, config):
+        """Get available coin options."""
         symbol_mapper = self.config_manager.symbol_mapper
         core_coins = list(config.get("target_allocation", {}).keys())
         core_coins_upper = [f"{c.upper()}-USD" for c in core_coins]
+
         all_symbols = list(symbol_mapper.get_all_mappings().keys())
         if not all_symbols:
             all_coin_dicts = symbol_mapper._fetch_master_coins_list()
@@ -2306,274 +2481,222 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 for coin in all_coin_dicts
                 if "symbol" in coin
             ]
+
         non_core_symbols = sorted(set(all_symbols) - set(core_coins_upper))
-        coin_options = core_coins_upper + non_core_symbols
+        return core_coins_upper + non_core_symbols
 
-        if "strategy_selected_coins" not in st.session_state:
-            st.session_state.strategy_selected_coins = core_coins_upper
+    def _render_parameter_input(self, param, spec):
+        """Render input field for a strategy parameter."""
+        label = spec.get("label", param.replace("_", " ").capitalize())
+        default = spec.get("default", "")
+        key = f"strategy_param_{param}"
 
-        param_specs = getattr(strategy_class, "strategy_param_specs", {})
-        param_inputs = {}
-
-        def select_all_core_coins():
-            st.session_state.strategy_selected_coins = core_coins_upper
-
-        with st.form("strategy_params_form"):
-            st.markdown("#### 🪙 Select Coins for Strategy Trading")
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                selected_coins = st.multiselect(
-                    "Coins to include",
-                    options=coin_options,
-                    default=st.session_state.get(
-                        "strategy_selected_coins", core_coins_upper
-                    ),
-                    key="strategy_selected_coins",
-                )
-            with col2:
-                st.form_submit_button(
-                    "Select All Core Coins", on_click=select_all_core_coins
-                )
-
-            # Defensive: Require at least one coin
-            if not selected_coins:
-                st.warning("Please select at least one coin to run the strategy on.")
-
-            # Parameter fields
-            for param, spec in param_specs.items():
-                label = spec.get("label", param.replace("_", " ").capitalize())
-                default = spec.get("default", "")
-                key = f"strategy_param_{param}"
-                if spec.get("type") == "float":
-                    st.number_input(
-                        label,
-                        value=float(default),
-                        min_value=spec.get("min_value", 0.0),
-                        max_value=spec.get("max_value", 100.0),
-                        key=key,
-                    )
-                elif spec.get("type") == "int":
-                    st.number_input(
-                        label,
-                        value=int(default),
-                        min_value=spec.get("min_value", 0),
-                        max_value=spec.get("max_value", 100),
-                        step=1,
-                        key=key,
-                    )
-                elif spec.get("type") == "bool":
-                    st.checkbox(label, value=bool(default), key=key)
-                else:
-                    st.text_input(label, value=str(default), key=key)
-
-            # --- Trade amount mode ---
-            trade_amount_mode = st.radio(
-                "How do you want to specify trade size?",
-                ["% of USDT balance", "Fixed USDT amount"],
-                horizontal=True,
-                key="strategy_trade_amount_mode",
+        if spec.get("type") == "float":
+            return st.number_input(
+                label,
+                value=float(default),
+                min_value=spec.get("min_value", 0.0),
+                max_value=spec.get("max_value", 100.0),
+                key=key,
             )
-            if trade_amount_mode == "% of USDT balance":
-                trade_pct = st.number_input(
-                    "Percent of available USDT to use per trade",
-                    min_value=1.0,
-                    max_value=100.0,
-                    value=20.0,
-                    step=1.0,
-                    key="strategy_trade_pct",
-                )
-                trade_amount = None
-            else:
-                trade_amount = st.number_input(
-                    "Fixed USDT amount to use per trade",
-                    min_value=1.0,
-                    value=50.0,
-                    step=1.0,
-                    key="strategy_trade_amount",
-                )
-                trade_pct = None
-
-            submitted = st.form_submit_button("Generate Signals")
-
-        # After the form, collect the user input from session_state:
-        for param in param_specs:
-            param_inputs[param] = st.session_state.get(
-                f"strategy_param_{param}", param_specs[param].get("default")
+        elif spec.get("type") == "int":
+            return st.number_input(
+                label,
+                value=int(default),
+                min_value=spec.get("min_value", 0),
+                max_value=spec.get("max_value", 100),
+                step=1,
+                key=key,
             )
-        selected_coins = st.session_state.strategy_selected_coins
+        elif spec.get("type") == "bool":
+            return st.checkbox(label, value=bool(default), key=key)
+        else:
+            return st.text_input(label, value=str(default), key=key)
 
-        # Defensive: Require at least one coin
-        if not selected_coins:
+    def _render_trade_amount_config(self):
+        """Render trade amount configuration."""
+        trade_amount_mode = st.radio(
+            "How do you want to specify trade size?",
+            ["% of USDT balance", "Fixed USDT amount"],
+            horizontal=True,
+            key="strategy_trade_amount_mode",
+        )
+
+        if trade_amount_mode == "% of USDT balance":
+            trade_pct = st.number_input(
+                "Percent of available USDT to use per trade",
+                min_value=1.0,
+                max_value=100.0,
+                value=20.0,
+                step=1.0,
+                key="strategy_trade_pct",
+            )
+            return {"mode": "percentage", "value": trade_pct}
+        else:
+            trade_amount = st.number_input(
+                "Fixed USDT amount to use per trade",
+                min_value=1.0,
+                value=50.0,
+                step=1.0,
+                key="strategy_trade_amount",
+            )
+            return {"mode": "fixed", "value": trade_amount}
+
+    def _generate_signals(self, tracker, selected_account, config, strategy_class,
+                     selected_coins, param_inputs, param_specs):
+        """Generate trading signals for selected coins."""
+        st.session_state.strategy_signals = None  # Reset
+
+        with st.spinner("Generating signals..."):
+            try:
+                live_client = tracker._init_binance_client(
+                    api_key=selected_account.get("api_key") or selected_account.get("binance_key"),
+                    api_secret=selected_account.get("api_secret") or selected_account.get("binance_secret"),
+                )
+                analyzer = CryptoTrendAnalyzer(config=config, binance_client=live_client)
+                signals = []
+
+                for coin in selected_coins:
+                    try:
+                        signal_data = self._generate_coin_signal(
+                            analyzer, strategy_class, coin, param_inputs, param_specs
+                        )
+                        if signal_data and signal_data["Signal"] in ["BUY", "SELL"]:
+                            signals.append(signal_data)
+                    except Exception as e:
+                        st.warning(f"Failed to generate signal for {coin}: {e}")
+                        continue
+
+                return signals
+
+            except Exception as e:
+                st.error(f"Signal generation failed: {e}")
+                return []
+
+    def _generate_coin_signal(self, analyzer, strategy_class, coin, param_inputs, param_specs):
+        """Generate signal for a single coin."""
+        yf_ticker = f"{coin}-USD"
+        analyzer.set_symbol(yf_ticker)
+
+        # Convert percent params to fraction if needed
+        strategy_kwargs = param_inputs.copy()
+        for k, v in param_specs.items():
+            if (v.get("type") == "float" and "pct" in k and
+                strategy_kwargs[k] is not None and strategy_kwargs[k] > 1):
+                strategy_kwargs[k] = strategy_kwargs[k] / 100.0
+
+        strategy_instance = strategy_class(analyzer=analyzer, **strategy_kwargs)
+        interval = getattr(strategy_instance, "valid_intervals", ["1d"])[0]
+        period = "7d" if "m" in interval or "h" in interval else "1y"
+
+        data = asyncio.run(
+            analyzer.fetch_crypto_data_async(yf_ticker, period=period, interval=interval)
+        )
+
+        if data is None or data.empty:
+            return None
+
+        signal, size, reason = asyncio.run(strategy_instance.generate_signal(data))
+
+        if signal in ["BUY", "SELL"]:
+            return {
+                "Symbol": coin,
+                "Signal": signal,
+                "Size": size,
+                "Reason": reason,
+            }
+        return None
+
+    def _execute_strategy_signals(self, tracker, selected_account, config, signals,
+                             trade_config, usdt_balance):
+        """Execute all trading signals."""
+        with st.spinner("Executing trades..."):
+            try:
+                results = []
+                min_trade_usd = config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
+                is_live = config.get("portfolio", {}).get("live_trading_enabled", False)
+
+                for trade in signals:
+                    try:
+                        result = self._execute_single_trade(
+                            tracker, trade, trade_config, usdt_balance, min_trade_usd, is_live
+                        )
+                        results.append(result)
+                    except Exception as e:
+                        results.append(f"{trade['Signal']} {trade['Symbol']}: ❌ Execution Error: {e}")
+
+                st.session_state.trading_results = "\n".join(results)
+                st.success("✅ All signals executed. See results below.")
+
+            except Exception as e:
+                st.session_state.trading_results = f"❌ Execution Error: {e}"
+                st.error(f"Execution failed: {e}")
+
+    def _execute_single_trade(self, tracker, trade, trade_config, usdt_balance, min_trade_usd, is_live):
+        """Execute a single trade."""
+        trade_type = trade["Signal"]
+        symbol = trade["Symbol"]
+
+        if trade_config["mode"] == "percentage":
+            usdt_to_spend = max((trade_config["value"] / 100.0) * usdt_balance, min_trade_usd)
+        else:
+            usdt_to_spend = max(trade_config["value"], min_trade_usd)
+
+        trade_ticker = f"{symbol}USDT"
+
+        # Execute trade using asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            import io, sys
+            old_stdout = sys.stdout
+            sys.stdout = mystdout = io.StringIO()
+
+            loop.run_until_complete(
+                tracker.execute_manual_trade_core(
+                    trade_type, symbol, trade_ticker, usdt_to_spend, True, is_live
+                )
+            )
+
+            sys.stdout = old_stdout
+            execution_output = mystdout.getvalue()
+
+            return (f"{trade_type} {symbol}: \n"
+                    f"Preparing MARKET {trade_type} for {symbol}...\n"
+                    f"Amount: {usdt_to_spend:.2f} USDT\n"
+                    f"🚀 PLACING LIVE ORDER...\n"
+                    f"{execution_output}")
+
+        finally:
+            loop.close()
+
+    def _display_execution_results(self):
+        """Display execution results and post-execution options."""
+        if not st.session_state.get("trading_results"):
             return
 
-        # --- 4. Signal Generation ---
-        if submitted:
-            st.session_state.strategy_signals = None  # Reset
-            with st.spinner("Generating signals..."):
-                try:
-                    live_client = tracker._init_binance_client(
-                        api_key=selected_account.get("api_key")
-                        or selected_account.get("binance_key"),
-                        api_secret=selected_account.get("api_secret")
-                        or selected_account.get("binance_secret"),
-                    )
-                    analyzer = CryptoTrendAnalyzer(
-                        config=config, binance_client=live_client
-                    )
-                    signals = []
-                    for coin in selected_coins:
-                        yf_ticker = f"{coin}-USD"
-                        analyzer.set_symbol(yf_ticker)
-                        # Convert percent params to fraction if needed
-                        strategy_kwargs = param_inputs.copy()
-                        for k, v in param_specs.items():
-                            if (
-                                v.get("type") == "float"
-                                and "pct" in k
-                                and strategy_kwargs[k] is not None
-                                and strategy_kwargs[k] > 1
-                            ):
-                                strategy_kwargs[k] = strategy_kwargs[k] / 100.0
-                        strategy_instance = strategy_class(
-                            analyzer=analyzer, **strategy_kwargs
-                        )
-                        interval = getattr(
-                            strategy_instance, "valid_intervals", ["1d"]
-                        )[0]
-                        period = "7d" if "m" in interval or "h" in interval else "1y"
-                        data = asyncio.run(
-                            analyzer.fetch_crypto_data_async(
-                                yf_ticker, period=period, interval=interval
-                            )
-                        )
-                        if data is None or data.empty:
-                            continue
-                        signal, size, reason = asyncio.run(
-                            strategy_instance.generate_signal(data)
-                        )
-                        if signal in ["BUY", "SELL"]:
-                            signals.append(
-                                {
-                                    "Symbol": coin,
-                                    "Signal": signal,
-                                    "Size": size,
-                                    "Reason": reason,
-                                }
-                            )
-                        st.session_state.strategy_signals = signals
-                except Exception as e:
-                    st.error(f"Signal generation failed: {e}")
-                    st.session_state.strategy_signals = []
+        st.markdown("### 📋 Execution Results")
+        st.code(st.session_state.trading_results, language="text")
 
-        # --- 5. Signal Review ---
-        signals = st.session_state.strategy_signals or []
-        if not signals:
-            st.info("No actionable BUY or SELL signals generated by the strategy.")
-            return
+        # Check for failed trades
+        if "❌" in st.session_state.trading_results:
+            st.warning("⚠️ Some trades failed. Please review the log above.")
+        else:
+            st.success("✅ All strategy trades executed successfully!")
 
-        st.markdown("#### 🚨 Proposed Trades")
-        st.dataframe(signals, use_container_width=True)
+        st.markdown("### 🔄 Portfolio Update")
+        st.info("💡 Recommendation: After executing trades, sync your portfolio to see updated balances and positions.")
 
-        # --- 6. Execution ---
-        if st.button(
-            "🚀 Execute All Signals",
-            type="primary",
-            use_container_width=True,
-            disabled=not signals,
-        ):
-            with st.spinner("Executing trades..."):
-                try:
-                    # For each signal, execute the trade
-                    results = []
-                    for trade in signals:
-                        # Use the same execution logic as manual trade, but for each signal
-                        trade_type = trade["Signal"]
-                        symbol = trade["Symbol"]
-                        amount = trade["Size"]
-                        # For simplicity, treat size as fraction of available USDT
-                        usdt_balance = float(
-                            tracker.binance_client.get_asset_balance(asset="USDT").get(
-                                "free", 0.0
-                            )
-                        )
-                        min_trade_usd = config.get("portfolio", {}).get(
-                            "minimum_trade_usd", 10.0
-                        )
-                        if trade_amount_mode == "% of USDT balance":
-                            usdt_to_spend = max(
-                                (trade_pct / 100.0) * usdt_balance, min_trade_usd
-                            )
-                        else:
-                            usdt_to_spend = max(trade_amount, min_trade_usd)
-                        trade_ticker = f"{symbol}USDT"
-                        is_live = config.get("portfolio", {}).get(
-                            "live_trading_enabled", False
-                        )
-                        # Use the same async execution as manual trade
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        import io, sys
-
-                        old_stdout = sys.stdout
-                        sys.stdout = mystdout = io.StringIO()
-                        try:
-                            loop.run_until_complete(
-                                tracker._execute_manual_trade(
-                                    trade_type,
-                                    symbol,
-                                    trade_ticker,
-                                    usdt_to_spend,
-                                    True,
-                                    is_live,
-                                )
-                            )
-                            sys.stdout = old_stdout
-                            execution_output = mystdout.getvalue()
-                            results.append(
-                                f"{trade_type} {symbol}: \n"
-                                f"Preparing MARKET {trade_type} for {symbol}...\n"
-                                f"Amount: {usdt_to_spend:.2f} USDT\n"
-                                f"🚀 PLACING LIVE ORDER...\n"
-                                f"{execution_output}"
-                            )
-                        except Exception as e:
-                            results.append(
-                                f"{trade_type} {symbol}: ❌ Execution Error: {e}"
-                            )
-                        finally:
-                            loop.close()
-                    st.session_state.trading_results = "\n".join(results)
-                    st.success("✅ All signals executed. See results below.")
-                except Exception as e:
-                    st.session_state.trading_results = f"❌ Execution Error: {e}"
-                    st.error(f"Execution failed: {e}")
-
-        # --- 7. Show Execution Results ---
-        if st.session_state.trading_results:
-            st.markdown("### 📋 Execution Results")
-            st.code(st.session_state.trading_results, language="text")
-            # Check for any failed trades in the results
-            if "❌" in st.session_state.trading_results:
-                st.warning("⚠️ Some trades failed. Please review the log above.")
-            else:
-                st.success("✅ All strategy trades executed successfully!")
-            st.markdown("### 🔄 Portfolio Update")
-            st.info(
-                "💡 Recommendation: After executing trades, sync your portfolio to see updated balances and positions."
-            )
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button(
-                    "🔄 Sync Portfolio", type="primary", use_container_width=True
-                ):
-                    self._sync_portfolio_and_reset()
-            with col2:
-                if st.button(
-                    "🆕 New Strategy Run", type="secondary", use_container_width=True
-                ):
-                    st.session_state.trading_results = None
-                    st.session_state.strategy_signals = None
-                    st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
+                self._sync_portfolio_and_reset()
+        with col2:
+            if st.button("🆕 New Strategy Run", type="secondary", use_container_width=True):
+                st.session_state.trading_results = None
+                st.session_state.strategy_signals = None
+                st.rerun()
 
     def render_backtesting(self):
         import inspect
