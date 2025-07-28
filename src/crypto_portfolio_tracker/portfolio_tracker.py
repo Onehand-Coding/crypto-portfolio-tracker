@@ -1643,32 +1643,94 @@ class CryptoPortfolioTracker:
                 "No holdings with valid cost basis to update in the database."
             )
 
-    def create_portfolio_charts(self, metrics: Dict[str, Any]):
+    def create_portfolio_charts(self, chart_type: str, metrics: Dict[str, Any]) -> bool:
+        """
+        Create a specific chart based on the chart type.
+        
+        Args:
+            chart_type: Type of chart to create ('allocation_pie', 'allocation_comparison', 'pl_by_asset', 'value_history')
+            metrics: Portfolio metrics dictionary
+        
+        Returns:
+            bool: True if chart was created successfully, False otherwise
+        """
+        holdings_df = metrics.get("holdings_df")
+        snapshots_df = self.db_manager.get_all_snapshots()
+        target_alloc = self.config.get("target_allocation", {})
+        
+        if holdings_df is None:
+            self.logger.warning("No holdings data for chart generation.")
+            return False
+        
+        try:
+            if chart_type == "allocation_pie":
+                self.visualizer.create_portfolio_allocation_pie(holdings_df, metrics)
+                return True
+            elif chart_type == "allocation_comparison":
+                self.visualizer.create_allocation_comparison_bar(holdings_df, target_alloc)
+                return True
+            elif chart_type == "pl_by_asset":
+                self.visualizer.create_pl_by_asset_bar(holdings_df)
+                return True
+            elif chart_type == "value_history":
+                self.visualizer.create_portfolio_value_history(snapshots_df)
+                return True
+            else:
+                self.logger.error(f"Unknown chart type: {chart_type}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Error creating chart {chart_type}: {e}")
+            return False
+
+    def create_portfolio_charts_all(self, metrics: Dict[str, Any]):
         """Generate portfolio charts."""
         holdings_df = metrics.get("holdings_df")
+        snapshots_df = self.db_manager.get_all_snapshots()
         target_alloc = self.config.get("target_allocation", {})
         if holdings_df is not None:
             self.visualizer.generate_all_charts(
-                holdings_df, metrics, target_alloc, pd.DataFrame()
+                holdings_df, metrics, target_alloc, snapshots_df
             )
         else:
             self.logger.warning("No holdings data for chart generation.")
 
-    def export_to_excel(self, metrics: Dict[str, Any]):
-        self.excel_exporter.export(
-            metrics=metrics, holdings_df=metrics.get("holdings_df")
-        )
+    def export_portfolio_summary(self, metrics: Dict[str, Any], format: str):
+        """Export portfolio summary to HTML/Excel format."""
+        if format == "HTML":
+            self.html_exporter.export(
+                metrics=metrics, holdings_df=metrics.get("holdings_df")
+            )
+        elif format == "Excel":
+            self.excel_exporter.export(
+                metrics=metrics, holdings_df=metrics.get("holdings_df")
+            )
+        else:
+            raise ValueError(f"Unsupported export format: {format}")
 
-    def export_to_html(self, metrics: Dict[str, Any]):
-        self.html_exporter.export(
-            metrics=metrics, holdings_df=metrics.get("holdings_df")
-        )
+    def export_portfolio_summary_all_formats(self, metrics: Dict[str, Any]):
+        """Export portfolio summary to all available formats."""
+        for format in ["HTML", "Excel"]:
+            self.export_portfolio_summary(metrics, format)
 
-    def export_csv_backup(self):
-        self.csv_exporter.export(
-            transactions_df=self.db_manager.get_all_transactions(),
-            holdings_df=self.db_manager.get_holdings(),
-        )
+    def export_data_backup_csv(self, data_type: str):
+        """Export transactions/holdings to CSV backup file."""
+        if data_type == "transactions":
+            self.csv_exporter.export(
+                transactions_df=self.db_manager.get_all_transactions(),
+                holdings_df=None,
+            )
+        elif data_type == "holdings":
+            self.csv_exporter.export(
+                transactions_df=None,
+                holdings_df=self.db_manager.get_holdings(),
+            )
+        else:
+            raise ValueError(f"Unsupported data type: {data_type}")
+
+    def export_all_data_backups_csv(self):
+        """Export all data backups to CSV format."""
+        for data_type in ["transactions", "holdings"]:
+            self.export_data_backup_csv(data_type)
 
     def export_trend_report(self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML") -> Optional[Path]:
         """

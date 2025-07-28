@@ -493,13 +493,13 @@ class PortfolioDashboard:
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Export to Excel", use_container_width=True):
-                    tracker.export_to_excel(metrics)
-                    st.success("Excel report exported!")
+                if st.button("Export Portfolio Summary (Excel)", use_container_width=True):
+                    tracker.export_portfolio_summary(metrics, "Excel")
+                    st.success("Portfolio Summary exported to Excel!")
             with col2:
-                if st.button("Export to HTML", use_container_width=True):
-                    tracker.export_to_html(metrics)
-                    st.success("HTML report exported!")
+                if st.button("Export Portfolio Summary (HTML)", use_container_width=True):
+                    tracker.export_portfolio_summary(metrics, "HTML")
+                    st.success("Portfolio Summary exported to HTML!")
 
         # --- 5. Visualizations Tab ---
         with tab_viz:
