@@ -667,6 +667,42 @@ This software is for **educational and informational purposes only** and does **
 - **Start small**: Test with minimal amounts first
 - **Active monitoring required**: Don't leave automated systems unattended
 
+## ⚠️ Data Limitations & Important Notes
+
+### Transaction Data Limitations
+**⚠️ CRITICAL: Transaction History Limited to 90 Days**
+- **Binance API Restriction**: The Binance API only provides transaction data for the last 90 days
+- **Impact on Calculations**: This limitation means your cost basis calculations, P/L analysis, and portfolio performance metrics may be **incomplete or inaccurate** if you have transactions older than 90 days
+- **Historical Data Gap**: Transactions older than 90 days are not fetched and cannot be included in calculations
+- **Recommendation**: For accurate long-term analysis, consider manually importing historical transaction data or using the export/import features to supplement missing data
+
+### Import/Export Limitations
+**⚠️ IMPORTANT: Import Functionality Limitations**
+- **Binance Export Format**: Direct import of transaction exports from Binance is **not yet supported**
+- **Manual Import Required**: You may need to manually format transaction data for import
+- **Data Validation**: The import feature validates required columns but may not handle all Binance export formats
+- **Testing Recommended**: Always test import functionality with small datasets first
+
+### Data Completeness Impact
+**⚠️ COMPUTATIONAL ACCURACY WARNING**
+- **Incomplete Cost Basis**: Missing historical transactions can lead to incorrect FIFO cost basis calculations
+- **Inaccurate P/L**: Portfolio performance metrics may be skewed without complete transaction history
+- **Rebalancing Impact**: Incomplete data may affect rebalancing suggestions and backtesting results
+- **Tax Implications**: Incomplete transaction history could lead to inaccurate tax reporting
+
+### Recommendations for Data Completeness
+1. **Export Current Data**: Use the export feature to backup your current transaction data
+2. **Manual Supplementation**: Consider manually adding historical transactions older than 90 days
+3. **Regular Backups**: Export your data regularly to maintain complete records
+4. **Verify Calculations**: Cross-reference portfolio calculations with your exchange records
+5. **Start Fresh**: If possible, begin tracking from a point where you have complete 90-day history
+
+### Alternative Data Sources
+- **Manual Entry**: Consider manually entering critical historical transactions
+- **External Tools**: Use external portfolio tracking tools for historical data analysis
+- **Exchange Records**: Download and maintain separate records of transactions older than 90 days
+- **Tax Software**: Consider using dedicated crypto tax software for complete historical analysis
+
 ## 📁 Output Files
 
 All files are organized in the `data/` directory:

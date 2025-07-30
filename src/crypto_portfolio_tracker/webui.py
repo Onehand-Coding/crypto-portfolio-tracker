@@ -2135,7 +2135,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             except Exception as e:
                 st.error(f"❌ Portfolio sync failed: {str(e)}")
 
-    # Also update the reset flag handling in the main method
+        # Also update the reset flag handling in the main method
     def _render_live_strategy_trading(self):
         if st.session_state.get("strategy_reset_flag"):
             st.session_state.strategy_signals = None
@@ -3518,6 +3518,17 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                         df = pd.read_csv(uploaded_holdings)
                     else:
                         df = pd.read_excel(uploaded_holdings)
+                    
+                    # Validate required columns for holdings
+                    required_holdings_cols = ["symbol", "quantity", "average_cost_basis"]
+                    missing_cols = [col for col in required_holdings_cols if col not in df.columns]
+                    if missing_cols:
+                        st.error(f"❌ Missing required columns: {missing_cols}")
+                        st.info("💡 Required columns: symbol, quantity, average_cost_basis")
+                        st.info("💡 All other columns will be imported if present")
+                        st.stop()
+                    
+                    # Import ALL columns - let the database methods handle what they need
                     st.dataframe(df)
                     if st.button("Import Holdings"):
                         tracker.db_manager.update_holdings(df)
@@ -3534,13 +3545,37 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                         df = pd.read_csv(uploaded_tx)
                     else:
                         df = pd.read_excel(uploaded_tx)
+                    
+                    # Validate required columns but import everything
+                    required_tx_cols = ["symbol", "timestamp", "type", "quantity"]
+                    missing_cols = [col for col in required_tx_cols if col not in df.columns]
+                    if missing_cols:
+                        st.error(f"❌ Missing required columns: {missing_cols}")
+                        st.info("💡 Required columns: symbol, timestamp, type, quantity")
+                        st.info("💡 All other columns will be imported if present")
+                        st.stop()
+                    
+                    # Validate transaction types
+                    valid_types = ['BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL', 'TRANSFER']
+                    invalid_types = df[~df['type'].isin(valid_types)]['type'].unique()
+                    if len(invalid_types) > 0:
+                        st.error(f"❌ Invalid transaction types found: {invalid_types}")
+                        st.info(f"💡 Valid types: {valid_types}")
+                        st.stop()
+                    
+                    # Import ALL columns - let the database methods handle what they need
                     st.dataframe(df)
-                    # You would need to implement a bulk insert for transactions
-                    # if st.button("Import Transactions"):
-                    #     tracker.db_manager.bulk_insert_transactions(df.to_dict(orient="records"))
-                    #     st.success("Transactions imported successfully!")
+                    if st.button("Import Transactions"):
+                        st.warning("⚠️ This will update existing transactions and may create duplicates if transaction_hash is missing.")
+                        if st.button("Confirm Import"):
+                            try:
+                                transactions_list = df.to_dict(orient="records")
+                                rows_affected = tracker.db_manager.bulk_insert_transactions(transactions_list)
+                                st.success(f"✅ Successfully imported {rows_affected} transactions!")
+                            except Exception as e:
+                                st.error(f"❌ Failed to import transactions: {e}")
                 except Exception as e:
-                    st.error(f"Failed to import transactions: {e}")
+                    st.error(f"Failed to read transaction file: {e}")
 
         # --- 3. Manage Snapshots ---
         with tab3:
@@ -3574,7 +3609,9 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 snapshot_labels = []
                 for idx, row in snapshots.iterrows():
                     # Check for invalid snapshots: no timestamp OR all zero values
-                    is_no_timestamp = pd.isna(row["timestamp"]) or row["timestamp"] is None or str(row["timestamp"]).lower() in ['none', 'nan', 'nat', 'null', '']
+                    # Use row.name to access the timestamp since it's now the index
+                    timestamp_value = row.name
+                    is_no_timestamp = pd.isna(timestamp_value) or timestamp_value is None or str(timestamp_value).lower() in ['none', 'nan', 'nat', 'null', '']
                     is_zero_values = (
                         row["total_value_usd"] == 0.0
                         and row["total_cost_basis_usd"] == 0.0
@@ -3585,9 +3622,9 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                     if is_no_timestamp:
                         label = f"⚠️ Invalid Snapshot (No Timestamp) | Value: ${row['total_value_usd']:,.2f}"
                     elif is_zero_values:
-                        label = f"⚠️ Invalid Snapshot (Zero Values) | {row['timestamp']} | Value: ${row['total_value_usd']:,.2f}"
+                        label = f"⚠️ Invalid Snapshot (Zero Values) | {timestamp_value} | Value: ${row['total_value_usd']:,.2f}"
                     else:
-                        label = f"{row['timestamp']} | Value: ${row['total_value_usd']:,.2f}"
+                        label = f"{timestamp_value} | Value: ${row['total_value_usd']:,.2f}"
                     snapshot_labels.append(label)
 
                 selected_idx = st.selectbox(
@@ -3599,7 +3636,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
                 st.write("### Snapshot Details")
                 display_dict = {
-                    "Timestamp": str(selected_row["timestamp"]),
+                    "Timestamp": str(selected_row.name),  # Use .name to access the index
                     "Total Value (USD)": f"${selected_row['total_value_usd']:,.2f}",
                     "Total Cost Basis (USD)": f"${selected_row['total_cost_basis_usd']:,.2f}",
                     "Unrealized P/L (USD)": f"${selected_row['unrealized_pl_usd']:,.2f}",
@@ -3618,7 +3655,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                     if st.button("Delete Selected Snapshot"):
                         try:
                             rows_deleted = tracker.db_manager.delete_snapshot(
-                                selected_row["timestamp"],
+                                selected_row.name,  # Use .name to access the timestamp index
                                 selected_row["total_value_usd"],
                                 selected_row["total_cost_basis_usd"],
                                 selected_row["unrealized_pl_usd"],
