@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 import io
 import os
 import json
@@ -41,6 +40,7 @@ from crypto_portfolio_tracker.utils import (
     calculate_fifo_realized_gains,
     calculate_fifo_cost_basis,
 )
+from crypto_portfolio_tracker.visualizations import Visualizer
 
 # Suppress pandas warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
@@ -379,7 +379,6 @@ class PortfolioDashboard:
         st.markdown("---")  # Visual separator
 
         # --- Holdings DataFrames ---
-        # The dataframes are already well-structured, so we'll keep them as is.
         # All Holdings
         st.markdown("#### 🗂️ All Holdings")
         if isinstance(metrics.get("holdings_df"), str):
@@ -454,6 +453,8 @@ class PortfolioDashboard:
         if not metrics:
             st.info("No portfolio metrics available. Please run a full sync first.")
             if st.button("🔄 Run Full Sync Now"):
+                if self.offline_mode:
+                    st.error("You're offline")
                 self.run_full_sync()
                 st.rerun()
             return
@@ -467,12 +468,22 @@ class PortfolioDashboard:
         target_allocation = self.config_manager.config.get("target_allocation", {})
         try:
             snapshots = tracker.db_manager.get_all_snapshots()
-            snapshots = snapshots[~pd.isna(snapshots["timestamp"])].copy()
             snapshots = snapshots.drop_duplicates(subset=["timestamp"])
-        except Exception:
+            
+            # Set timestamp as index for proper charting
+            if not snapshots.empty and "timestamp" in snapshots.columns:
+                # Convert timestamp to datetime first
+                snapshots['timestamp'] = pd.to_datetime(snapshots['timestamp'])
+                snapshots = snapshots.set_index("timestamp")
+                st.write("Successfully set timestamp as index")
+            else:
+                st.write("No timestamp column found or empty snapshots")
+            
+        except Exception as e:
+            st.error(f"Failed to load snapshots: {e}")
             snapshots = None
 
-        # --- Create a cleaner tab layout ---
+        # --- Tab layout ---
         tab_perf, tab_viz, tab_tax, tab_log, tab_export = st.tabs(
             [
                 "📊 Performance",
@@ -501,223 +512,115 @@ class PortfolioDashboard:
                     tracker.export_portfolio_summary(metrics, "HTML")
                     st.success("Portfolio Summary exported to HTML!")
 
-        # --- 5. Visualizations Tab ---
+        # --- 2. Visualizations Tab ---
         with tab_viz:
             st.header("📈 Visualizations")
+            
+            # Initialize visualizer
+            visualizer = Visualizer(self.config_manager.config)
+            
             chart_options = [
-                "Portfolio Allocation (Pie Chart)",
+                "Portfolio Allocation Pie",
                 "Current vs. Target Allocation",
                 "Unrealized P/L by Asset",
-                "Portfolio Value Over Time",
+                "Portfolio Value History"
             ]
-            chart_choice = st.selectbox("Select a chart to display:", chart_options)
-            st.markdown("---")
 
-            if chart_choice == "Portfolio Allocation (Pie Chart)":
+            chart_choice = st.selectbox("Select Chart Type", chart_options)
+            
+            if chart_choice == "Portfolio Allocation Pie":
+                st.subheader("Portfolio Allocation Pie")
                 if holdings_df is not None and not holdings_df.empty:
-                    pie_df = holdings_df.copy()
-                    pie_df = pie_df[pie_df["value_usd"] > 0]
-                    # Plotly chart for interactivity
-                    fig_plotly = px.pie(
-                        pie_df,
-                        names="symbol",
-                        values="value_usd",
-                        title="Portfolio Allocation by Value",
-                        hole=0.4,
-                    )
-                    st.plotly_chart(fig_plotly, use_container_width=True)
-                    # Matplotlib chart for universal PNG download
-                    fig, ax = plt.subplots()
-                    ax.pie(
-                        pie_df["value_usd"],
-                        labels=pie_df["symbol"],
-                        autopct="%1.1f%%",
-                        startangle=90,
-                    )
-                    ax.set_title("Portfolio Allocation by Value")
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", bbox_inches="tight")
-                    buf.seek(0)
-                    st.download_button(
-                        "Download Pie Chart",
-                        buf,
-                        file_name="portfolio_allocation_pie.png",
-                        mime="image/png",
-                    )
-                    plt.close(fig)
+                    # Interactive version
+                    fig_interactive = visualizer.create_interactive_allocation_pie(holdings_df)
+                    st.plotly_chart(fig_interactive, use_container_width=True)
+                    
+                    # Download buttons
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        chart_bytes = visualizer.get_chart_bytes("allocation_pie", {
+                            "holdings_df": holdings_df
+                        })
+                        if chart_bytes:
+                            st.download_button(
+                                                "Download PNG",
+                                                chart_bytes,
+                                file_name="portfolio_allocation_pie.png",
+                                                mime="image/png"
+                            )
                 else:
                     st.info("No holdings data available for allocation pie chart.")
 
             elif chart_choice == "Current vs. Target Allocation":
                 st.subheader("Current vs. Target Allocation")
-                if (
-                    holdings_df is not None
-                    and not holdings_df.empty
-                    and target_allocation
-                ):
-                    current_alloc = holdings_df.set_index("symbol")["allocation"] * 100
-                    target_alloc = pd.Series(target_allocation) * 100
-                    comparison_df = pd.DataFrame(
-                        {"Current (%)": current_alloc, "Target (%)": target_alloc}
-                    ).fillna(0)
-                    # Plotly chart for interactivity
-                    fig_plotly = go.Figure()
-                    fig_plotly.add_trace(
-                        go.Bar(
-                            x=comparison_df.index,
-                            y=comparison_df["Current (%)"],
-                            name="Current (%)",
-                            marker_color="indigo",
-                        )
+                if (holdings_df is not None and not holdings_df.empty and target_allocation):
+                    # Interactive version
+                    fig_interactive = visualizer.create_interactive_allocation_comparison(
+                        holdings_df, target_allocation
                     )
-                    fig_plotly.add_trace(
-                        go.Bar(
-                            x=comparison_df.index,
-                            y=comparison_df["Target (%)"],
-                            name="Target (%)",
-                            marker_color="orange",
-                        )
-                    )
-                    fig_plotly.update_layout(
-                        barmode="group",
-                        title="Current vs. Target Portfolio Allocation",
-                        xaxis_title="Asset",
-                        yaxis_title="Allocation (%)",
-                    )
-                    st.plotly_chart(fig_plotly, use_container_width=True)
-                    # Matplotlib chart for universal PNG download
-                    fig, ax = plt.subplots()
-                    width = 0.35
-                    x = range(len(comparison_df.index))
-                    ax.bar(
-                        [i - width / 2 for i in x],
-                        comparison_df["Current (%)"],
-                        width=width,
-                        label="Current (%)",
-                        color="indigo",
-                    )
-                    ax.bar(
-                        [i + width / 2 for i in x],
-                        comparison_df["Target (%)"],
-                        width=width,
-                        label="Target (%)",
-                        color="orange",
-                    )
-                    ax.set_xticks(list(x))
-                    ax.set_xticklabels(comparison_df.index, rotation=45)
-                    ax.set_ylabel("Allocation (%)")
-                    ax.set_title("Current vs. Target Portfolio Allocation")
-                    ax.legend()
-                    fig.tight_layout()
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", bbox_inches="tight")
-                    buf.seek(0)
-                    st.download_button(
-                        "Download Allocation Comparison",
-                        buf,
-                        file_name="allocation_comparison_bar.png",
-                        mime="image/png",
-                    )
-                    plt.close(fig)
+                    st.plotly_chart(fig_interactive, use_container_width=True)
+                    
+                    # Download buttons
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        chart_bytes = visualizer.get_chart_bytes("allocation_comparison", {
+                            "holdings_df": holdings_df,
+                            "target_allocation": target_allocation
+                        })
+                        if chart_bytes:
+                            st.download_button(
+                                                "Download PNG",
+                                                chart_bytes,
+                                                file_name="allocation_comparison.png",
+                                                mime="image/png"
+                                            )
                 else:
                     st.info("No data available for allocation comparison chart.")
 
             elif chart_choice == "Unrealized P/L by Asset":
                 st.subheader("Unrealized Profit/Loss (P/L) by Asset")
-                if (
-                    holdings_df is not None
-                    and not holdings_df.empty
-                    and "unrealized_pl_usd" in holdings_df.columns
-                ):
-                    pl_df = holdings_df.set_index("symbol")[
-                        "unrealized_pl_usd"
-                    ].sort_values()
-                    colors = ["red" if x < 0 else "green" for x in pl_df]
-                    # Plotly chart for interactivity
-                    fig_plotly = go.Figure(
-                        [go.Bar(x=pl_df.index, y=pl_df.values, marker_color=colors)]
-                    )
-                    fig_plotly.update_layout(
-                        title="Unrealized P/L by Asset",
-                        xaxis_title="Asset",
-                        yaxis_title="Unrealized P/L (USD)",
-                    )
-                    st.plotly_chart(fig_plotly, use_container_width=True)
-                    # Matplotlib chart for universal PNG download
-                    fig, ax = plt.subplots()
-                    bar_colors = ["green" if v >= 0 else "red" for v in pl_df.values]
-                    ax.bar(pl_df.index, pl_df.values, color=bar_colors)
-                    ax.set_ylabel("Unrealized P/L (USD)")
-                    ax.set_title("Unrealized P/L by Asset")
-                    ax.axhline(0, color="black", linewidth=0.8)
-                    ax.tick_params(axis="x", rotation=45)  # <-- Use this line
-                    fig.tight_layout()
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", bbox_inches="tight")
-                    buf.seek(0)
-                    st.download_button(
-                        "Download P/L Chart",
-                        buf,
-                        file_name="pl_by_asset_bar.png",
-                        mime="image/png",
-                    )
-                    plt.close(fig)
+                if (holdings_df is not None and not holdings_df.empty and 
+                    "unrealized_pl_usd" in holdings_df.columns):
+                    # Interactive version
+                    fig_interactive = visualizer.create_interactive_pl_by_asset(holdings_df)
+                    st.plotly_chart(fig_interactive, use_container_width=True)
+                    
+                    # Download buttons
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        chart_bytes = visualizer.get_chart_bytes("pl_by_asset", {
+                            "holdings_df": holdings_df
+                        })
+                        if chart_bytes:
+                            st.download_button(
+                                                "Download PNG",
+                                                chart_bytes,
+                                                file_name="pl_by_asset.png",
+                                                mime="image/png"
+                                            )
                 else:
-                    st.info("No P/L data available for this chart.")
+                    st.info("No P/L data available for chart.")
 
-            elif chart_choice == "Portfolio Value Over Time":
-                st.subheader("Portfolio Value Over Time")
+            elif chart_choice == "Portfolio Value History":
+                st.subheader("Portfolio Value History")
                 if snapshots is not None and not snapshots.empty:
-                    snapshots = snapshots.copy()
-                    snapshots["timestamp"] = pd.to_datetime(snapshots["timestamp"])
-                    snapshots = snapshots.dropna(subset=["timestamp"])
-                    snapshots = snapshots[
-                        snapshots["timestamp"].dt.year > 2000
-                    ]  # Filter out weird old dates
-
-                    # Drop duplicate timestamps, keeping the last entry for each timestamp
-                    snapshots = snapshots.sort_values("timestamp").drop_duplicates(
-                        subset=["timestamp"], keep="last"
-                    )
-
-                    # Plotly chart for interactivity
-                    fig_plotly = px.line(
-                        snapshots,
-                        x="timestamp",
-                        y="total_value_usd",
-                        title="Portfolio Value Over Time",
-                        markers=True,
-                        labels={
-                            "total_value_usd": "Total Value (USD)",
-                            "timestamp": "Date",
-                        },
-                    )
-                    fig_plotly.update_xaxes(
-                        tickformat="%Y-%m-%d",  # Format as date
-                        ticklabelmode="period",
-                    )
-                    st.plotly_chart(fig_plotly, use_container_width=True)
-                    # Matplotlib chart for universal PNG download
-                    fig, ax = plt.subplots()
-                    ax.plot(
-                        snapshots["timestamp"], snapshots["total_value_usd"], marker="o"
-                    )
-                    ax.set_xlabel("Date")
-                    ax.set_ylabel("Total Value (USD)")
-                    ax.set_title("Portfolio Value Over Time")
-                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-                    fig.autofmt_xdate()
-                    fig.tight_layout()
-                    buf = io.BytesIO()
-                    fig.savefig(buf, format="png", bbox_inches="tight")
-                    buf.seek(0)
-                    st.download_button(
-                        "Download Value History",
-                        buf,
-                        file_name="portfolio_value_history.png",
-                        mime="image/png",
-                    )
-                    plt.close(fig)
+                    # Interactive version
+                    fig_interactive = visualizer.create_interactive_value_history(snapshots)
+                    st.plotly_chart(fig_interactive, use_container_width=True)
+                    
+                    # Download buttons
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        chart_bytes = visualizer.get_chart_bytes("value_history", {
+                            "snapshots_df": snapshots
+                        })
+                        if chart_bytes:
+                            st.download_button(
+                                                "Download PNG",
+                                                chart_bytes,
+                                file_name="portfolio_value_history.png",
+                                                mime="image/png"
+                            )
                 else:
                     st.info("No snapshot data available for value history chart.")
 
@@ -921,7 +824,6 @@ class PortfolioDashboard:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed to delete: {e}")
-
     def render_market_trends(self):
         st.markdown("## 📈 Market Trends")
         export_dir = Path(
@@ -3645,21 +3547,34 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             st.header("📸 Snapshots")
             try:
                 snapshots = tracker.db_manager.get_all_snapshots()
-                snapshots = snapshots[~pd.isna(snapshots["timestamp"])].copy()
+                # Don't filter out snapshots with NaN timestamps - let the chart handle it
+                # snapshots = snapshots[~pd.isna(snapshots["timestamp"])].copy()
                 snapshots = snapshots.drop_duplicates(subset=["timestamp"])
+                
+                # Set timestamp as index for proper charting
+                if not snapshots.empty and "timestamp" in snapshots.columns:
+                    # Convert timestamp to datetime first
+                    snapshots['timestamp'] = pd.to_datetime(snapshots['timestamp'])
+                    snapshots = snapshots.set_index("timestamp")
+                    st.write("Successfully set timestamp as index")
+                else:
+                    st.write("No timestamp column found or empty snapshots")
+                
             except Exception as e:
                 st.error(f"Failed to load snapshots: {e}")
-                snapshots = pd.DataFrame()
+                snapshots = None
+            
             if snapshots.empty:
                 st.info("No snapshots found. Take a snapshot from the dashboard first.")
             else:
-                snapshots = snapshots.sort_values("timestamp")
+                # Sort by timestamp, handling None values properly
+                snapshots = snapshots.sort_values("timestamp", na_position='first')
 
-                # Include ALL snapshots (including NaT ones) so users can delete them
+                # Include ALL snapshots (including problematic ones) so users can delete them
                 snapshot_labels = []
-                for _, row in snapshots.iterrows():
+                for idx, row in snapshots.iterrows():
                     # Check for invalid snapshots: no timestamp OR all zero values
-                    is_no_timestamp = pd.isna(row["timestamp"])
+                    is_no_timestamp = pd.isna(row["timestamp"]) or row["timestamp"] is None or str(row["timestamp"]).lower() in ['none', 'nan', 'nat', 'null', '']
                     is_zero_values = (
                         row["total_value_usd"] == 0.0
                         and row["total_cost_basis_usd"] == 0.0
@@ -3846,6 +3761,30 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 )
             else:
                 st.warning("Backup directory not found.")
+
+        # Add this debug section in the snapshots tab, right after loading snapshots:
+
+        # Debug section - add this after loading snapshots
+        with st.expander("🔍 Debug: Raw Database Data"):
+            try:
+                # Get raw data from database
+                with tracker.db_manager._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT * FROM portfolio_snapshots ORDER BY timestamp")
+                    raw_rows = cursor.fetchall()
+                    
+                st.write(f"**Total snapshots in database:** {len(raw_rows)}")
+                
+                if raw_rows:
+                    st.write("**Raw database rows:**")
+                    for i, row in enumerate(raw_rows):
+                        st.write(f"Row {i+1}: timestamp='{row[0]}', value={row[1]}, cost={row[2]}, pl={row[3]}, pl_pct={row[4]}")
+                
+                st.write("**Pandas DataFrame after parsing:**")
+                st.dataframe(snapshots)
+                
+            except Exception as e:
+                st.error(f"Debug failed: {e}")
 
     def render_settings_and_status(self):
         import os

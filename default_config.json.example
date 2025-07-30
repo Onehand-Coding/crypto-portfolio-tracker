@@ -1,5 +1,4 @@
 {
-  "version": "2.1.0",
   "portfolio": {
     "minimum_trade_usd": 5.0,
     "live_trading_enabled": true,

@@ -14,7 +14,7 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
 - **Dual Accounting Perspectives**:
   - **FIFO Cost Basis**: First-In, First-Out calculation for precise unrealized P/L on a per-asset basis, essential for tax-lot accounting
   - **Net Invested Capital**: Tracks true cash-in vs. cash-out to provide an absolute "Overall P/L" on your entire portfolio
-- **Context-Aware Portfolio Summary**: The main summary view is now split into two clear sections:
+- **Context-Aware Portfolio Summary**: The main summary view is split into two clear sections:
   - **Core Portfolio Holdings**: Lists only the assets you are actively rebalancing (defined in your `target_allocation`). It includes a dedicated "Core Alloc. %" column to show you the exact numbers used by the rebalancing engine
   - **Other Holdings**: Lists all other assets in your wallet, giving you a complete financial overview without cluttering your strategic view
 - **Intelligent Data Processing**: Automatically de-duplicates P2P transaction records from the Binance API to ensure data integrity
@@ -22,11 +22,10 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
 
 ### ⚡ **Advanced Trading & Analysis**
 - **Intelligent Rebalancing Engine**:
-  - **Accurate Calculations**: Rebalancing logic is now correctly calculated based only on the value of your core portfolio assets, not the entire wallet, leading to much more accurate and logical trade suggestions
-  - **Enhanced Context**: The suggestions view now displays the total value of your core portfolio and your total available USDT (from both Spot and Earn wallets) so you can immediately assess the feasibility of trades
+  - **Accurate Calculations**: Rebalancing logic is calculated based only on the value of your core portfolio assets, not the entire wallet, leading to much more accurate and logical trade suggestions
 - **Live Trading & Rebalancing Execution**: Execute trades based on analysis (optional, disabled by default):
-  - **Granular Control**: Use `EXECUTE` for an interactive, one-by-one confirmation of each trade, or `EXECUTE ALL` to approve all suggested trades at once. The prompt is smartly hidden if there are no trades to make
-  - **Manual Trading**: A new dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
+  - **Granular Control**: Use one-by-one confirmation of each trade, or  approve all suggested trades at once.
+  - **Manual Trading**: A dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
   - **Directional Strategy Trading**: Run technical strategies live with safety checks
 - **Dual Backtesting Engines**: Test and validate strategies with two specialized backtesters:
   - **Directional Strategy Backtester**: Evaluate entry/exit signals from technical trading strategies
@@ -49,42 +48,9 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
   - Persistent disk caching reduces API calls by 90% after initial sync
   - Incremental updates process only new transactions
 - **Professional Reporting**: Generate reports in multiple formats:
-  - Excel (`.xlsx`) with embedded charts and password protection options
+  - Excel (`.xlsx`)
   - Mobile-optimized HTML (`.html`) with interactive elements
   - Complete CSV backups with separate files for different data types
-
-### 🔀 **Manual Trading (Buy/Sell)**
-Beyond automated strategies, the tracker includes a manual trading interface for executing ad-hoc orders directly from the command line. This feature is perfect for acting on unique opportunities, news events, or simply adding a new asset to your portfolio without changing your rebalancing targets.
-
-**How to Use:**
-1. Select "TRADE Manual Trade (Buy/Sell)" from the main menu
-2. Follow the interactive prompts to build your order
-3. Confirm the trade details to execute the market order on Binance
-4. You can specify the trade amount in either the coin's quantity or its USDT value
-
-**Example Workflow:**
-```
---- 🔀 TRADE Manual Trading ---
-🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.
-
-Choose action [BUY / SELL] or press Enter to return: BUY
-Enter asset symbol (e.g., BTC) or press Enter to return: RENDER
-Enter amount to BUY (e.g., '0.1 RENDER' or '100 USDT') or press Enter to return: 50 USDT
-
-==================================================
-🚨 PLEASE CONFIRM THE FOLLOWING MARKET ORDER 🚨
-   Action: BUY
-   Asset:  RENDER
-   Amount: 50.00 USDT
-==================================================
-Type 'EXECUTE' to confirm or press Enter to cancel: EXECUTE
-
-Preparing MARKET BUY for RENDER...
-🚀 PLACING LIVE ORDER...
-✅ LIVE BUY ORDER PLACED.
-
-💡 Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade.
-```
 
 ## 📁 Project Structure
 
@@ -177,7 +143,7 @@ uv sync --extra dev
 
 4. **Set Up Environment Variables:**
 ```bash
-cp config/.env.example .env
+cp .env.example .env
 ```
 
 Edit the `.env` file with your API credentials:
@@ -194,6 +160,10 @@ COINGECKO_API_KEY=your_coingecko_api_key_here
 ```
 
 5. **Configure Your Portfolio and Testnet Mode:**
+
+```bash
+cp default_config.json.example config/default_config.json
+```
 
 Edit `config/default_config.json` to set your target allocation and preferences. To enable testnet mode, set:
 ```json
@@ -319,12 +289,12 @@ uv run track-portfolio-web
 ```
 
 **Features:**
-- 📊 Real-time portfolio dashboard with interactive charts
+- 🏠 Real-time portfolio dashboard with interactive charts
 - 📈 Market trends and technical analysis with visual indicators
 - ⚖️ Rebalancing suggestions with interactive controls
 - 🔀 Manual and automated trading interfaces
 - 🧪 Backtesting with interactive parameter controls
-- 📋 Data management and export tools
+- 🗄️ Data management tools
 - ⚙️ Settings and configuration management
 - 🎨 Professional, responsive design
 
@@ -355,15 +325,15 @@ python main.py
 1. 🔄 Full Sync & Analysis
 2. 💰 Quick Portfolio Summary
 3. 📈 View Trends
-4. ⚖️ Rebalance
+4. ⚖️  Rebalance
 5. 🔀 Trade
 6. 🧪 Backtest
-7. 📋 📋 Reports
+7. 📋 Reports
 8. 📊 Charts
-9. 🗄️  Backup / Restore Database
+9. 🗄️  Database
 10. 🧹 Data Cleanup
 11. ⚙️  View Configuration
-12. 🔧 Test API Connections
+12. 🔧 Test Connections
 13. ❌ Exit
 ==================================================
 Select option (1-13):  
@@ -590,10 +560,10 @@ uv run pytest tests/test_portfolio_tracker.py
 #### API Connection Failed
 ```bash
 # Test API connections through menu
-track-portfolio  # Choose option 16 (Test API Connections)
+track-portfolio  # Choose option 12 (Test API Connections)
 
 # Check configuration
-track-portfolio  # Choose option 15 (View Configuration)
+track-portfolio  # Choose option 11 (View Configuration)
 
 # Verify environment variables
 cat .env
@@ -635,7 +605,7 @@ sqlite3 data/portfolio.db ".schema"
 sqlite3 data/testnet_portfolio.db ".schema"
 
 # Manual cleanup (use with caution)
-track-portfolio  # Choose option 13 (Clean Old Data)
+track-portfolio  # Choose option 10 (Data Cleanup)
 
 # Complete reset (will require full re-sync)
 rm data/portfolio.db data/testnet_portfolio.db
@@ -667,7 +637,7 @@ rm data/portfolio.db data/testnet_portfolio.db
 ## 📈 Performance Metrics
 
 Optimized performance characteristics:
-- **Initial Sync**: ~2-3 minutes (depending on transaction history)
+- **Initial Sync**: ~5-10 minutes (depending on transaction history)
 - **Daily Updates**: ~10-15 seconds with caching
 - **Report Generation**: ~5-10 seconds including charts
 - **API Efficiency**: 90% fewer requests after initial sync
@@ -715,7 +685,7 @@ All files are organized in the `data/` directory:
 - **HTML Reports**: `data/exports/portfolio_report_YYYYMMDD_HHMMSS.html`
 - **Data Backups**: `data/exports/transactions_backup_YYYYMMDD_HHMMSS.csv`
 - **Holdings Backups**: `data/exports/holdings_backup_YYYYMMDD_HHMMSS.csv`
-- **Charts**: `data/exports/*.png` and `data/exports/*.svg`
+- **Charts**: `data/exports/charts*.png`
 
 ### Analysis and Logs
 - **Technical Analysis**: `data/trend_reports/` (Detailed market analysis JSON files)
@@ -735,49 +705,6 @@ All files are organized in the `data/` directory:
 ### Web UI Future
 - The current web UI is built with Streamlit for rapid development and ease of use.
 - **Planned:** Upgrade to a React-based frontend for a more modern, responsive, and customizable user experience.
-
-## 🤝 Contributing
-
-We welcome contributions from the community! Here's how to get started:
-
-1. **Fork the Repository** on GitHub
-2. **Create a Feature Branch**: `git checkout -b feature-amazing-feature`
-3. **Set Up Development Environment**:
-   ```bash
-   uv venv
-   source .venv/bin/activate
-   uv sync --dev
-   ```
-4. **Make Your Changes** with clear, commented code
-5. **Run Tests**: `pytest tests/`
-6. **Format Code**: `ruff format .` and `ruff check --fix .`
-7. **Add Tests** for new functionality
-8. **Update Documentation** as needed
-9. **Submit a Pull Request** with detailed description of changes
-
-### Development Guidelines
-- Follow PEP 8 style guidelines (enforced by `ruff`)
-- Write comprehensive docstrings for new functions
-- Add unit tests for new features
-- Update configuration examples when adding new options
-- Test both testnet and production modes when applicable
-
-## 🆘 Support & Community
-
-- **Issues & Bug Reports**: [GitHub Issues](https://github.com/Onehand-Coding/crypto-portfolio-tracker/issues)
-- **Feature Requests**: [GitHub Discussions](https://github.com/Onehand-Coding/crypto-portfolio-tracker/discussions)
-- **Documentation**: [Project Wiki](https://github.com/Onehand-Coding/crypto-portfolio-tracker/wiki)
-
-### Getting Help
-1. **Check the troubleshooting section** above
-2. **Search existing issues** on GitHub
-3. **Provide detailed information** when reporting bugs:
-   - Operating system and Python version
-   - Whether using testnet or production mode
-   - Complete error messages and stack traces
-   - Steps to reproduce the issue
-   - Relevant configuration (without API keys)
-   - Log files (`logs/portfolio_tracker.log`)
 
 ## 📄 License
 

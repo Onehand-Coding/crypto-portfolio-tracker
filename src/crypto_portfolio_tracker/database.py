@@ -749,11 +749,23 @@ class DatabaseManager:
             raise DatabaseOperationError(f"Generic error during delete: {e_generic}")
 
     def get_all_snapshots(self) -> pd.DataFrame:
-        """Fetch all portfolio snapshots from the database."""
+        """Fetch all portfolio snapshots from the database with robust timestamp handling."""
         query = "SELECT * FROM portfolio_snapshots ORDER BY timestamp;"
         try:
             with self._get_connection() as conn:
-                return pd.read_sql_query(query, conn, parse_dates=["timestamp"])
+                # Get raw data without parsing dates
+                df = pd.read_sql_query(query, conn)
+                
+                # Keep timestamps as strings to avoid parsing issues
+                # This ensures all timestamps are in the same format for sorting
+                if not df.empty and 'timestamp' in df.columns:
+                    # Convert all timestamps to strings for consistent handling
+                    df['timestamp'] = df['timestamp'].astype(str)
+                    
+                    # Replace 'None', 'nan', 'NaT' with actual None for proper handling
+                    df['timestamp'] = df['timestamp'].replace(['None', 'nan', 'NaT', 'NULL'], None)
+                
+                return df
         except Exception as e:
             self.logger.error(f"Error fetching all snapshots: {e}")
             return pd.DataFrame()
@@ -767,23 +779,26 @@ class DatabaseManager:
         unrealized_pl_percent,
     ):
         """
-        Delete a specific snapshot. Handles both NULL timestamps and exact value matching.
+        Delete a specific snapshot. Handles NULL timestamps, NaN values, and exact value matching.
         Returns the number of rows deleted.
         """
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
 
-                # Convert pandas.Timestamp to string if needed
-                ts = timestamp
-                if not pd.isna(ts) and hasattr(ts, "isoformat"):
-                    ts = ts.isoformat(sep=" ", timespec="microseconds")
+                # Check if timestamp is null/NaN/NaT in various ways
+                is_null_timestamp = (
+                    pd.isna(timestamp) or 
+                    timestamp is None or 
+                    (hasattr(timestamp, 'value') and pd.isna(timestamp.value)) or
+                    str(timestamp).lower() in ['nan', 'nat', 'none', '']
+                )
 
-                if pd.isna(timestamp):
-                    # For NULL timestamps, use ROUND() for floating-point comparison
+                if is_null_timestamp:
+                    # For NULL timestamps, try multiple approaches
                     sql = """
                         DELETE FROM portfolio_snapshots
-                        WHERE timestamp IS NULL
+                        WHERE (timestamp IS NULL OR timestamp = '' OR timestamp = 'NaN' OR timestamp = 'NaT')
                         AND ROUND(total_value_usd, 2) = ROUND(?, 2)
                         AND ROUND(total_cost_basis_usd, 2) = ROUND(?, 2)
                         AND ROUND(unrealized_pl_usd, 2) = ROUND(?, 2)
@@ -796,7 +811,17 @@ class DatabaseManager:
                         unrealized_pl_percent,
                     )
                 else:
-                    # For valid timestamps, use ROUND() for floating-point comparison
+                    # For valid timestamps, handle both datetime objects and strings
+                    ts = timestamp
+                    if hasattr(ts, "isoformat"):
+                        ts = ts.isoformat(sep=" ", timespec="microseconds")
+                    elif isinstance(ts, str):
+                        # If it's already a string, use it as-is
+                        ts = ts
+                    else:
+                        # Convert to string
+                        ts = str(ts)
+                    
                     sql = """
                         DELETE FROM portfolio_snapshots
                         WHERE timestamp = ?
@@ -815,6 +840,14 @@ class DatabaseManager:
 
                 cursor.execute(sql, params)
                 rows_deleted = cursor.rowcount
+
+                # Log the deletion attempt for debugging
+                self.logger.info(
+                    f"Delete attempt: timestamp={timestamp}, "
+                    f"total_value_usd={total_value_usd}, "
+                    f"is_null_timestamp={is_null_timestamp}, "
+                    f"rows_deleted={rows_deleted}"
+                )
 
                 return rows_deleted
 

@@ -1472,10 +1472,10 @@ async def run_trading_menu(tracker: CryptoPortfolioTracker):
 
 
 async def run_main_menu(tracker: CryptoPortfolioTracker):
-    """Runs the main interactive menu loop, now fully asynchronous."""
+    """Runs the main interactive menu loop."""
     loop = asyncio.get_event_loop()
     offline_mode = getattr(tracker, "offline_mode", False)
-    unavailable_offline = {1, 2, 3, 4, 5, 6, 7, 8, 12}
+    unavailable_offline = {1, 2, 3, 4, 5, 7, 8, 12}
     try:
         while True:
             print_main_menu(offline_mode)

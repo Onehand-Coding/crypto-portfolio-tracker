@@ -1645,7 +1645,7 @@ class CryptoPortfolioTracker:
 
     def create_portfolio_charts(self, chart_type: str, metrics: Dict[str, Any]) -> bool:
         """
-        Create a specific chart based on the chart type.
+        Create a specific chart based on the chart type using unified visualizer.
         
         Args:
             chart_type: Type of chart to create ('allocation_pie', 'allocation_comparison', 'pl_by_asset', 'value_history')
@@ -1663,17 +1663,23 @@ class CryptoPortfolioTracker:
             return False
         
         try:
+            data = {
+                "holdings_df": holdings_df,
+                "snapshots_df": snapshots_df,
+                "target_allocation": target_alloc
+            }
+            
             if chart_type == "allocation_pie":
-                self.visualizer.create_portfolio_allocation_pie(holdings_df, metrics)
+                self.visualizer.create_portfolio_allocation_pie(holdings_df, metrics, save_to_disk=True)
                 return True
             elif chart_type == "allocation_comparison":
-                self.visualizer.create_allocation_comparison_bar(holdings_df, target_alloc)
+                self.visualizer.create_allocation_comparison_bar(holdings_df, target_alloc, save_to_disk=True)
                 return True
             elif chart_type == "pl_by_asset":
-                self.visualizer.create_pl_by_asset_bar(holdings_df)
+                self.visualizer.create_pl_by_asset_bar(holdings_df, save_to_disk=True)
                 return True
             elif chart_type == "value_history":
-                self.visualizer.create_portfolio_value_history(snapshots_df)
+                self.visualizer.create_portfolio_value_history(snapshots_df, save_to_disk=True)
                 return True
             else:
                 self.logger.error(f"Unknown chart type: {chart_type}")
