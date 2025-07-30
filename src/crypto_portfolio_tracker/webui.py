@@ -2477,7 +2477,9 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
     def _generate_coin_signal(self, analyzer, strategy_class, coin, param_inputs, param_specs):
         """Generate signal for a single coin."""
-        yf_ticker = f"{coin}-USD"
+        # Extract just the coin name from "BTC-USD" format
+        coin_name = coin.split('-')[0] if '-' in coin else coin
+        yf_ticker = f"{coin_name}-USD"
         analyzer.set_symbol(yf_ticker)
 
         # Convert percent params to fraction if needed
@@ -2502,7 +2504,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
         if signal in ["BUY", "SELL"]:
             return {
-                "Symbol": coin,
+                "Symbol": coin_name,  # Store just the coin name (BTC, ETH, etc.)
                 "Signal": signal,
                 "Size": size,
                 "Reason": reason,
@@ -2555,7 +2557,8 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             old_stdout = sys.stdout
             sys.stdout = mystdout = io.StringIO()
 
-            loop.run_until_complete(
+            # Get the actual result from execute_manual_trade_core
+            result = loop.run_until_complete(
                 tracker.execute_manual_trade_core(
                     trade_type, symbol, trade_ticker, usdt_to_spend, True, is_live
                 )
@@ -2564,11 +2567,17 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             sys.stdout = old_stdout
             execution_output = mystdout.getvalue()
 
-            return (f"{trade_type} {symbol}: \n"
-                    f"Preparing MARKET {trade_type} for {symbol}...\n"
-                    f"Amount: {usdt_to_spend:.2f} USDT\n"
-                    f"🚀 PLACING LIVE ORDER...\n"
-                    f"{execution_output}")
+            # Check if the trade was successful
+            if result.success:
+                return (f"{trade_type} {symbol}: \n"
+                        f"Preparing MARKET {trade_type} for {symbol}...\n"
+                        f"Amount: {usdt_to_spend:.2f} USDT\n"
+                        f"�� PLACING LIVE ORDER...\n"
+                        f"{execution_output}")
+            else:
+                # Return error message
+                error_msg = "\n".join(result.errors) if result.errors else "Unknown error occurred"
+                return f"{trade_type} {symbol}: ❌ FAILED - {error_msg}"
 
         finally:
             loop.close()
