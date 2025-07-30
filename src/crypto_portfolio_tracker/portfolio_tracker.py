@@ -1718,25 +1718,38 @@ class CryptoPortfolioTracker:
         for format in ["HTML", "Excel"]:
             self.export_portfolio_summary(metrics, format)
 
-    def export_data_backup_csv(self, data_type: str):
-        """Export transactions/holdings to CSV backup file."""
-        if data_type == "transactions":
-            self.csv_exporter.export(
+    def export_data_backup(self, data_type: str, format: str):
+        """Export transactions/holdings to CSV backup file with robust timestamp handling."""
+        if data_type == "transactions" and format == "csv":
+            return self.csv_exporter.export(
                 transactions_df=self.db_manager.get_all_transactions(),
-                holdings_df=None,
+                data_type="transactions"
             )
-        elif data_type == "holdings":
-            self.csv_exporter.export(
-                transactions_df=None,
+        elif data_type == "holdings" and format == "csv":
+            return self.csv_exporter.export(
                 holdings_df=self.db_manager.get_holdings(),
+                data_type="holdings"
+            )
+        elif data_type == "transactions" and format == "excel":
+            return self.excel_exporter.export(
+                transactions_df=self.db_manager.get_all_transactions(),
+                data_type="transactions"
+            )
+        elif data_type == "holdings" and format == "excel":
+            return self.excel_exporter.export(
+                holdings_df=self.db_manager.get_holdings(),
+                data_type="holdings"
             )
         else:
             raise ValueError(f"Unsupported data type: {data_type}")
 
-    def export_all_data_backups_csv(self):
-        """Export all data backups to CSV format."""
+    def export_all_data_backups(self):
+        """Export all data backups to all available formats with robust timestamp handling."""
+        results = {}
         for data_type in ["transactions", "holdings"]:
-            self.export_data_backup_csv(data_type)
+            results[data_type] = self.export_data_backup(data_type, "csv")
+            results[data_type] = self.export_data_backup(data_type, "excel")
+        return results
 
     def export_trend_report(self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML") -> Optional[Path]:
         """

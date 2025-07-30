@@ -1131,14 +1131,16 @@ async def export_reports_menu(tracker: CryptoPortfolioTracker):
             print("📊 PORTFOLIO SUMMARY EXPORTS")
             print("  1. Export Portfolio Summary (Excel)")
             print("  2. Export Portfolio Summary (HTML)")
-            print("  3. Export Portfolio Summary (ALL formats)")
+            print("  3. Export Portfolio Summary (Excel, HTML)")
 
             print("\n💾 DATA BACKUP EXPORTS")
             print("  4. Export Transactions Backup (CSV)")
             print("  5. Export Holdings Backup (CSV)")
-            print("  6. Export All Data Backups (CSV)")
+            print("  6. Export Transactions Backup (Excel)")
+            print("  7. Export Holdings Backup (Excel)")
+            print("  8. Export All Data Backups (CSV, Excel)")
 
-            choice = await loop.run_in_executor(None, input, "Select option (1-6) or Enter to return: ")
+            choice = await loop.run_in_executor(None, input, "Select option (1-8) or Enter to return: ")
             choice = choice.strip()
 
             if not choice:
@@ -1158,27 +1160,37 @@ async def export_reports_menu(tracker: CryptoPortfolioTracker):
                 print("✅ Portfolio Summary exported to HTML.")
 
             elif choice == "3":
-                print("Exporting Portfolio Summary to ALL formats...")
+                print("Exporting Portfolio Summary to Excel and HTML...")
                 tracker.export_portfolio_summary_all_formats(metrics)
                 print("✅ Portfolio Summary exported to Excel and HTML.")
 
             elif choice == "4":
                 print("Exporting Transactions Backup to CSV...")
-                tracker.export_data_backup_csv("transactions")
+                tracker.export_data_backup("transactions", "CSV")
                 print("✅ Transactions backup exported to CSV.")
 
             elif choice == "5":
                 print("Exporting Holdings Backup to CSV...")
-                tracker.export_data_backup_csv("holdings")
+                tracker.export_data_backup("holdings", "CSV")
                 print("✅ Holdings backup exported to CSV.")
 
             elif choice == "6":
+                print("Exporting Transactions Backup to Excel...")
+                tracker.export_data_backup("transactions", "Excel")
+                print("✅ Transactions backup exported to Excel.")
+
+            elif choice == "7":
+                print("Exporting Holdings Backup to Excel...")
+                tracker.export_data_backup("holdings", "Excel")
+                print("✅ Holdings backup exported to Excel.")
+                
+            elif choice == "8":
                 print("Exporting All Data Backups to CSV...")
-                tracker.export_all_data_backups_csv()
-                print("✅ All data backups exported to CSV.")
+                tracker.export_all_data_backups()
+                print("✅ All data backups exported to CSV and Excel.")
 
             else:
-                print("❌ Invalid option. Please select 1-6 or press Enter to return.")
+                print("❌ Invalid option. Please select 1-8 or press Enter to return.")
     except (KeyboardInterrupt, EOFError):
         print("\nReturning to main menu...")
         return

@@ -500,8 +500,6 @@ class PortfolioDashboard:
             self.display_metrics(metrics)  # Using the improved metric card layout
 
             st.markdown("---")
-            st.info("For a full, professional report, use the export buttons below.")
-
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("Export Portfolio Summary (Excel)", use_container_width=True):
@@ -824,6 +822,7 @@ class PortfolioDashboard:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed to delete: {e}")
+
     def render_market_trends(self):
         st.markdown("## 📈 Market Trends")
         export_dir = Path(
@@ -3397,14 +3396,6 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         # --- 2. Import/Export ---
         with tab2:
             st.header("⬆️ Import / ⬇️ Export Raw Data")
-            export_dir = Path(
-                self.config_manager.config.get("exports", {}).get(
-                    "path", "data/exports/"
-                )
-            )
-            data_export_dir = export_dir / "data_management"
-            data_export_dir.mkdir(parents=True, exist_ok=True)
-
             st.markdown("#### Create New Export")
 
             col1, col2 = st.columns(2)
@@ -3421,40 +3412,21 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 "🚀 Generate Export", use_container_width=True, type="primary"
             ):
                 with st.spinner(f"Generating {export_type} export..."):
-                    df = None
-                    if export_type == "Holdings":
-                        df = tracker.db_manager.get_holdings()
-                    else:  # Transactions
-                        df = tracker.db_manager.get_all_transactions()
-
-                    if df is not None and not df.empty:
-                        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        file_extension = "xlsx" if export_format == "Excel" else "csv"
-                        filename = (
-                            f"{export_type.lower()}_export_{now_str}.{file_extension}"
-                        )
-                        filepath = data_export_dir / filename
-
-                        # Create a copy and handle timezones for Excel compatibility
-                        export_df = df.copy()
-                        for col in export_df.select_dtypes(["datetimetz"]).columns:
-                            export_df[col] = export_df[col].dt.tz_localize(None)
-
-                        if export_format == "CSV":
-                            export_df.to_csv(filepath, index=False)
-                        else:  # Excel
-                            export_df.to_excel(filepath, index=False, engine="openpyxl")
-
-                        st.success(f"Successfully created export: `{filename}`")
+                    try:
+                        result = tracker.export_data_backup(export_type.lower() , export_format.lower())
+                        if result:
+                            st.success(f"Successfully created {export_type} export!")
+                        else:
+                            st.error(f"Failed to create {export_type} export.")
                         st.rerun()
-                    else:
-                        st.warning(f"No {export_type} data available to export.")
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
 
             st.markdown("---")
             st.markdown("#### My Exports")
 
             all_files = sorted(
-                list(data_export_dir.glob("*_export_*.*")),
+                list(Path(self.config_manager.config.get("exports", {}).get("path", "data/exports/")).glob("*_backup_*.*")),
                 key=lambda x: x.stat().st_mtime,
                 reverse=True,
             )
