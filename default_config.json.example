@@ -14,7 +14,6 @@
       "base_url": "https://api.coingecko.com/api/v3",
       "timeout": 30,
       "request_delay_ms": 1500,
-      "api_key": "CG-8Xh6M6TNWR4tWvYNCgNYonkg"
     },
     "binance": {
       "timeout": 60,
@@ -26,11 +25,11 @@
     }
   },
   "cache": {
-    "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/cache"
+    "path": "data/cache"
   },
   "database": {
-    "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/portfolio.db",
-    "testnet_path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/testnet_portfolio.db",
+    "path": "data/portfolio.db",
+    "testnet_path": "data/testnet_portfolio.db",
     "backup_enabled": true,
     "cleanup_days": 90
   },
@@ -38,14 +37,14 @@
     "level": "INFO",
     "file_config": {
       "enabled": true,
-      "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/logs/portfolio_tracker.log"
+      "path": "logs/portfolio_tracker.log"
     },
     "console_config": {
       "enabled": true
     }
   },
   "exports": {
-    "path": "/home/kenneth/Coding/projects/crypto-portfolio-tracker/data/exports"
+    "path": "data/exports"
   },
   "target_allocation": {
     "BTC": 0.35,

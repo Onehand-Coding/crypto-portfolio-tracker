@@ -193,6 +193,7 @@ class ConfigManager:
                 config = self.config
                 del config["main_api_keys"]
                 del config["sub_accounts"]
+                del config["apis"]["coingecko"]["api_key"]
 
                 json.dump(self.config, f, indent=2)
         except Exception as e:
