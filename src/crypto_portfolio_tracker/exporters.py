@@ -37,14 +37,14 @@ class Exporter:
         """
         if df is None or df.empty:
             return df
-        
+
         # Create a copy to avoid modifying the original
         export_df = df.copy()
-        
+
         # Handle timezone-aware datetime columns for Excel/CSV compatibility
         for col in export_df.select_dtypes(["datetimetz"]).columns:
             export_df[col] = export_df[col].dt.tz_localize(None)
-        
+
         return export_df
 
     def export(self, data: Any, **kwargs):
@@ -64,11 +64,13 @@ class ExcelExporter(Exporter):
         if not self.excel_config.get("enabled", True):
             self.logger.info("Excel export is disabled.")
             return None
-        
+
         transactions_df = kwargs.get("transactions_df")
         holdings_df = kwargs.get("holdings_df")
-        data_type = kwargs.get("data_type", "data")  # "transactions", "holdings", or "data"
-        
+        data_type = kwargs.get(
+            "data_type", "data"
+        )  # "transactions", "holdings", or "data"
+
         try:
             if data_type == "transactions" and transactions_df is not None:
                 filepath = self._get_filepath("transactions_backup", "xlsx")
@@ -76,7 +78,7 @@ class ExcelExporter(Exporter):
                 export_df.to_excel(filepath, index=False, engine="openpyxl")
                 self.logger.info(f"Transactions Excel exported to: {filepath}")
                 return filepath
-                
+
             elif data_type == "holdings" and holdings_df is not None:
                 filepath = self._get_filepath("holdings_backup", "xlsx")
                 # Apply holdings-specific cleaning
@@ -85,19 +87,19 @@ class ExcelExporter(Exporter):
                 export_df.to_excel(filepath, index=False, engine="openpyxl")
                 self.logger.info(f"Holdings Excel exported to: {filepath}")
                 return filepath
-                
+
             else:
                 # Original portfolio report logic
                 filepath = self._get_filepath("portfolio_report", "xlsx")
                 metrics = kwargs.get("metrics", {})
                 summary_df = kwargs.get("summary_df")
-                
+
                 # Clean DataFrames before export
                 if holdings_df is not None:
                     holdings_df = clean_export_df(holdings_df)
                 if summary_df is not None:
                     summary_df = clean_export_df(summary_df)
-                
+
                 with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
                     if summary_df is not None:
                         summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -116,7 +118,7 @@ class ExcelExporter(Exporter):
                     ).to_excel(writer, sheet_name="Metrics", index=False)
                 self.logger.info(f"Excel report exported successfully to: {filepath}")
                 return filepath
-                
+
         except Exception as e:
             self.logger.error(f"Error exporting to Excel: {e}")
             return None
@@ -134,11 +136,13 @@ class CsvExporter(Exporter):
         if not self.csv_config.get("enabled", True):
             self.logger.info("CSV export is disabled.")
             return None
-        
+
         transactions_df = kwargs.get("transactions_df")
         holdings_df = kwargs.get("holdings_df")
-        data_type = kwargs.get("data_type", "data")  # "transactions", "holdings", or "data"
-        
+        data_type = kwargs.get(
+            "data_type", "data"
+        )  # "transactions", "holdings", or "data"
+
         try:
             if data_type == "transactions" and transactions_df is not None:
                 filepath = self._get_filepath("transactions_backup", "csv")
@@ -146,7 +150,7 @@ class CsvExporter(Exporter):
                 export_df.to_csv(filepath, index=False)
                 self.logger.info(f"Transactions CSV exported to: {filepath}")
                 return filepath
-                
+
             elif data_type == "holdings" and holdings_df is not None:
                 filepath = self._get_filepath("holdings_backup", "csv")
                 # Apply holdings-specific cleaning
@@ -155,19 +159,19 @@ class CsvExporter(Exporter):
                 export_df.to_csv(filepath, index=False)
                 self.logger.info(f"Holdings CSV exported to: {filepath}")
                 return filepath
-                
+
             else:
                 # Original portfolio report logic
                 filepath = self._get_filepath("portfolio_report", "csv")
                 metrics = kwargs.get("metrics", {})
                 summary_df = kwargs.get("summary_df")
-                
+
                 # Clean DataFrames before export
                 if holdings_df is not None:
                     holdings_df = clean_export_df(holdings_df)
                 if summary_df is not None:
                     summary_df = clean_export_df(summary_df)
-                
+
                 # For CSV, we'll create a simple summary
                 summary_data = []
                 for key, value in metrics.items():
@@ -175,12 +179,14 @@ class CsvExporter(Exporter):
                         summary_data.append([key, "See separate file"])
                     else:
                         summary_data.append([key, str(value)])
-                
-                summary_df_export = pd.DataFrame(summary_data, columns=["Metric", "Value"])
+
+                summary_df_export = pd.DataFrame(
+                    summary_data, columns=["Metric", "Value"]
+                )
                 summary_df_export.to_csv(filepath, index=False)
                 self.logger.info(f"CSV report exported successfully to: {filepath}")
                 return filepath
-                
+
         except Exception as e:
             self.logger.error(f"Error exporting to CSV: {e}")
             return None

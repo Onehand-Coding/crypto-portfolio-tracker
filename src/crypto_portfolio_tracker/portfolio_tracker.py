@@ -1646,40 +1646,46 @@ class CryptoPortfolioTracker:
     def create_portfolio_charts(self, chart_type: str, metrics: Dict[str, Any]) -> bool:
         """
         Create a specific chart based on the chart type using unified visualizer.
-        
+
         Args:
             chart_type: Type of chart to create ('allocation_pie', 'allocation_comparison', 'pl_by_asset', 'value_history')
             metrics: Portfolio metrics dictionary
-        
+
         Returns:
             bool: True if chart was created successfully, False otherwise
         """
         holdings_df = metrics.get("holdings_df")
         snapshots_df = self.db_manager.get_all_snapshots()
         target_alloc = self.config.get("target_allocation", {})
-        
+
         if holdings_df is None:
             self.logger.warning("No holdings data for chart generation.")
             return False
-        
+
         try:
             data = {
                 "holdings_df": holdings_df,
                 "snapshots_df": snapshots_df,
-                "target_allocation": target_alloc
+                "target_allocation": target_alloc,
             }
-            
+
             if chart_type == "allocation_pie":
-                self.visualizer.create_portfolio_allocation_pie(holdings_df, metrics, save_to_disk=True)
+                self.visualizer.create_portfolio_allocation_pie(
+                    holdings_df, metrics, save_to_disk=True
+                )
                 return True
             elif chart_type == "allocation_comparison":
-                self.visualizer.create_allocation_comparison_bar(holdings_df, target_alloc, save_to_disk=True)
+                self.visualizer.create_allocation_comparison_bar(
+                    holdings_df, target_alloc, save_to_disk=True
+                )
                 return True
             elif chart_type == "pl_by_asset":
                 self.visualizer.create_pl_by_asset_bar(holdings_df, save_to_disk=True)
                 return True
             elif chart_type == "value_history":
-                self.visualizer.create_portfolio_value_history(snapshots_df, save_to_disk=True)
+                self.visualizer.create_portfolio_value_history(
+                    snapshots_df, save_to_disk=True
+                )
                 return True
             else:
                 self.logger.error(f"Unknown chart type: {chart_type}")
@@ -1710,6 +1716,10 @@ class CryptoPortfolioTracker:
             self.excel_exporter.export(
                 metrics=metrics, holdings_df=metrics.get("holdings_df")
             )
+        elif format.lower() == "csv":
+            self.csv_exporter.export(
+                metrics=metrics, holdings_df=metrics.get("holdings_df")
+            )
         else:
             raise ValueError(f"Unsupported export format: {format}")
 
@@ -1723,22 +1733,20 @@ class CryptoPortfolioTracker:
         if data_type == "transactions" and format.lower() == "csv":
             return self.csv_exporter.export(
                 transactions_df=self.db_manager.get_all_transactions(),
-                data_type="transactions"
+                data_type="transactions",
             )
         elif data_type == "holdings" and format.lower() == "csv":
             return self.csv_exporter.export(
-                holdings_df=self.db_manager.get_holdings(),
-                data_type="holdings"
+                holdings_df=self.db_manager.get_holdings(), data_type="holdings"
             )
         elif data_type == "transactions" and format.lower() == "excel":
             return self.excel_exporter.export(
                 transactions_df=self.db_manager.get_all_transactions(),
-                data_type="transactions"
+                data_type="transactions",
             )
         elif data_type == "holdings" and format.lower() == "excel":
             return self.excel_exporter.export(
-                holdings_df=self.db_manager.get_holdings(),
-                data_type="holdings"
+                holdings_df=self.db_manager.get_holdings(), data_type="holdings"
             )
         else:
             raise ValueError(f"Unsupported data type: {data_type}")
@@ -1751,54 +1759,64 @@ class CryptoPortfolioTracker:
             results[data_type] = self.export_data_backup(data_type, "excel")
         return results
 
-    def export_trend_report(self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML") -> Optional[Path]:
+    def export_trend_report(
+        self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML"
+    ) -> Optional[Path]:
         """
         Exports a trend analysis report to various formats.
-        
+
         Args:
             report: The trend analysis report dictionary from CryptoTrendAnalyzer
             timeframe: The timeframe of the analysis (e.g., 'long_term', 'swing', 'day')
             export_format: The export format ('CSV', 'JSON', 'HTML')
-        
+
         Returns:
             Path to the exported file, or None if export failed
         """
         try:
             # Get export directory from config
-            export_dir = Path(self.config.get("exports", {}).get("path", "data/exports/"))
+            export_dir = Path(
+                self.config.get("exports", {}).get("path", "data/exports/")
+            )
             export_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Create DataFrame from coin analyses for export
             coin_analyses = report.get("coin_analyses", {})
-            df_export = pd.DataFrame([
-                {
-                    "Symbol": symbol,
-                    "Price": analysis.get("current_price", 0),
-                    "Change (%)": analysis.get("price_change_pct", 0),
-                    "RSI": analysis.get("rsi", 0),
-                    "Support": analysis.get("support_level", 0),
-                    "Resistance": analysis.get("resistance_level", 0),
-                    "Active Conditions": ", ".join(analysis.get("active_conditions", [])),
-                }
-                for symbol, analysis in coin_analyses.items()
-            ])
-            
+            df_export = pd.DataFrame(
+                [
+                    {
+                        "Symbol": symbol,
+                        "Price": analysis.get("current_price", 0),
+                        "Change (%)": analysis.get("price_change_pct", 0),
+                        "RSI": analysis.get("rsi", 0),
+                        "Support": analysis.get("support_level", 0),
+                        "Resistance": analysis.get("resistance_level", 0),
+                        "Active Conditions": ", ".join(
+                            analysis.get("active_conditions", [])
+                        ),
+                    }
+                    for symbol, analysis in coin_analyses.items()
+                ]
+            )
+
             # Generate timestamp for filename
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"trend_report_{timeframe}_{timestamp}.{export_format.lower()}"
             exported_file = export_dir / filename
-            
+
             if export_format.upper() == "CSV":
                 df_export.to_csv(exported_file, index=False)
                 self.logger.info(f"Trend report exported to CSV: {exported_file}")
-                
+
             elif export_format.upper() == "JSON":
                 with open(exported_file, "w") as f:
                     json.dump(report, f, indent=2)
                 self.logger.info(f"Trend report exported to JSON: {exported_file}")
-                
+
             elif export_format.upper() == "HTML":
-                exported_file = self.html_exporter.export_trend_report(report, df_export)
+                exported_file = self.html_exporter.export_trend_report(
+                    report, df_export
+                )
                 if exported_file:
                     self.logger.info(f"Trend report exported to HTML: {exported_file}")
                 else:
@@ -1807,21 +1825,23 @@ class CryptoPortfolioTracker:
             else:
                 self.logger.error(f"Unsupported export format: {export_format}")
                 return None
-            
+
             return exported_file
-            
+
         except Exception as e:
             self.logger.error(f"Error exporting trend report: {e}", exc_info=True)
             return None
 
-    def export_trend_report_all_formats(self, report: Dict[str, Any], timeframe: str) -> Dict[str, Optional[Path]]:
+    def export_trend_report_all_formats(
+        self, report: Dict[str, Any], timeframe: str
+    ) -> Dict[str, Optional[Path]]:
         """
         Exports a trend analysis report to all available formats.
-        
+
         Args:
             report: The trend analysis report dictionary
             timeframe: The timeframe of the analysis
-        
+
         Returns:
             Dictionary mapping format to exported file path
         """
@@ -1833,7 +1853,7 @@ class CryptoPortfolioTracker:
             except Exception as e:
                 self.logger.error(f"Failed to export {format_type}: {e}")
                 results[format_type] = None
-        
+
         return results
 
     def cleanup_old_data(self):

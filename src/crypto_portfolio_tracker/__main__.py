@@ -26,6 +26,7 @@ from .exceptions import NetworkOperationError
 from .rebalancing_backtester import RebalancingBacktester
 from .strategy_backtester import StrategyBacktester
 from .crypto_trend_analyzer import CryptoTrendAnalyzer
+from . import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ def setup_logging(level_override: Optional[str] = None):
 def print_main_menu(offline_mode=False):
     """Prints the main menu options."""
     print("\n" + "=" * 50)
-    print("🚀 Crypto Portfolio Tracker v2.1.0")
+    print(f"🪙 Crypto Portfolio Tracker v{__version__}")
     if offline_mode:
         print("⚠️  OFFLINE MODE: Network features are disabled.")
     print("=" * 50)
@@ -464,9 +465,13 @@ async def view_trends(tracker: CryptoPortfolioTracker):
                     if export_choice == "y":
                         try:
                             # Export to HTML by default (most user-friendly)
-                            exported_file = tracker.export_trend_report(report, timeframe, "HTML")
+                            exported_file = tracker.export_trend_report(
+                                report, timeframe, "HTML"
+                            )
                             if exported_file:
-                                print(f"✅ Market Analysis exported to: {exported_file}")
+                                print(
+                                    f"✅ Market Analysis exported to: {exported_file}"
+                                )
                             else:
                                 print("❌ Failed to export Market Analysis")
                         except Exception as e:
@@ -528,7 +533,9 @@ async def run_manual_trade_session(tracker: CryptoPortfolioTracker):
     print("\n--- TRADE Manual Trading ---")
     is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
     if not is_live:
-        print("🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run).")
+        print(
+            "🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run)."
+        )
     else:
         print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
 
@@ -549,7 +556,9 @@ async def run_manual_trade_session(tracker: CryptoPortfolioTracker):
 
         # 2. Get Asset
         while True:
-            symbol = await loop.run_in_executor(None, input, "Enter asset symbol (e.g., BTC): ")
+            symbol = await loop.run_in_executor(
+                None, input, "Enter asset symbol (e.g., BTC): "
+            )
             symbol = symbol.upper().strip()
             if not symbol:
                 print("Returning to main menu...")
@@ -711,7 +720,9 @@ async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
                     print(f"❌ Error during trade execution: {e}")
                 return
             else:
-                print("❌ Invalid command. Please type 'EXECUTE ALL', 'EXECUTE', or press Enter to return.")
+                print(
+                    "❌ Invalid command. Please type 'EXECUTE ALL', 'EXECUTE', or press Enter to return."
+                )
     except (KeyboardInterrupt, EOFError):
         print("\nReturning to main menu...")
         return
@@ -734,7 +745,9 @@ async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
         backtester = StrategyBacktester(config=tracker.config, analyzer=analyzer)
     except Exception as e:
         logger.error(f"Failed to initialize backtesting components: {e}", exc_info=True)
-        print("❌ Failed to initialize backtesting components. Returning to main menu...")
+        print(
+            "❌ Failed to initialize backtesting components. Returning to main menu..."
+        )
         return
 
     # Strategy Selection
@@ -790,19 +803,26 @@ async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
         period = period_str if period_str else "3y"
 
         # Interval Selection - Use strategy's preferred interval
-        if hasattr(strategy_to_run, 'valid_intervals') and strategy_to_run.valid_intervals:
+        if (
+            hasattr(strategy_to_run, "valid_intervals")
+            and strategy_to_run.valid_intervals
+        ):
             # For intraday strategies, use the first valid interval
             if strategy_to_run.strategy_type == "day":
-                interval = strategy_to_run.valid_intervals[0]  # Use 1h for ORB strategies
+                interval = strategy_to_run.valid_intervals[
+                    0
+                ]  # Use 1h for ORB strategies
                 # For intraday strategies, limit period to 60 days to avoid data limitations
                 if period == "3y":
                     period = "60d"
-                    print("Note: Using 60-day period for intraday strategy (3y not available for intraday data)")
+                    print(
+                        "Note: Using 60-day period for intraday strategy (3y not available for intraday data)"
+                    )
             else:
                 interval = "1d"  # Default for swing strategies
         else:
             interval = "1d"
-        
+
         print(f"Using interval: {interval}")
         print(f"Using period: {period}")
 
@@ -817,14 +837,18 @@ async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
                 return
             if re.match(r"^[A-Z0-9\-]{3,15}$", symbol_to_test):
                 break
-            print("❌ Invalid symbol format. Please enter a valid symbol (e.g., BTC-USD).")
+            print(
+                "❌ Invalid symbol format. Please enter a valid symbol (e.g., BTC-USD)."
+            )
 
         # Initial capital
         try:
             initial_capital_str = await loop.run_in_executor(
                 None, input, "Enter initial capital (default: 10000): "
             )
-            initial_capital = float(initial_capital_str) if initial_capital_str else 10000.0
+            initial_capital = (
+                float(initial_capital_str) if initial_capital_str else 10000.0
+            )
         except ValueError:
             print("❌ Invalid input. Using default initial capital: 10000.")
             initial_capital = 10000.0
@@ -972,12 +996,16 @@ async def run_live_strategy(tracker: CryptoPortfolioTracker):
 
         # Create a temporary instance just to get the name for the print message
         temp_strategy_for_name = strategy_class(analyzer=None, **user_params)
-        print(f"\n🔄 Running '{temp_strategy_for_name.name}' to generate live signals...")
+        print(
+            f"\n🔄 Running '{temp_strategy_for_name.name}' to generate live signals..."
+        )
 
         # 3. Generate Signals for all portfolio assets
         target_coins = list(tracker.config.get("target_allocation", {}).keys())
         signals_to_execute = []
-        analyzer = CryptoTrendAnalyzer(config=tracker.config, binance_client=live_client)
+        analyzer = CryptoTrendAnalyzer(
+            config=tracker.config, binance_client=live_client
+        )
 
         for coin in target_coins:
             yf_ticker = f"{coin}-USD"
@@ -1020,14 +1048,18 @@ async def run_live_strategy(tracker: CryptoPortfolioTracker):
             return
 
         is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
-        is_testnet = tracker.config.get("apis", {}).get("binance", {}).get("testnet", False)
+        is_testnet = (
+            tracker.config.get("apis", {}).get("binance", {}).get("testnet", False)
+        )
 
         print("\n" + "=" * 80)
         print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
         print("=" * 80)
 
         if is_testnet:
-            print("🟡🟡🟡 NOTE: Connected to TESTNET. No real funds will be used. 🟡🟡🟡")
+            print(
+                "🟡🟡🟡 NOTE: Connected to TESTNET. No real funds will be used. 🟡🟡🟡"
+            )
 
         if is_live:
             print(
@@ -1073,13 +1105,13 @@ async def run_chart_selection_menu(tracker: CryptoPortfolioTracker):
         # Get portfolio metrics first
         print("🔄 Loading portfolio data...")
         metrics = await tracker.calculate_portfolio_metrics()
-        
+
         if "error" in metrics:
             print(f"❌ Could not load portfolio data: {metrics['error']}")
             return
-        
+
         print("✅ Portfolio data loaded successfully!")
-        
+
         chart_options = {
             "1": ("Portfolio Allocation Pie Chart", "allocation_pie"),
             "2": ("Current vs. Target Allocation Bar Chart", "allocation_comparison"),
@@ -1087,25 +1119,27 @@ async def run_chart_selection_menu(tracker: CryptoPortfolioTracker):
             "4": ("Portfolio Value Over Time Line Chart", "value_history"),
             "5": ("Generate ALL Charts", "all"),
         }
-        
+
         print("Available Charts:")
         for key, (description, _) in chart_options.items():
             print(f"  {key}. {description}")
-        
+
         while True:
-            choice = await loop.run_in_executor(None, input, "Select chart to generate (1-5): ")
+            choice = await loop.run_in_executor(
+                None, input, "Select chart to generate (1-5): "
+            )
             choice = choice.strip()
-            
+
             if not choice:
                 print("Returning to main menu...")
                 break
-            
+
             if choice not in chart_options:
                 print("❌ Invalid option. Please select 1-5.")
                 continue
-            
+
             description, chart_type = chart_options[choice]
-            
+
             if chart_type == "all":
                 print("\n🔄 Generating all charts...")
                 tracker.create_portfolio_charts_all(metrics)
@@ -1116,10 +1150,14 @@ async def run_chart_selection_menu(tracker: CryptoPortfolioTracker):
                 if success:
                     print(f"✅ {description} generated successfully!")
                 else:
-                    print(f"❌ Failed to generate {description}. Check logs for details.")
-            
+                    print(
+                        f"❌ Failed to generate {description}. Check logs for details."
+                    )
+
             while True:
-                continue_choice = await loop.run_in_executor(None, input, "Generate another chart? (y/n): ")
+                continue_choice = await loop.run_in_executor(
+                    None, input, "Generate another chart? (y/n): "
+                )
                 continue_choice = continue_choice.strip().lower()
                 if continue_choice in ["y", "yes"]:
                     break
@@ -1154,7 +1192,9 @@ async def export_reports_menu(tracker: CryptoPortfolioTracker):
             print("  7. Export Holdings Backup (Excel)")
             print("  8. Export All Data Backups (CSV, Excel)")
 
-            choice = await loop.run_in_executor(None, input, "Select option (1-8) or Enter to return: ")
+            choice = await loop.run_in_executor(
+                None, input, "Select option (1-8) or Enter to return: "
+            )
             choice = choice.strip()
 
             if not choice:
@@ -1197,7 +1237,7 @@ async def export_reports_menu(tracker: CryptoPortfolioTracker):
                 print("Exporting Holdings Backup to Excel...")
                 tracker.export_data_backup("holdings", "Excel")
                 print("✅ Holdings backup exported to Excel.")
-                
+
             elif choice == "8":
                 print("Exporting All Data Backups to CSV...")
                 tracker.export_all_data_backups()
@@ -1234,8 +1274,9 @@ async def _restore_database_interactive(tracker: CryptoPortfolioTracker):
     try:
         while True:
             selection_str = await loop.run_in_executor(
-                None, input,
-                f"\nEnter the number of the backup to restore (or press Enter to cancel): "
+                None,
+                input,
+                f"\nEnter the number of the backup to restore (or press Enter to cancel): ",
             )
             selection_str = selection_str.strip()
             if not selection_str:
@@ -1257,7 +1298,9 @@ async def _restore_database_interactive(tracker: CryptoPortfolioTracker):
             print(f"You are about to restore from:\n  -> {selected_backup.name}")
             print("=" * 50)
 
-            confirm = await loop.run_in_executor(None, input, "Type 'RESTORE' to proceed: ")
+            confirm = await loop.run_in_executor(
+                None, input, "Type 'RESTORE' to proceed: "
+            )
             if confirm.strip() == "RESTORE":
                 print("Restoring database...")
                 if await tracker.db_manager.restore_from_backup(selected_backup):
@@ -1285,32 +1328,24 @@ async def run_data_cleanup_menu(tracker: CryptoPortfolioTracker):
             print("\n🧹 --- Data Cleanup ---\n")
 
             # Get cleanup configuration
-            cleanup_days = tracker.config.get("database", {}).get(
-                "cleanup_days", 90
-            )
+            cleanup_days = tracker.config.get("database", {}).get("cleanup_days", 90)
             print(f"📊 Current Retention Period: {cleanup_days} days")
 
             if cleanup_days <= 0:
-                print(
-                    "⚠️  Data cleanup is currently disabled (cleanup_days = 0)"
-                )
+                print("⚠️  Data cleanup is currently disabled (cleanup_days = 0)")
                 continue
 
             # Calculate what would be deleted
             from datetime import datetime, timedelta
 
             cutoff_date = datetime.now() - timedelta(days=cleanup_days)
-            print(
-                f"📅 Cutoff Date: {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}"
-            )
+            print(f"📅 Cutoff Date: {cutoff_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
             # Get cleanup statistics
             stats = tracker.db_manager.get_cleanup_statistics()
 
             if not stats["cleanup_enabled"]:
-                print(
-                    "⚠️  Data cleanup is currently disabled (cleanup_days = 0)"
-                )
+                print("⚠️  Data cleanup is currently disabled (cleanup_days = 0)")
                 continue
 
             if "error" in stats:
@@ -1327,24 +1362,22 @@ async def run_data_cleanup_menu(tracker: CryptoPortfolioTracker):
             print(
                 f"\n📊 Old Transactions: {old_transactions:,} of {total_transactions:,} total"
             )
-            print(
-                f"📸 Old Snapshots: {old_snapshots:,} of {total_snapshots:,} total"
-            )
+            print(f"📸 Old Snapshots: {old_snapshots:,} of {total_snapshots:,} total")
 
             if old_transactions > 0 or old_snapshots > 0:
                 print("\n⚠️  WARNING: This will permanently delete:")
                 print(
                     "   - Historical transaction data older than the retention period"
                 )
-                print(
-                    "   - Portfolio snapshots older than the retention period"
-                )
+                print("   - Portfolio snapshots older than the retention period")
                 print(
                     "   - Impact: This may affect tax reporting, historical analysis, and portfolio tracking"
                 )
 
                 print("\n🔐 Confirmation Required")
-                confirm = await loop.run_in_executor(None, input, "Type 'DELETE' to confirm, or press Enter to cancel: ")
+                confirm = await loop.run_in_executor(
+                    None, input, "Type 'DELETE' to confirm, or press Enter to cancel: "
+                )
                 confirm = confirm.strip().lower()
 
                 if not confirm:
@@ -1387,7 +1420,9 @@ async def run_backtesting_menu(tracker: CryptoPortfolioTracker):
             print("1. Rebalancing Backtest")
             print("2. Strategy Backtest")
 
-            choice = await loop.run_in_executor(None, input, "Select option (1-2) or Enter to return: ")
+            choice = await loop.run_in_executor(
+                None, input, "Select option (1-2) or Enter to return: "
+            )
             choice = choice.strip()
             if not choice:
                 print("Returning to main menu...")
@@ -1397,7 +1432,9 @@ async def run_backtesting_menu(tracker: CryptoPortfolioTracker):
             elif choice == "2":
                 await run_trading_strategy_backtest(tracker)
             else:
-                print("❌ Invalid option. Please select 1 or 2, or press Enter to return.")
+                print(
+                    "❌ Invalid option. Please select 1 or 2, or press Enter to return."
+                )
     except (KeyboardInterrupt, EOFError):
         print("\nReturning to main menu...")
         return
@@ -1416,7 +1453,9 @@ async def run_backup_and_restore_menu(tracker: CryptoPortfolioTracker):
             print("1. Create a new database backup")
             print("2. Restore from an existing backup")
 
-            choice = await loop.run_in_executor(None, input, "Select an option (1-2) or Enter to return: ")
+            choice = await loop.run_in_executor(
+                None, input, "Select an option (1-2) or Enter to return: "
+            )
             choice = choice.strip()
 
             if not choice:
@@ -1434,7 +1473,9 @@ async def run_backup_and_restore_menu(tracker: CryptoPortfolioTracker):
                 await _restore_database_interactive(tracker)
                 return
             else:
-                print("❌ Invalid option. Please select 1 or 2, or press Enter to return.")
+                print(
+                    "❌ Invalid option. Please select 1 or 2, or press Enter to return."
+                )
     except (KeyboardInterrupt, EOFError):
         print("\nReturning to main menu...")
         return
@@ -1488,7 +1529,9 @@ async def run_trading_menu(tracker: CryptoPortfolioTracker):
                 await run_live_strategy(tracker)
                 return
             else:
-                print("❌ Invalid option. Please select 1 or 2, or press Enter to return.")
+                print(
+                    "❌ Invalid option. Please select 1 or 2, or press Enter to return."
+                )
         except (KeyboardInterrupt, EOFError):
             print("\nReturning to main menu...")
             return
@@ -1520,7 +1563,9 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
                         print("\n🔄 Running full sync and analysis...")
                         metrics = await tracker.run_full_sync()
                         print_portfolio_summary(tracker, metrics)
-                        save_snapshot = await loop.run_in_executor(None, input, "📸 Save snapshot? (y/n): ")
+                        save_snapshot = await loop.run_in_executor(
+                            None, input, "📸 Save snapshot? (y/n): "
+                        )
                         if save_snapshot in ["y", "yes"]:
                             tracker.save_snapshot(metrics)
                             print("✅ Snapshot saved successfully!")
@@ -1598,8 +1643,10 @@ async def amain():
         try:
             tracker = CryptoPortfolioTracker(config_manager)
         except NetworkUnavailableError:
-            resp = (
-                await loop.run_in_executor(None, input, "⚠️  Network appears unavailable. Enter offline mode? [Y/n]: ")
+            resp = await loop.run_in_executor(
+                None,
+                input,
+                "⚠️  Network appears unavailable. Enter offline mode? [Y/n]: ",
             )
             resp = resp.strip().lower()
             if resp not in ("", "y", "yes"):

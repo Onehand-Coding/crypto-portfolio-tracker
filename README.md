@@ -320,7 +320,7 @@ python main.py
 **CLI Menu Options:**
 ```
 ==================================================
-🚀 Crypto Portfolio Tracker v2.1.0
+🪙 Crypto Portfolio Tracker v2.1.0
 ==================================================
 1. 🔄 Full Sync & Analysis
 2. 💰 Quick Portfolio Summary

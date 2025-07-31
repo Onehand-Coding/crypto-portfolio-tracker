@@ -755,16 +755,18 @@ class DatabaseManager:
             with self._get_connection() as conn:
                 # Get raw data without parsing dates
                 df = pd.read_sql_query(query, conn)
-                
+
                 # Keep timestamps as strings to avoid parsing issues
                 # This ensures all timestamps are in the same format for sorting
-                if not df.empty and 'timestamp' in df.columns:
+                if not df.empty and "timestamp" in df.columns:
                     # Convert all timestamps to strings for consistent handling
-                    df['timestamp'] = df['timestamp'].astype(str)
-                    
+                    df["timestamp"] = df["timestamp"].astype(str)
+
                     # Replace 'None', 'nan', 'NaT' with actual None for proper handling
-                    df['timestamp'] = df['timestamp'].replace(['None', 'nan', 'NaT', 'NULL'], None)
-                
+                    df["timestamp"] = df["timestamp"].replace(
+                        ["None", "nan", "NaT", "NULL"], None
+                    )
+
                 return df
         except Exception as e:
             self.logger.error(f"Error fetching all snapshots: {e}")
@@ -788,10 +790,10 @@ class DatabaseManager:
 
                 # Check if timestamp is null/NaN/NaT in various ways
                 is_null_timestamp = (
-                    pd.isna(timestamp) or 
-                    timestamp is None or 
-                    (hasattr(timestamp, 'value') and pd.isna(timestamp.value)) or
-                    str(timestamp).lower() in ['nan', 'nat', 'none', '']
+                    pd.isna(timestamp)
+                    or timestamp is None
+                    or (hasattr(timestamp, "value") and pd.isna(timestamp.value))
+                    or str(timestamp).lower() in ["nan", "nat", "none", ""]
                 )
 
                 if is_null_timestamp:
@@ -821,7 +823,7 @@ class DatabaseManager:
                     else:
                         # Convert to string
                         ts = str(ts)
-                    
+
                     sql = """
                         DELETE FROM portfolio_snapshots
                         WHERE timestamp = ?
