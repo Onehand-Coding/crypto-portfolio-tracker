@@ -783,9 +783,28 @@ async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
 
         print(f"\nSelected Strategy: {strategy_to_run.name}")
 
-        # Interval Selection
-        interval = "1d"
-        # ... [interval selection logic can be added here if needed]
+        # Get period first
+        period_str = await loop.run_in_executor(
+            None, input, "Enter backtest period (e.g., '3y', '60d', default: '3y'): "
+        )
+        period = period_str if period_str else "3y"
+
+        # Interval Selection - Use strategy's preferred interval
+        if hasattr(strategy_to_run, 'valid_intervals') and strategy_to_run.valid_intervals:
+            # For intraday strategies, use the first valid interval
+            if strategy_to_run.strategy_type == "day":
+                interval = strategy_to_run.valid_intervals[0]  # Use 1h for ORB strategies
+                # For intraday strategies, limit period to 60 days to avoid data limitations
+                if period == "3y":
+                    period = "60d"
+                    print("Note: Using 60-day period for intraday strategy (3y not available for intraday data)")
+            else:
+                interval = "1d"  # Default for swing strategies
+        else:
+            interval = "1d"
+        
+        print(f"Using interval: {interval}")
+        print(f"Using period: {period}")
 
         # Coin Selection
         while True:
@@ -800,7 +819,7 @@ async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
                 break
             print("❌ Invalid symbol format. Please enter a valid symbol (e.g., BTC-USD).")
 
-        # Initial capital and period
+        # Initial capital
         try:
             initial_capital_str = await loop.run_in_executor(
                 None, input, "Enter initial capital (default: 10000): "
@@ -809,11 +828,6 @@ async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
         except ValueError:
             print("❌ Invalid input. Using default initial capital: 10000.")
             initial_capital = 10000.0
-
-        period_str = await loop.run_in_executor(
-            None, input, "Enter backtest period (e.g., '3y', '60d', default: '3y'): "
-        )
-        period = period_str if period_str else "3y"
 
         await backtester.run(
             strategy=strategy_to_run,

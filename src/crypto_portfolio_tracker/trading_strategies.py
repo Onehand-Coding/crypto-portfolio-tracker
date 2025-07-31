@@ -269,7 +269,8 @@ class OpeningRangeBreakoutStrategy(Strategy):
 
         latest_bar = data.iloc[-1]
         current_price = latest_bar["Close"]
-        current_time = pd.to_datetime(latest_bar.name, utc=True)
+        # Fix: Remove utc=True to make current_time timezone-naive
+        current_time = pd.to_datetime(latest_bar.name)
         current_day_str = str(current_time.date())
 
         if self._state.get("last_day_processed") != current_day_str:
@@ -467,7 +468,8 @@ class ORBWithVolumeFilter(Strategy):
             return "HOLD", 0.0, "No data"
 
         latest_bar = data.iloc[-1]
-        current_time = pd.to_datetime(latest_bar.name, utc=True)
+        # Fix: Remove utc=True to make current_time timezone-naive
+        current_time = pd.to_datetime(latest_bar.name)
         current_day_str = str(current_time.date())
 
         # Reset daily variables at the start of a new day

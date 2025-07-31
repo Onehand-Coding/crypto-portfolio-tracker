@@ -1702,11 +1702,11 @@ class CryptoPortfolioTracker:
 
     def export_portfolio_summary(self, metrics: Dict[str, Any], format: str):
         """Export portfolio summary to HTML/Excel format."""
-        if format == "HTML":
+        if format.lower() == "html":
             self.html_exporter.export(
                 metrics=metrics, holdings_df=metrics.get("holdings_df")
             )
-        elif format == "Excel":
+        elif format.lower() == "excel":
             self.excel_exporter.export(
                 metrics=metrics, holdings_df=metrics.get("holdings_df")
             )
@@ -1715,27 +1715,27 @@ class CryptoPortfolioTracker:
 
     def export_portfolio_summary_all_formats(self, metrics: Dict[str, Any]):
         """Export portfolio summary to all available formats."""
-        for format in ["HTML", "Excel"]:
+        for format in ["html", "excel"]:
             self.export_portfolio_summary(metrics, format)
 
     def export_data_backup(self, data_type: str, format: str):
         """Export transactions/holdings to CSV backup file with robust timestamp handling."""
-        if data_type == "transactions" and format == "csv":
+        if data_type == "transactions" and format.lower() == "csv":
             return self.csv_exporter.export(
                 transactions_df=self.db_manager.get_all_transactions(),
                 data_type="transactions"
             )
-        elif data_type == "holdings" and format == "csv":
+        elif data_type == "holdings" and format.lower() == "csv":
             return self.csv_exporter.export(
                 holdings_df=self.db_manager.get_holdings(),
                 data_type="holdings"
             )
-        elif data_type == "transactions" and format == "excel":
+        elif data_type == "transactions" and format.lower() == "excel":
             return self.excel_exporter.export(
                 transactions_df=self.db_manager.get_all_transactions(),
                 data_type="transactions"
             )
-        elif data_type == "holdings" and format == "excel":
+        elif data_type == "holdings" and format.lower() == "excel":
             return self.excel_exporter.export(
                 holdings_df=self.db_manager.get_holdings(),
                 data_type="holdings"
