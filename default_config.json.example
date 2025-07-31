@@ -13,7 +13,7 @@
     "coingecko": {
       "base_url": "https://api.coingecko.com/api/v3",
       "timeout": 30,
-      "request_delay_ms": 1500,
+      "request_delay_ms": 1500
     },
     "binance": {
       "timeout": 60,
