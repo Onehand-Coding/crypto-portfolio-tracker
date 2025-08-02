@@ -250,7 +250,7 @@ class PortfolioDashboard:
 
         # Navigation - with reduced label space
         page = st.sidebar.radio(
-            "",  # Empty label to avoid extra space
+            "Navigation",  # Empty label to avoid extra space
             [
                 "🏠 Home",
                 "📈 Market",

@@ -1,7 +1,5 @@
 import pandas as pd
-import pandas_ta as ta
 from typing import Tuple, Optional, List, Dict, Any
-import streamlit as st
 
 from .crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
