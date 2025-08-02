@@ -18,7 +18,7 @@ from diskcache import Cache
 from collections import deque
 from urllib3.util.retry import Retry
 from datetime import timezone, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable, Tuple, Union
 
 import requests
 import pandas as pd
@@ -29,6 +29,7 @@ from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException
 from requests.exceptions import ConnectionError
 import socket
+from enum import Enum
 
 from . import trading_strategies
 from .config import ConfigManager
@@ -50,10 +51,19 @@ from typing import List, Dict, Any, Optional
 
 @dataclass
 class TradeResult:
+    """Result of a trade."""
     success: bool
     messages: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     data: Dict[str, Any] = field(default_factory=dict)
+
+
+class ExecutionMode(Enum):
+    """Execution modes for rebalancing trades."""
+    AUTO = "auto"
+    BULK = "bulk"
+    INTERACTIVE = "interactive"
+    CONFIRM = "confirm"
 
 
 class CryptoPortfolioTracker:
@@ -609,12 +619,13 @@ class CryptoPortfolioTracker:
 
     def _redeem_from_earn_if_needed(
         self, asset: str, required_amount: float, is_live: bool
-    ) -> bool:
+    ) -> Tuple[bool, List[str]]:
         """
         Checks for sufficient spot balance. If needed, it finds the correct productId
         and redeems from Simple Earn only if in live mode.
-        Returns True if funds are sufficient, False otherwise.
+        Returns (success, messages) tuple for UI-agnostic operation.
         """
+        messages = []
         try:
             spot_balance_info = self.binance_client.get_asset_balance(asset=asset)
             free_spot_balance = float(spot_balance_info.get("free", 0.0))
@@ -623,7 +634,7 @@ class CryptoPortfolioTracker:
                 self.logger.info(
                     f"Sufficient {asset} balance in Spot wallet. No action needed."
                 )
-                return True
+                return True, messages
 
             shortfall = required_amount - free_spot_balance
             self.logger.warning(
@@ -634,23 +645,23 @@ class CryptoPortfolioTracker:
                 asset=asset
             )
             if not positions or not positions.get("rows"):
-                print(
+                messages.append(
                     f"❌ No active Simple Earn Flexible positions found for {asset} to redeem from."
                 )
-                return False
+                return False, messages
 
             product_to_redeem_from = positions["rows"][0]
             product_id = product_to_redeem_from.get("productId")
             available_to_redeem = float(product_to_redeem_from.get("totalAmount", 0.0))
 
             if shortfall > available_to_redeem:
-                print(
+                messages.append(
                     f"❌ Cannot redeem required amount. Need {shortfall:.8f} {asset}, but only {available_to_redeem:.8f} is available in Simple Earn."
                 )
-                return False
+                return False, messages
 
             if is_live:
-                print(
+                messages.append(
                     f"⚠️ Insufficient Spot balance. Attempting to redeem {shortfall:.8f} {asset} from product {product_id}."
                 )
                 self.logger.info(
@@ -665,44 +676,45 @@ class CryptoPortfolioTracker:
                     self.logger.info(
                         f"Successfully initiated LIVE redemption. Waiting 5 seconds..."
                     )
-                    print(
+                    messages.append(
                         f"✅ Redemption initiated for {shortfall:.8f} {asset}. Waiting 5 seconds..."
                     )
                     time.sleep(5)
-                    return True  # Assume success and let the trade proceed
+                    return True, messages  # Assume success and let the trade proceed
                 else:
                     self.logger.error(
                         f"Failed to redeem {asset} from {product_id}: {redemption_result}"
                     )
-                    print(f"❌ LIVE redemption FAILED for {asset}. See logs.")
-                    return False
+                    messages.append(f"❌ LIVE redemption FAILED for {asset}. See logs.")
+                    return False, messages
             else:
                 # In Dry Run mode, we only simulate the check.
-                print(
+                messages.append(
                     f"DRY RUN: Would redeem {shortfall:.8f} {asset} from Simple Earn product {product_id}."
                 )
                 self.logger.info(
                     f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}."
                 )
-                return True  # Return True to allow the simulated trade to continue
+                return True, messages  # Return True to allow the simulated trade to continue
 
         except BinanceAPIException as e:
             self.logger.error(
                 f"API Error during redemption process for {asset}: {e}", exc_info=True
             )
-            print(
+            messages.append(
                 f"❌ An API Error occurred when trying to process redemption for {asset}: {e.message}"
             )
-            return False
+            return False, messages
         except Exception as e:
             self.logger.error(
                 f"An unexpected error occurred during redemption check for {asset}: {e}",
                 exc_info=True,
             )
-            return False
+            return False, messages
 
-    def _execute_directional_trade(self, trade: Dict[str, Any], client: Client):
+    def _execute_directional_trade(self, trade: Dict[str, Any], client: Client) -> TradeResult:
         """Helper function to execute a single directional BUY or SELL trade."""
+        result = TradeResult(success=False)
         symbol = trade["Symbol"]
         signal = trade["Signal"]
         size = trade.get("Size", 1.0)  # Default to 100% if not provided
@@ -722,12 +734,12 @@ class CryptoPortfolioTracker:
                 trade_amount_usd = usdt_balance * size
 
                 if trade_amount_usd < min_trade_usd:
-                    print(
+                    result.messages.append(
                         f"⚠️ SKIPPING BUY for {symbol}: Calculated trade size (${trade_amount_usd:,.2f}) is below minimum of ${min_trade_usd:,.2f}."
                     )
-                    return
+                    return result
 
-                print(
+                result.messages.append(
                     f"\nPreparing MARKET BUY for ${trade_amount_usd:,.2f} of {symbol}..."
                 )
 
@@ -735,15 +747,17 @@ class CryptoPortfolioTracker:
                     order = client.order_market_buy(
                         symbol=trade_ticker, quoteOrderQty=f"{trade_amount_usd:.2f}"
                     )
-                    print(f"✅ LIVE BUY ORDER PLACED: {order}")
+                    result.messages.append(f"✅ LIVE BUY ORDER PLACED: {order}")
                     self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
+                    result.success = True
                 else:
-                    print(
+                    result.messages.append(
                         f"✅ [DRY RUN] Market BUY order for ${trade_amount_usd:,.2f} of {trade_ticker} was not placed."
                     )
                     self.logger.info(
                         f"[DRY RUN] Market BUY order for {trade_ticker} was not placed."
                     )
+                    result.success = True
 
             elif signal == "SELL":
                 asset_balance = float(
@@ -753,12 +767,12 @@ class CryptoPortfolioTracker:
                 current_price = self._get_current_prices([symbol]).get(symbol, 0)
 
                 if (trade_quantity * current_price) < min_trade_usd:
-                    print(
+                    result.messages.append(
                         f"⚠️ SKIPPING SELL for {symbol}: Position value is below minimum trade size."
                     )
-                    return
+                    return result
 
-                print(
+                result.messages.append(
                     f"\nPreparing MARKET SELL for {trade_quantity:.8f} {symbol} ({size:.0%} of holding)..."
                 )
 
@@ -766,35 +780,53 @@ class CryptoPortfolioTracker:
                     order = client.order_market_sell(
                         symbol=trade_ticker, quantity=f"{trade_quantity:.8f}"
                     )
-                    print(f"✅ LIVE SELL ORDER PLACED: {order}")
+                    result.messages.append(f"✅ LIVE SELL ORDER PLACED: {order}")
                     self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
+                    result.success = True
                 else:
-                    print(
+                    result.messages.append(
                         f"✅ [DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed."
                     )
                     self.logger.info(
                         f"[DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed."
                     )
+                    result.success = True
 
         except BinanceAPIException as e:
-            print(
+            result.messages.append(
                 f"❌ {('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}"
             )
             self.logger.error(
                 f"{('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}"
             )
+            result.errors.append(str(e))
         except Exception as e:
             self.logger.error(
                 f"An unexpected error occurred executing directional trade for {symbol}: {e}",
                 exc_info=True,
             )
-            print(f"❌ Unexpected Error for {symbol}: {e}")
+            result.messages.append(f"❌ Unexpected Error for {symbol}: {e}")
+            result.errors.append(str(e))
+
+        return result
 
     async def execute_rebalancing_trades_core(
-        self, suggestions_df, earn_balances, interactive, auto_confirm=False
+        self, suggestions_df, earn_balances,
+        confirmation_callback: Optional[Callable[[str], bool]] = None,
+        execution_mode: ExecutionMode = ExecutionMode.CONFIRM
     ) -> TradeResult:
+        """
+        Execute rebalancing trades with UI-agnostic confirmation handling.
+
+        Args:
+            suggestions_df: DataFrame with rebalancing suggestions
+            earn_balances: Dictionary of earn balances
+            confirmation_callback: Optional callback for user confirmation (UI-specific)
+            execution_mode: Mode of execution (auto, bulk, interactive, confirm)
+        """
         result = TradeResult(success=False)
         trades_executed_count = 0
+        
         if suggestions_df.empty or "Signal" not in suggestions_df.columns:
             result.messages.append("No rebalancing suggestions to execute.")
             return result
@@ -840,61 +872,77 @@ class CryptoPortfolioTracker:
         result.messages.append("=" * 80)
 
         items_to_process = []
-        if not interactive:
-            if auto_confirm:
+
+        # Handle confirmation based on execution mode
+        if execution_mode == ExecutionMode.AUTO:
+            # WebUI mode - auto confirm all trades
+            items_to_process = list(trades_to_execute.iterrows())
+            
+        elif execution_mode == ExecutionMode.BULK:
+            # Bulk execution mode - execute all trades immediately
+            result.messages.append(
+                "🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨"
+            )
+            result.messages.append(
+                trades_to_execute[
+                    ["Symbol", "Signal", "Suggested Action Detail"]
+                ].to_string(index=False)
+            )
+            result.messages.append("=" * 80)
+            self.logger.info("User confirmed bulk trade execution.")
+            items_to_process = list(trades_to_execute.iterrows())
+            
+        elif execution_mode == ExecutionMode.INTERACTIVE and confirmation_callback:
+            # Interactive mode - ask for each trade individually
+            result.messages.append("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
+            result.messages.append("")
+            
+            for _, row in trades_to_execute.iterrows():
+                symbol = row["Symbol"]
+                signal = row["Signal"]
+                
+                # Ask for individual trade approval
+                approval_prompt = f"Approve this trade for {symbol}? Type YES to confirm: "
+                approved = confirmation_callback(approval_prompt)
+                
+                if approved:
+                    self.logger.info(f"User approved trade for {symbol}.")
+                    items_to_process.append((_, row))
+                else:
+                    self.logger.info(f"User rejected trade for {symbol}.")
+                    
+        elif execution_mode == ExecutionMode.CONFIRM and confirmation_callback:
+            # Legacy confirmation mode - use callback for bulk confirmation
+            result.messages.append(
+                "🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨"
+            )
+            result.messages.append(
+                trades_to_execute[
+                    ["Symbol", "Signal", "Suggested Action Detail"]
+                ].to_string(index=False)
+            )
+            result.messages.append("=" * 80)
+            
+            # Use callback for confirmation
+            confirmed = confirmation_callback("Type EXECUTE ALL to proceed with all trades listed above: ")
+            if confirmed:
+                self.logger.info("User confirmed bulk trade execution.")
                 items_to_process = list(trades_to_execute.iterrows())
             else:
-                result.messages.append(
-                    "🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨"
-                )
-                result.messages.append(
-                    trades_to_execute[
-                        ["Symbol", "Signal", "Suggested Action Detail"]
-                    ].to_string(index=False)
-                )
-                result.messages.append("=" * 80)
-                confirm = input(
-                    "Type EXECUTE ALL to proceed with all trades listed above: "
-                )
-                if confirm == "EXECUTE ALL":
-                    self.logger.info("User confirmed bulk trade execution.")
-                    items_to_process = list(trades_to_execute.iterrows())
-                else:
-                    result.messages.append("🛑 Bulk trade execution cancelled by user.")
-                    return result
+                result.messages.append("🛑 Bulk trade execution cancelled by user.")
+                return result
         else:
-            result.messages.append(
-                "👀 Entering interactive confirmation mode. You will be prompted for each trade."
-            )
-            for index, row in trades_to_execute.iterrows():
-                result.messages.append("\n" + "-" * 80)
-                result.messages.append("🚨 PROPOSED TRADE - PLEASE REVIEW CAREFULLY 🚨")
-                result.messages.append(
-                    pd.DataFrame([row])[
-                        ["Symbol", "Signal", "Suggested Action Detail"]
-                    ].to_string(index=False)
-                )
-                try:
-                    confirm_one = (
-                        input(
-                            f"Approve this trade for {row['Symbol']}? Type YES to confirm: "
-                        )
-                        .upper()
-                        .strip()
-                    )
-                    if confirm_one == "YES":
-                        self.logger.info(f"User approved trade for {row['Symbol']}.")
-                        items_to_process.append((index, row))
-                    else:
-                        self.logger.info(f"User skipped trade for {row['Symbol']}.")
-                        result.messages.append(f"Skipping trade for {row['Symbol']}.")
-                except KeyboardInterrupt:
-                    result.messages.append("\n🛑 Trade execution cancelled by user.")
-                    return result
-            result.messages.append("=" * 80)
-            result.messages.append(
-                f"Executing {len(items_to_process)} approved trade(s)..."
-            )
+            # No confirmation mechanism available - skip execution
+            result.messages.append("🛑 No confirmation mechanism available. Skipping trade execution.")
+            return result
+
+        if not items_to_process:
+            result.messages.append("No trades were executed.")
+            return result
+
+        result.messages.append(
+            f"Executing {len(items_to_process)} approved trade(s)..."
+        )
 
         for _, row in items_to_process:
             symbol = row["Symbol"]
@@ -934,9 +982,13 @@ class CryptoPortfolioTracker:
                         )
                         continue
 
-                    if not self._redeem_from_earn_if_needed(
+                    # Use the updated _redeem_from_earn_if_needed method
+                    redemption_success, redemption_messages = self._redeem_from_earn_if_needed(
                         asset=symbol, required_amount=adjusted_quantity, is_live=is_live
-                    ):
+                    )
+                    result.messages.extend(redemption_messages)
+
+                    if not redemption_success:
                         result.messages.append(
                             f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure."
                         )
@@ -947,92 +999,86 @@ class CryptoPortfolioTracker:
                     )
                     if is_live:
                         try:
-                            result.messages.append("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_sell(
                                 symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}"
                             )
-                            result.messages.append(f"✅ LIVE SELL ORDER PLACED.")
+                            result.messages.append(f"✅ LIVE SELL ORDER PLACED: {order}")
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
-                            simulated_balances[symbol] -= adjusted_quantity
-                            simulated_balances["USDT"] += float(
-                                order.get("cummulativeQuoteQty", 0.0)
-                            )
-                            self.logger.info(
-                                f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}"
-                            )
                             trades_executed_count += 1
-                        except BinanceAPIException as e:
-                            result.errors.append(
-                                f"❌ LIVE SELL FAILED for {symbol}: {e}"
-                            )
+                            simulated_balances[symbol] -= adjusted_quantity
+                        except Exception as e:
+                            result.messages.append(f"❌ LIVE SELL FAILED for {symbol}: {e}")
                             self.logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
+                            result.errors.append(f"SELL {symbol}: {e}")
                     else:
-                        result.messages.append("✅ (Dry Run) Trade was not placed.")
+                        result.messages.append(
+                            f"✅ [DRY RUN] Market SELL order for {adjusted_quantity:.8f} {symbol} was not placed."
+                        )
+                        self.logger.info(
+                            f"[DRY RUN] Market SELL order for {adjusted_quantity:.8f} {symbol} was not placed."
+                        )
+                        trades_executed_count += 1
+                        simulated_balances[symbol] -= adjusted_quantity
 
                 elif signal == "BUY":
                     if usd_value > simulated_balances.get("USDT", 0.0):
                         result.messages.append(
-                            f"\n⚠️ SKIPPING BUY for {symbol}: Required USDT (${usd_value:,.2f}) exceeds simulated available USDT balance (${simulated_balances.get('USDT', 0.0):,.2f})."
-                        )
-                        continue
-
-                    if not self._redeem_from_earn_if_needed(
-                        asset="USDT", required_amount=usd_value, is_live=is_live
-                    ):
-                        result.messages.append(
-                            f"⚠️ SKIPPING BUY for {symbol} due to insufficient USDT after redemption check."
+                            f"⚠️ SKIPPING BUY for {symbol}: Required USDT ({usd_value:.2f}) exceeds simulated available balance ({simulated_balances.get('USDT', 0.0):.2f})."
                         )
                         continue
 
                     result.messages.append(
-                        f"\nPreparing MARKET BUY for ${usd_value:,.2f} of {symbol}..."
+                        f"\nPreparing MARKET BUY for ${usd_value:.2f} of {symbol}..."
                     )
                     if is_live:
                         try:
-                            result.messages.append("🚀 PLACING LIVE ORDER...")
                             order = self.binance_client.order_market_buy(
                                 symbol=trade_ticker, quoteOrderQty=f"{usd_value:.2f}"
                             )
-                            result.messages.append(f"✅ LIVE BUY ORDER PLACED.")
+                            result.messages.append(f"✅ LIVE BUY ORDER PLACED: {order}")
                             self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
-                            simulated_balances["USDT"] -= float(
-                                order.get("cummulativeQuoteQty", 0.0)
-                            )
-                            simulated_balances[symbol] = simulated_balances.get(
-                                symbol, 0.0
-                            ) + float(order.get("executedQty", 0.0))
-                            self.logger.info(
-                                f"Updated simulated balances: {symbol}={simulated_balances[symbol]:.8f}, USDT={simulated_balances['USDT']:.2f}"
-                            )
                             trades_executed_count += 1
-                        except BinanceAPIException as e:
-                            result.errors.append(
-                                f"❌ LIVE BUY FAILED for {symbol}: {e}"
-                            )
+                            simulated_balances["USDT"] -= usd_value
+                        except Exception as e:
+                            result.messages.append(f"❌ LIVE BUY FAILED for {symbol}: {e}")
                             self.logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
+                            result.errors.append(f"BUY {symbol}: {e}")
                     else:
-                        result.messages.append("✅ (Dry Run) Trade was not placed.")
+                        result.messages.append(
+                            f"✅ [DRY RUN] Market BUY order for ${usd_value:.2f} of {symbol} was not placed."
+                        )
+                        self.logger.info(
+                            f"[DRY RUN] Market BUY order for ${usd_value:.2f} of {symbol} was not placed."
+                        )
+                        trades_executed_count += 1
+                        simulated_balances["USDT"] -= usd_value
 
             except Exception as e:
-                self.logger.error(
-                    f"An unexpected error occurred executing trade for {symbol}: {e}",
-                    exc_info=True,
-                )
-                result.errors.append(f"❌ Unexpected Error for {symbol}: {e}")
+                result.messages.append(f"❌ Unexpected error executing trade for {symbol}: {e}")
+                self.logger.error(f"Unexpected error executing trade for {symbol}: {e}")
+                result.errors.append(f"{symbol}: {e}")
 
-        if trades_executed_count > 0:
-            result.messages.append(
-                f"\n🎉 Rebalancing execution complete. {trades_executed_count} trade(s) processed."
-            )
-        else:
-            result.messages.append("\nNo trades were executed.")
-        result.success = trades_executed_count > 0
+        result.messages.append("\n" + "=" * 80)
+        result.messages.append(f"✅ {trades_executed_count} trade(s) executed successfully!")
         result.data["trades_executed"] = trades_executed_count
+        result.success = trades_executed_count > 0
+
         return result
 
     async def execute_manual_trade_core(
         self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
     ) -> TradeResult:
+        """Manual trade execution core logic.
+        Args:
+            trade_type: "BUY" or "SELL",
+            symbol: Symbol to trade,
+            trade_ticker: "BTCUSDT" or "ETHUSDT",
+            amount: Amount to trade,
+            is_quote_qty: True or False,
+            is_live: True or False.
+        Returns:
+            TradeResult object
+        """
         result = TradeResult(success=False)
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
         try:
@@ -1857,6 +1903,7 @@ class CryptoPortfolioTracker:
         return results
 
     def cleanup_old_data(self):
+        """Clean up old portfolio data."""
         self.db_manager.cleanup_old_data()
 
     def save_snapshot(self, metrics: Dict[str, Any]):

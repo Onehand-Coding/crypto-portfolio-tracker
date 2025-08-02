@@ -9,7 +9,7 @@ import warnings
 import pandas as pd
 import streamlit as st
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
@@ -21,7 +21,7 @@ from jinja2 import Environment, FileSystemLoader
 from crypto_portfolio_tracker import trading_strategies
 from crypto_portfolio_tracker.config import ConfigManager
 from crypto_portfolio_tracker.strategy_backtester import StrategyBacktester
-from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker
+from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker, ExecutionMode
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
 from crypto_portfolio_tracker.exceptions import (
@@ -330,51 +330,7 @@ class PortfolioDashboard:
             st.info("No portfolio metrics available. Please sync first.")
             return
 
-        # --- Row 1: Top-Level Metrics ---
-        st.markdown("---")
-        st.markdown("#### 📊 Overall Performance")
-        col1, col2, col3, col4, col5 = st.columns(5)
-
-        with col1:
-            st.metric(
-                label="Total Invested Capital",
-                value=format_usd(metrics.get("total_invested_capital", 0)),
-                help="The total amount of USD you have put into the portfolio.",
-            )
-
-        with col2:
-            st.metric(
-                label="Total Cost Basis",
-                value=format_usd(metrics.get("total_cost_basis_usd", 0)),
-                help="The total amount of USD you have put into the portfolio from FIFO.",
-            )
-
-        with col3:
-            st.metric(
-                label="Total Portfolio Value",
-                value=format_usd(metrics.get("total_value_usd", 0)),
-                help="Current portfolio total value.",
-            )
-
-        with col4:
-            st.metric(
-                label="Overall P/L",
-                value=format_usd(metrics.get("overall_pl_usd", 0)),
-                delta=format_percent(metrics.get("overall_pl_percent", 0)),
-                help="Profit/Loss based on Total Invested Capital.",
-            )
-
-        with col5:
-            st.metric(
-                label="Unrealized P/L (FIFO)",
-                value=format_usd(metrics.get("unrealized_pl_usd", 0)),
-                delta=format_percent(metrics.get("unrealized_pl_percent", 0)),
-                help="Profit/Loss based on FIFO Cost Basis.",
-            )
-
-        st.markdown("---")  # Visual separator
-
-        # --- Row 2: Value Breakdown ---
+        # --- Value Breakdown ---
         st.markdown("#### 💳 Wallet & Capital Breakdown")
         col1, col2, col3, col4 = st.columns(4)
 
@@ -495,6 +451,47 @@ class PortfolioDashboard:
                 st.rerun()
             return
 
+        # --- Row 1: Top-Level Metrics ---
+        st.markdown("---")
+        col1, col2, col3, col4, col5 = st.columns(5)
+
+        with col1:
+            st.metric(
+                label="Total Invested Capital",
+                value=format_usd(metrics.get("total_invested_capital", 0)),
+                help="The total amount of USD you have put into the portfolio.",
+            )
+
+        with col2:
+            st.metric(
+                label="Total Cost Basis",
+                value=format_usd(metrics.get("total_cost_basis_usd", 0)),
+                help="The total amount of USD you have put into the portfolio from FIFO.",
+            )
+
+        with col3:
+            st.metric(
+                label="Total Portfolio Value",
+                value=format_usd(metrics.get("total_value_usd", 0)),
+                help="Current portfolio total value.",
+            )
+
+        with col4:
+            st.metric(
+                label="Overall P/L",
+                value=format_usd(metrics.get("overall_pl_usd", 0)),
+                delta=format_percent(metrics.get("overall_pl_percent", 0)),
+                help="Profit/Loss based on Total Invested Capital.",
+            )
+
+        with col5:
+            st.metric(
+                label="Unrealized P/L (FIFO)",
+                value=format_usd(metrics.get("unrealized_pl_usd", 0)),
+                delta=format_percent(metrics.get("unrealized_pl_percent", 0)),
+                help="Profit/Loss based on FIFO Cost Basis.",
+            )
+
         # --- Load data required for the home page ---
         holdings_df = (
             parse_df_string(metrics.get("holdings_df"))
@@ -519,12 +516,11 @@ class PortfolioDashboard:
             snapshots = None
 
         # --- Tab layout ---
-        tab_perf, tab_viz, tab_tax, tab_log, tab_export = st.tabs(
+        tab_perf, tab_viz, tab_acts, tab_export = st.tabs(
             [
                 "📊 Performance",
                 "📈 Visualizations",
-                "🧾 Tax Report",
-                "📝 Trade Log",
+                "📖 Activities",
                 "📂 View Exports",
             ]
         )
@@ -655,9 +651,10 @@ class PortfolioDashboard:
                 else:
                     st.info("No snapshot data available for value history chart.")
 
-        # --- 3. Tax Report Tab ---
-        with tab_tax:
-            st.header("🧾 Tax Report")
+        # --- 3. Activities Tab ---
+        with tab_acts:
+            st.header("📖 Activities")
+            st.markdown("#### 📝 Tax Report")
             db_manager = tracker.db_manager
             try:
                 tx_df = db_manager.get_all_transactions()
@@ -689,7 +686,7 @@ class PortfolioDashboard:
 
                         st.dataframe(tax_df_renamed, use_container_width=True)
 
-                        st.markdown("#### Summary of Realized Gains")
+                        st.markdown("#### 📋 Summary of Realized Gains")
                         summary = (
                             tax_df.groupby("symbol")
                             .agg(
@@ -734,9 +731,8 @@ class PortfolioDashboard:
             except Exception as e:
                 st.error(f"Failed to generate tax report: {e}")
 
-        # --- 2. Trade Log Tab ---
-        with tab_log:
-            st.header("📝 Trade Log")
+            st.markdown("---")
+            st.markdown("#### 🧾 Trade Log")
             db_manager = tracker.db_manager
             try:
                 tx_df = db_manager.get_all_transactions()
@@ -1757,8 +1753,8 @@ class PortfolioDashboard:
                             tracker.execute_rebalancing_trades_core(
                                 filtered_df,
                                 earn_balances,
-                                interactive=False,
-                                auto_confirm=True,
+                                confirmation_callback=None,  # Add this parameter
+                                execution_mode=ExecutionMode.AUTO,  # Updated to use new enum
                             )
                         )
                         output = "\n".join(result.messages)

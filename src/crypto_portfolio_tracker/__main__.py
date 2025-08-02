@@ -13,14 +13,15 @@ import argparse
 import inspect
 import pandas as pd
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable, Tuple, Union
 
 import warnings
+from enum import Enum
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 
 from . import trading_strategies
-from .portfolio_tracker import CryptoPortfolioTracker, NetworkUnavailableError
+from .portfolio_tracker import CryptoPortfolioTracker, ExecutionMode
 from .config import ConfigManager
 from .exceptions import NetworkOperationError
 from .rebalancing_backtester import RebalancingBacktester
@@ -700,11 +701,25 @@ async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
                         )
                     else:
                         print("🟡 TESTNET MODE: Skipping Earn wallet check.")
+
+                    # Create CLI confirmation callback
+                    def cli_confirmation(prompt: str) -> bool:
+                        user_input = input(prompt).upper().strip()
+                        return user_input in ["EXECUTE ALL", "EXECUTE", "YES"]
+
+                    # Determine execution mode based on user input
+                    if action == "EXECUTE ALL":
+                        execution_mode = ExecutionMode.BULK
+                    elif action == "EXECUTE":
+                        execution_mode = ExecutionMode.INTERACTIVE
+                    else:
+                        execution_mode = ExecutionMode.CONFIRM
+
                     result = await tracker.execute_rebalancing_trades_core(
                         suggestions_df,
                         earn_balances,
-                        interactive=interactive_mode,
-                        auto_confirm=True,
+                        confirmation_callback=cli_confirmation,
+                        execution_mode=execution_mode,
                     )
                     for msg in result.messages:
                         print(msg)
@@ -1083,9 +1098,14 @@ async def run_live_strategy(tracker: CryptoPortfolioTracker):
         # 5. Execute Trades
         for trade in signals_to_execute:
             try:
-                # If _execute_directional_trade is async, use await
+                # Use the updated _execute_directional_trade method
                 result = tracker._execute_directional_trade(trade, live_client)
-                # If result has messages or errors, print them here
+                # Print messages from the result
+                for msg in result.messages:
+                    print(msg)
+                if not result.success:
+                    for err in result.errors:
+                        print(f"   - {err}")
             except Exception as e:
                 print(f"❌ Error executing trade for {trade['Symbol']}: {e}")
 
