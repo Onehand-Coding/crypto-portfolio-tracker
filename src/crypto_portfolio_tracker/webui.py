@@ -255,6 +255,7 @@ class PortfolioDashboard:
                 "🏠 Home",
                 "📈 Market",
                 "⚖️ Rebalance",
+                "💸 DCA",
                 "💰 Trade",
                 "🧪 Backtest",
                 "🗄️ Database",
@@ -452,7 +453,6 @@ class PortfolioDashboard:
             return
 
         # --- Row 1: Top-Level Metrics ---
-        st.markdown("---")
         col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
@@ -1859,7 +1859,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 """)
 
     def render_trading(self):
-        # (Removed debug: session state at start of trading page render)
+        """Render trading page"""
         st.markdown("## 💰 Trading")
 
         # Initialize session state
@@ -1929,7 +1929,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         pass
 
     def _render_manual_trading(self):
-        # (Removed debug: session state at start of manual trading render)
+        """Render the manual trading page."""
         st.markdown("### 📝 Manual Trading")
         # Fetch and display available USDT balance
         usdt_balance = None
@@ -2103,6 +2103,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 st.rerun()
 
     def _confirm_manual_trade(self, trade_type, symbol, amount_input, is_quote_qty):
+        """Makes the actual trade."""
         st.session_state.trading_executing = True
         try:
             with st.spinner(f"Executing {trade_type} order for {symbol}..."):
@@ -2243,75 +2244,6 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 st.error(f"❌ Portfolio sync failed: {str(e)}")
 
         # Also update the reset flag handling in the main method
-
-    def _render_live_strategy_trading(self):
-        if st.session_state.get("strategy_reset_flag"):
-            st.session_state.strategy_signals = None
-            st.session_state.trading_results = None
-            st.session_state.strategy_reset_flag = False
-
-            # Reset widget-tied session state by removing them entirely
-            # This allows the widgets to reinitialize with default values
-            widget_keys_to_reset = [
-                "strategy_selected_coins",
-                "strategy_trade_amount_mode",
-                "strategy_trade_pct",
-                "strategy_trade_amount",
-                "strategy_account",
-                "strategy_name",
-            ]
-
-            for key in widget_keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
-
-            # Also clean up any remaining strategy parameter keys
-            keys_to_delete = []
-            for key in st.session_state.keys():
-                if key.startswith("strategy_param_"):
-                    keys_to_delete.append(key)
-
-            for key in keys_to_delete:
-                del st.session_state[key]
-
-        st.markdown("### 🤖 Live Strategy Trading")
-
-        # ... rest of the method remains the same ...
-
-    # Also update the reset flag handling in the main method
-    def _render_live_strategy_trading(self):
-        if st.session_state.get("strategy_reset_flag"):
-            st.session_state.strategy_signals = None
-            st.session_state.trading_results = None
-            st.session_state.strategy_reset_flag = False
-
-            # Reset widget-tied session state by removing them entirely
-            # This allows the widgets to reinitialize with default values
-            widget_keys_to_reset = [
-                "strategy_selected_coins",
-                "strategy_trade_amount_mode",
-                "strategy_trade_pct",
-                "strategy_trade_amount",
-                "strategy_account",
-                "strategy_name",
-            ]
-
-            for key in widget_keys_to_reset:
-                if key in st.session_state:
-                    del st.session_state[key]
-
-            # Also clean up any remaining strategy parameter keys
-            keys_to_delete = []
-            for key in st.session_state.keys():
-                if key.startswith("strategy_param_"):
-                    keys_to_delete.append(key)
-
-            for key in keys_to_delete:
-                del st.session_state[key]
-
-        st.markdown("### 🤖 Live Strategy Trading")
-
-        # ... rest of the method remains the same ...
 
     def _render_live_strategy_trading(self):
         if st.session_state.get("strategy_reset_flag"):
@@ -2563,49 +2495,6 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 key="strategy_trade_amount",
             )
             return {"mode": "fixed", "value": trade_amount}
-
-    def _generate_signals(
-        self,
-        tracker,
-        selected_account,
-        config,
-        strategy_class,
-        selected_coins,
-        param_inputs,
-        param_specs,
-    ):
-        """Generate trading signals for selected coins."""
-        st.session_state.strategy_signals = None  # Reset
-
-        with st.spinner("Generating signals..."):
-            try:
-                live_client = tracker._init_binance_client(
-                    api_key=selected_account.get("api_key")
-                    or selected_account.get("binance_key"),
-                    api_secret=selected_account.get("api_secret")
-                    or selected_account.get("binance_secret"),
-                )
-                analyzer = CryptoTrendAnalyzer(
-                    config=config, binance_client=live_client
-                )
-                signals = []
-
-                for coin in selected_coins:
-                    try:
-                        signal_data = self._generate_coin_signal(
-                            analyzer, strategy_class, coin, param_inputs, param_specs
-                        )
-                        if signal_data and signal_data["Signal"] in ["BUY", "SELL"]:
-                            signals.append(signal_data)
-                    except Exception as e:
-                        st.warning(f"Failed to generate signal for {coin}: {e}")
-                        continue
-
-                return signals
-
-            except Exception as e:
-                st.error(f"Signal generation failed: {e}")
-                return []
 
     def _generate_coin_signal(
         self, analyzer, strategy_class, coin, param_inputs, param_specs
@@ -3484,11 +3373,243 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                             "💡 Try adjusting the parameters or selecting a different time period"
                         )
 
+    def render_dca_page(self):
+        """Render the Dollar Cost Averaging (DCA) page using a state machine."""
+        st.markdown("## 💸 Dollar Cost Averaging (DCA)")
+
+        tracker = self.initialize_tracker()
+        if not tracker:
+            st.error("❌ Tracker not initialized"); return
+
+        # Initialize state
+        if 'dca_step' not in st.session_state:
+            st.session_state.dca_step = 'initial'
+
+        # --- Trading Status Banner ---
+        is_live = self.config_manager.is_live
+        is_testnet = self.config_manager.is_testnet_mode
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if is_live: st.error("🔴 LIVE TRADING ENABLED")
+            else: st.warning("🟡 DRY RUN MODE")
+        with col2:
+            if is_testnet: st.info("🧪 TESTNET CONNECTION")
+            else: st.info("🌐 MAINNET CONNECTION")
+        with col3:
+            if is_live and not is_testnet: st.error("⚠️ REAL MONEY WILL BE USED")
+            else: st.success("✅ SIMULATION MODE")
+
+        # --- Balance Display Section ---
+        st.markdown("### 💰 Available USDT")
+        usdt_balances = tracker.get_available_usdt_balance()
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric("Spot + Earn Balance", f"${usdt_balances['spot_earn']:,.2f}")
+        with col2: st.metric("Funding Balance", f"${usdt_balances['funding']:,.2f}")
+        with col3: st.metric("Total Available", f"${usdt_balances['total']:,.2f}")
+        st.markdown("---")
+
+        # --- Current Portfolio Status ---
+        st.markdown("### 📊 Current Portfolio Status")
+        
+        # Get current portfolio metrics
+        metrics = st.session_state.get("portfolio_metrics")
+        if not metrics:
+            st.info("No portfolio metrics available. Please run a full sync first.")
+            if st.button("🔄 Run Full Sync Now"):
+                self.run_full_sync()
+                st.rerun()
+            return
+        
+        # Get current portfolio data
+        core_portfolio = metrics.get("core_holdings_df", pd.DataFrame())
+        target_allocation = tracker.config.get("target_allocation", {})
+        
+        if not core_portfolio.empty:
+            st.markdown("#### 🎯 Current vs Target Allocation")
+            
+            # Create comparison table
+            comparison_data = []
+            for asset in target_allocation.keys():
+                asset_row = core_portfolio[core_portfolio["symbol"] == asset]
+                current_value = asset_row["value_usd"].iloc[0] if not asset_row.empty else 0.0
+                current_pct = asset_row["core_allocation"].iloc[0] * 100 if not asset_row.empty else 0.0
+                target_pct = target_allocation[asset] * 100
+                
+                comparison_data.append({
+                    "Asset": asset,
+                    "Current %": f"{current_pct:.2f}%",
+                    "Target %": f"{target_pct:.2f}%",
+                    "Current Value": f"${current_value:,.2f}"
+                })
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+            
+            # Store current portfolio value for DCA calculations
+            total_value = core_portfolio["value_usd"].sum()
+            st.session_state.current_portfolio_value = total_value
+        else:
+            st.info("No core portfolio data available")
+        
+        st.markdown("---")
+
+        # --- State Controller ---
+        if st.session_state.dca_step == 'initial':
+            self._render_dca_initial_view(tracker)
+        elif st.session_state.dca_step == 'confirm':
+            self._render_dca_confirmation_view(tracker)
+        elif st.session_state.dca_step == 'results':
+            self._render_dca_results_view(tracker)
+
+    def _render_dca_initial_view(self, tracker):
+        """Renders the main DCA calculator and trade selection view."""
+        st.markdown("### 🧮 DCA Calculator")
+
+        # Create a single row for the inputs
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            new_funds = st.number_input(
+                "New Fund (USDT)", 
+                min_value=0.0, 
+                step=0.01, 
+                help="Amount of USDT to invest"
+            )
+        
+        with col2:
+            dca_method = st.radio(
+                "DCA Method:", 
+                ["Proportional", "Target-Weight"], 
+                horizontal=True
+            )
+
+        is_valid, message = tracker.validate_dca_amount(new_funds)
+        if new_funds > 0:
+            if is_valid: st.success(message)
+            else: st.error(message); return
+
+        if not (new_funds > 0 and is_valid): return
+
+        with st.spinner("Calculating DCA suggestions..."):
+            suggestions = asyncio.run(tracker.get_dca_suggestions(new_funds))
+            if "error" in suggestions:
+                st.error(f"❌ {suggestions['error']}"); return
+
+        st.markdown("### 📋 DCA Trade Suggestions")
+        st.info(f"📊 Using **{dca_method}** DCA method")
+
+        trade_amounts = suggestions.get(dca_method.lower().replace("-", "_"), {})
+
+        all_trades = [{"asset": asset, "amount": amount, "method": dca_method} for asset, amount in trade_amounts.items() if abs(amount) > 0.01]
+
+        if not all_trades:
+            st.info("No actionable trades found for the selected method."); return
+
+        st.markdown("#### ✅ Select Trades to Execute")
+        selected_for_execution = []
+        for i, trade in enumerate(all_trades):
+            trade_type = "BUY" if trade['amount'] > 0 else "SELL"
+            label = f"**{trade['asset']}**: {trade_type} ${abs(trade['amount']):,.2f}"
+            if st.checkbox(label, key=f"dca_trade_{i}", value=True):
+                selected_for_execution.append(trade)
+
+        st.markdown("---")
+        if st.button("🚀 Review & Execute Selected Trades", type="primary", disabled=not selected_for_execution):
+            st.session_state.dca_trades_for_confirmation = selected_for_execution
+            st.session_state.dca_step = 'confirm'
+            st.rerun()
+
+    def _render_dca_confirmation_view(self, tracker):
+        """Renders the trade confirmation dialog."""
+        st.markdown("### 📋 Confirm DCA Execution")
+        selected_trades = st.session_state.get("dca_trades_for_confirmation", [])
+        if not selected_trades:
+            st.warning("No trades found for confirmation. Returning to calculator.")
+            st.session_state.dca_step = 'initial'
+            st.rerun(); return
+
+        validation = tracker.validate_dca_execution(selected_trades)
+        summary = validation["summary"]
+
+        st.markdown("#### 📊 Execution Summary")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total USDT Needed", f"${summary['total_needed']:,.2f}")
+        with col2:
+            st.metric("Number of Trades", summary['num_trades'])
+
+        if validation["errors"]:
+            st.error("❌ Execution Blocked:")
+            for error in validation["errors"]: st.write(f"• {error}")
+            if st.button("Back to Calculator"):
+                st.session_state.dca_step = 'initial'
+                st.rerun()
+            return
+
+        if validation["warnings"]:
+            st.warning("⚠️ Please Review:")
+            for warning in validation["warnings"]: st.write(f"• {warning}")
+
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ YES, Execute Trades", type="primary", use_container_width=True):
+                self._execute_dca_trades_now(tracker, selected_trades, validation)
+        with col2:
+            if st.button("❌ NO, Cancel", use_container_width=True):
+                st.session_state.dca_step = 'initial'
+                del st.session_state.dca_trades_for_confirmation
+                st.rerun()
+
+    def _execute_dca_trades_now(self, tracker, trades, validation):
+        """Executes the trades and transitions to the results view."""
+        try:
+            with st.spinner("Executing DCA trades..."):
+                is_live = validation.get("summary", {}).get("is_live", False)
+                method = trades[0]["method"] if trades else "proportional"
+                result = asyncio.run(tracker.execute_dca_trades(
+                    selected_trades=trades,
+                    method=method,
+                    is_live=is_live
+                ))
+            st.session_state.dca_execution_result_data = result
+        except Exception as e:
+            st.session_state.dca_execution_result_data = f"An unexpected error occurred during execution: {e}"
+
+        st.session_state.dca_step = 'results'
+        if 'dca_trades_for_confirmation' in st.session_state:
+            del st.session_state.dca_trades_for_confirmation
+        st.rerun()
+
+    def _render_dca_results_view(self, tracker):
+        """Renders the final results of the DCA execution."""
+        st.markdown("### 📊 DCA Execution Results")
+        result = st.session_state.get("dca_execution_result_data")
+
+        if isinstance(result, str): # Handle error strings
+            st.error(result)
+        elif result: # Handle TradeResult object
+            if result.success:
+                st.success("✅ DCA trades processed successfully!")
+            else:
+                st.error("❌ Some DCA trades failed.")
+
+            st.code('\n'.join(result.messages), language='text')
+            if result.errors:
+                st.error("Errors Reported:")
+                st.code('\n'.join(result.errors), language='text')
+
+        if st.button("🔄 Start New DCA Calculation"):
+            st.session_state.dca_step = 'initial'
+            if 'dca_execution_result_data' in st.session_state:
+                del st.session_state.dca_execution_result_data
+            st.rerun()
+
     def render_data_management(self):
         import pandas as pd
         from pathlib import Path
 
-        st.markdown("## 🗄️ Data Management")
+        st.markdown("## ️ Data Management")
 
         tracker = self.initialize_tracker()
         db_path = tracker.db_manager.db_path
@@ -4820,6 +4941,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             "🏠 Home": self.render_home_page,
             "📈 Market": self.render_market_trends,
             "⚖️ Rebalance": self.render_rebalancing,
+            "💸 DCA": self.render_dca_page,
             "💰 Trade": self.render_trading,
             "🧪 Backtest": self.render_backtesting,
             "🗄️ Database": self.render_data_management,
@@ -4829,7 +4951,6 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             page_mapping[selected_page]()
         else:
             st.error("Page not found")
-
 
 # Run the dashboard
 if __name__ == "__main__":

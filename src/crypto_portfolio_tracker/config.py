@@ -63,6 +63,11 @@ class ConfigManager:
         self._create_directories()
 
     @property
+    def is_live(self):
+        """Check if the application is in live mode"""
+        return self.config.get("portfolio", {}).get("live_trading_enabled", False)
+
+    @property
     def is_testnet_mode(self):
         """Check if the application is in testnet mode"""
         return self.config.get("portfolio", {}).get("testnet_mode", False)
