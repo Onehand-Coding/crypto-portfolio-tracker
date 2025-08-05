@@ -372,7 +372,7 @@ class PortfolioDashboard:
 
         # --- Holdings DataFrames ---
         # All Holdings
-        st.markdown("#### 🗂️ All Holdings")
+        st.markdown("#### 🗂️ All Holdings (Alloc. = % of spot/earn portfolio value)")
         if isinstance(metrics.get("holdings_df"), str):
             all_df = parse_df_string(metrics["holdings_df"])
         else:
@@ -1314,6 +1314,20 @@ class PortfolioDashboard:
 
         st.markdown("## ⚖️ Portfolio Rebalancing")
 
+        # --- Trading Status Banner ---
+        is_live = self.config_manager.is_live
+        is_testnet = self.config_manager.is_testnet_mode
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if is_live: st.error("🔴 LIVE TRADING ENABLED")
+            else: st.warning("🟡 LIVE TRADING DISABLED")
+        with col2:
+            if is_testnet: st.info("🧪 TESTNET CONNECTION")
+            else: st.info("🌐 MAINNET CONNECTION")
+        with col3:
+            if is_live: st.error("⚠️ ORDERS WILL BE PLACED")
+            else: st.success("✅ SIMULATION MODE")
+
         # Initialize session state
         if "rebalance_metrics" not in st.session_state:
             st.session_state.rebalance_metrics = None
@@ -1436,10 +1450,18 @@ class PortfolioDashboard:
 
         with col2:
             st.markdown("#### 💰 Available Liquidity")
-            usdt = st.session_state.rebalance_usdt
-            if usdt is not None:
-                st.metric("USDT Balance (Spot + Earn)", f"${usdt:,.2f}")
-                if usdt < 100:
+            try:
+                usdt_balance = float(
+                    self.tracker.binance_client.get_asset_balance(asset="USDT").get(
+                        "free", 0.0
+                    )
+                )
+            except Exception:
+                usdt_balance = None
+
+            if usdt_balance is not None:
+                st.metric("USDT Balance (Spot + Earn)", f"${usdt_balance:,.2f}")
+                if usdt_balance < 100:
                     st.warning("⚠️ Low USDT balance may limit rebalancing options")
             else:
                 st.success("✅ Sufficient liquidity for rebalancing")
@@ -1886,14 +1908,14 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             if is_live:
                 st.error(" LIVE TRADING ENABLED")
             else:
-                st.warning("🟡 DRY RUN MODE")
+                st.warning("🟡 LIVE TRADING DISABLED")
         with col2:
             if is_testnet:
                 st.info(" TESTNET CONNECTION")
             else:
                 st.info(" MAINNET CONNECTION")
         with col3:
-            if is_live and not is_testnet:
+            if is_live:
                 st.error("⚠️ REAL ORDERS WILL BE PLACED")
             else:
                 st.success("✅ SIMULATION MODE")
@@ -1950,57 +1972,18 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         # --- SHOW EXECUTION RESULTS IF AVAILABLE ---
         if st.session_state.trading_results:
             st.markdown("### 📋 Execution Results")
-            st.code(st.session_state.trading_results, language="text")
-            # Post-execution actions
             if "EXECUTION COMPLETED" in st.session_state.trading_results:
-                st.success("✅ **Trade executed successfully!**")
-                st.markdown("### 🔄 Portfolio Update")
-                st.info(
-                    "💡 **Recommendation**: After executing a trade, it's a good practice to sync your portfolio to see the updated balances and positions."
-                )
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(
-                        "🔄 Sync Portfolio", type="primary", use_container_width=True
-                    ):
-                        self._sync_portfolio_and_reset()
-                with col2:
-                    if st.button(
-                        "🆕 New Trade", type="secondary", use_container_width=True
-                    ):
-                        st.session_state.trading_results = None
-                        st.session_state.manual_trade_data = {}
-                        st.rerun()
-                with st.expander("💡 Post-Trade Tips", expanded=False):
-                    st.markdown("""
-                    **After executing a trade:**
-                    - 🔄 **Sync Portfolio**: Update your portfolio data to see new balances
-                    - 📊 **Check Dashboard**: Use the sidebar to navigate to Dashboard for updated portfolio metrics
-                    - 📈 **Monitor Performance**: Track how the trade affects your portfolio
-                    - 💾 **Save Snapshot**: Consider saving a portfolio snapshot for record keeping
-
-                    **Next Steps:**
-                    - Use the sidebar "🔄 Sync Portfolio" button for a full portfolio update
-                    - Visit the Dashboard to see your updated portfolio summary
-                    - Check the Rebalancing page to see if any rebalancing is now needed
-                    """)
+                st.success("✅ **Trade execution successfull!**")
+                st.code(st.session_state.trading_results, language="text")
             elif "Error" in st.session_state.trading_results:
                 st.error("❌ **Trade execution failed**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(
-                        "🔄 Try Again", type="primary", use_container_width=True
-                    ):
-                        st.session_state.trading_results = None
-                        st.session_state.manual_trade_data = {}
-                        st.rerun()
-                with col2:
-                    if st.button(
-                        "❌ Cancel", type="secondary", use_container_width=True
-                    ):
-                        st.session_state.trading_results = None
-                        st.session_state.manual_trade_data = {}
-                        st.rerun()
+                st.code(st.session_state.trading_results, language="text")
+            if st.button(
+                "🔄 Clear Results", type="secondary", use_container_width=True
+            ):
+                st.session_state.trading_results = None
+                st.session_state.manual_trade_data = {}
+                st.rerun()
             return  # <-- Prevents showing confirmation or form
 
         # --- SHOW TRADE CONFIRMATION IF DATA IS STORED ---
@@ -2009,7 +1992,6 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             return  # <-- Prevents showing the form
 
         # --- OTHERWISE, SHOW THE TRADE FORM ---
-        # (PASTE YOUR FORM CODE HERE)
         core_coins = list(
             self.config_manager.config.get("target_allocation", {}).keys()
         )
@@ -2063,8 +2045,6 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             st.warning("⚠️ Please enter an asset symbol")
         if not amount_input:
             st.warning("⚠️ Please enter an amount")
-        if symbol and amount_input:
-            st.success("✅ Form is ready for submission")
 
     def _show_trade_confirmation(self):
         """Shows the trade confirmation interface."""
@@ -2089,7 +2069,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         # Confirmation buttons
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("✅ EXECUTE TRADE", type="primary", use_container_width=True):
+            if st.button("✅ CONFIRM", type="primary", use_container_width=True):
                 self._confirm_manual_trade(
                     data["trade_type"],
                     data["symbol"],
@@ -2162,7 +2142,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                         st.session_state.trading_results = f"=== MANUAL TRADE EXECUTION COMPLETED ===\n{output}\n=== END EXECUTION LOG ==="
                     else:
                         st.session_state.trading_results = (
-                            f"❌ Trade failed:\n" + "\n".join(result.errors)
+                            f"❌ Trade Execution failed:\n" + "\n".join(result.errors)
                         )
 
                     # CRITICAL: Clear manual_trade_data so results are shown instead of confirmation
@@ -3391,12 +3371,12 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         col1, col2, col3 = st.columns(3)
         with col1:
             if is_live: st.error("🔴 LIVE TRADING ENABLED")
-            else: st.warning("🟡 DRY RUN MODE")
+            else: st.warning("🟡 LIVE TRADING DISABLED")
         with col2:
             if is_testnet: st.info("🧪 TESTNET CONNECTION")
             else: st.info("🌐 MAINNET CONNECTION")
         with col3:
-            if is_live and not is_testnet: st.error("⚠️ REAL MONEY WILL BE USED")
+            if is_live: st.error("⚠️ ORDERS WILL BE PLACED")
             else: st.success("✅ SIMULATION MODE")
 
         # --- Balance Display Section ---
@@ -3467,20 +3447,20 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
         # Create a single row for the inputs
         col1, col2 = st.columns(2)
-        
+
         with col1:
+            dca_method = st.radio(
+                "DCA Method:",
+                ["Proportional", "Target-Weight"],
+                help="Proportional: Distributes funds to maintain current portfolio proportions. Target-Weight: Distributes funds to reach your target allocation."
+            )
+        
+        with col2:
             new_funds = st.number_input(
                 "New Fund (USDT)", 
                 min_value=0.0, 
                 step=0.01, 
                 help="Amount of USDT to invest"
-            )
-        
-        with col2:
-            dca_method = st.radio(
-                "DCA Method:", 
-                ["Proportional", "Target-Weight"], 
-                horizontal=True
             )
 
         is_valid, message = tracker.validate_dca_amount(new_funds)
@@ -3514,7 +3494,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 selected_for_execution.append(trade)
 
         st.markdown("---")
-        if st.button("🚀 Review & Execute Selected Trades", type="primary", disabled=not selected_for_execution):
+        if st.button("Execute Selected Trades", type="primary", disabled=not selected_for_execution):
             st.session_state.dca_trades_for_confirmation = selected_for_execution
             st.session_state.dca_step = 'confirm'
             st.rerun()
@@ -3553,10 +3533,10 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("✅ YES, Execute Trades", type="primary", use_container_width=True):
+            if st.button("✅ CONFIRM", type="primary", use_container_width=True):
                 self._execute_dca_trades_now(tracker, selected_trades, validation)
         with col2:
-            if st.button("❌ NO, Cancel", use_container_width=True):
+            if st.button("❌CANCEL", use_container_width=True):
                 st.session_state.dca_step = 'initial'
                 del st.session_state.dca_trades_for_confirmation
                 st.rerun()
@@ -3586,6 +3566,12 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         st.markdown("### 📊 DCA Execution Results")
         result = st.session_state.get("dca_execution_result_data")
 
+        # If no result data exists, reset to initial state
+        if not result:
+            st.session_state.dca_step = 'initial'
+            st.rerun()
+            return
+
         if isinstance(result, str): # Handle error strings
             st.error(result)
         elif result: # Handle TradeResult object
@@ -3599,10 +3585,13 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 st.error("Errors Reported:")
                 st.code('\n'.join(result.errors), language='text')
 
-        if st.button("🔄 Start New DCA Calculation"):
+        if st.button("🔄 Clear Results"):
+            # Clear all DCA-related session state
             st.session_state.dca_step = 'initial'
             if 'dca_execution_result_data' in st.session_state:
                 del st.session_state.dca_execution_result_data
+            if 'dca_trades_for_confirmation' in st.session_state:
+                del st.session_state.dca_trades_for_confirmation
             st.rerun()
 
     def render_data_management(self):

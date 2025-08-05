@@ -1080,7 +1080,7 @@ class CryptoPortfolioTracker:
             TradeResult object
         """
         result = TradeResult(success=False)
-        min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
+        min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 5.0)
         try:
             if trade_type == "BUY":
                 usdt_to_spend = amount if is_quote_qty else 0
@@ -1138,7 +1138,7 @@ class CryptoPortfolioTracker:
                     result.messages.append(f"(Dry Run) SELL Trade was not placed.")
                 result.success = True
             result.messages.append(
-                "Recommendation: Run 'Full Sync & Analysis' (Option 1) to update your portfolio with this trade."
+                "Recommendation: Run 'Full Sync & Analysis' to update your portfolio with this trade."
             )
         except Exception as e:
             result.errors.append(f"Unexpected Error for {symbol}: {e}")
