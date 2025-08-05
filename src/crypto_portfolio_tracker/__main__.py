@@ -202,16 +202,45 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
         f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}"
     )
 
+    # Print All Holdings Table
+    holdings_df = metrics.get("holdings_df")
+    if holdings_df is not None and not holdings_df.empty:
+        print(
+            "\n"
+            + "--- ️ All Holdings (Alloc. = % of spot/earn portfolio value) ---".center(
+                LINE_WIDTH
+            )
+        )
+        header = f"{'Asset':<11} {'Total Qty':<15} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Alloc.':<10}"
+        print(header)
+        print("-" * len(header))
+        for _, row in holdings_df.sort_values(
+            by="value_usd", ascending=False
+        ).iterrows():
+            row_pl_usd = row.get("unrealized_pl_usd", 0)
+            row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
+            alloc_str = f"{row.get('allocation', 0) * 100:.2f}%"
+            print(
+                f"{row.get('symbol', 'N/A'):<11} "
+                f"{row.get('total_quantity', 0):<15,.8g} "
+                f"{row.get('spot_quantity', 0):<15,.8g} "
+                f"{row.get('earn_quantity', 0):<15,.8g} "
+                f"${row.get('value_usd', 0):<14,.2f} "
+                f"${row.get('cost_basis_total', 0):<14,.2f} "
+                f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
+                f"{alloc_str:<10}"
+            )
+
     # Print Core Holdings Table
     core_holdings_df = metrics.get("core_holdings_df")
     if core_holdings_df is not None and not core_holdings_df.empty:
         print(
             "\n"
-            + "--- 🎯 Core Portfolio Holdings (Used for Rebalancing) ---".center(
+            + "---  Core Holdings (Alloc. = % of core portfolio value) ---".center(
                 LINE_WIDTH
             )
         )
-        header = f"{'Asset':<11} {'Total Qty':<15} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Core Alloc.':<15} {'Total Alloc.':<10}"
+        header = f"{'Asset':<11} {'Total Qty':<15} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Alloc.':<10}"
         print(header)
         print("-" * len(header))
         for _, row in core_holdings_df.sort_values(
@@ -220,7 +249,6 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
             row_pl_usd = row.get("unrealized_pl_usd", 0)
             row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
             core_alloc_str = f"{row.get('core_allocation', 0) * 100:.2f}%"
-            total_alloc_str = f"{row.get('allocation', 0) * 100:.2f}%"
             print(
                 f"{row.get('symbol', 'N/A'):<11} "
                 f"{row.get('total_quantity', 0):<15,.8g} "
@@ -229,15 +257,14 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
                 f"${row.get('value_usd', 0):<14,.2f} "
                 f"${row.get('cost_basis_total', 0):<14,.2f} "
                 f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
-                f"{core_alloc_str:<15} "
-                f"{total_alloc_str:<10}"
+                f"{core_alloc_str:<10}"
             )
 
     # Print Other Holdings Table
     other_holdings_df = metrics.get("other_holdings_df")
     if other_holdings_df is not None and not other_holdings_df.empty:
-        print("\n" + "--- 📈 Other Holdings ---".center(LINE_WIDTH))
-        header = f"{'Asset':<11} {'Total Qty':<15} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Total Alloc.':<10}"
+        print("\n" + "--- 📈 Other Holdings (Alloc. = % of spot/earn portfolio value) ---".center(LINE_WIDTH))
+        header = f"{'Asset':<11} {'Total Qty':<15} {'Spot Qty':<15} {'Earn Qty':<15} {'Value (USD)':<15} {'Cost Basis':<15} {'P/L (USD)':<15} {'Alloc.':<10}"
         print(header)
         print("-" * len(header))
         for _, row in other_holdings_df.sort_values(
@@ -245,7 +272,7 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
         ).iterrows():
             row_pl_usd = row.get("unrealized_pl_usd", 0)
             row_color_start = "\033[92m" if row_pl_usd >= 0 else "\033[91m"
-            total_alloc_str = f"{row.get('allocation', 0) * 100:.2f}%"
+            alloc_str = f"{row.get('allocation', 0) * 100:.2f}%"
             print(
                 f"{row.get('symbol', 'N/A'):<11} "
                 f"{row.get('total_quantity', 0):<15,.8g} "
@@ -254,9 +281,9 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
                 f"${row.get('value_usd', 0):<14,.2f} "
                 f"${row.get('cost_basis_total', 0):<14,.2f} "
                 f"{row_color_start}${row_pl_usd:<14,.2f}{color_end} "
-                f"{total_alloc_str:<10}"
+                f"{alloc_str:<10}"
             )
-        print("=" * len(header))
+    print("=" * len(header))
 
     # --- Print Individual Wallet Summaries ---
     futures_balances = metrics.get("futures_balances")

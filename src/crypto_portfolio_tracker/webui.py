@@ -400,7 +400,7 @@ class PortfolioDashboard:
             st.info("No core holdings data available.")
 
         # Other Holdings
-        st.markdown("#### 📈 Other Holdings (Alloc. = % of total portfolio value)")
+        st.markdown("#### 📈 Other Holdings (Alloc. = % of spot/earn portfolio value)")
         if isinstance(metrics.get("other_holdings_df"), str):
             other_df = parse_df_string(metrics["other_holdings_df"])
         else:

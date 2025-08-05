@@ -14,6 +14,10 @@ from binance.client import Client
 
 from .config import ConfigManager
 
+# Suppress yfinance verbose error logging
+logging.getLogger("yfinance").setLevel(logging.WARNING)
+logging.getLogger("yfinance").propagate = False
+
 
 class TrendCondition(Enum):
     GOLDEN_CROSS = "Golden Cross"

@@ -1310,8 +1310,10 @@ class CryptoPortfolioTracker:
         total_portfolio_value = spot_earn_value + futures_value + funding_value
 
         # 5. Consolidate Metrics
-        if total_portfolio_value > 0:
-            holdings_df["allocation"] = holdings_df["value_usd"] / total_portfolio_value
+        # Calculate allocation based on spot/earn value only, not total portfolio value
+        spot_earn_total = holdings_df["value_usd"].sum()
+        if spot_earn_total > 0:
+            holdings_df["allocation"] = holdings_df["value_usd"] / spot_earn_total
         else:
             holdings_df["allocation"] = 0
 
