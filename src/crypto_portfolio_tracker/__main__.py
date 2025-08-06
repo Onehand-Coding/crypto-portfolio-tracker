@@ -148,7 +148,7 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
     """Prints a consolidated summary of the portfolio, including a breakdown of all wallet values."""
     LINE_WIDTH = 115
     print("\n" + "=" * LINE_WIDTH)
-    print("📊 CONSOLIDATED PORTFOLIO SUMMARY")
+    print("📊 PORTFOLIO SUMMARY".center(LINE_WIDTH))
     print("=" * LINE_WIDTH)
 
     if "error" in metrics:
