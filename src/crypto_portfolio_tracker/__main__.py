@@ -94,15 +94,16 @@ def print_main_menu(offline_mode=False):
     print("2. 💰 Quick Portfolio Summary")
     print("3. 📈 View Trends")
     print("4. ⚖️  Rebalance")
-    print("5. 🔀 Trade")
-    print("6. 🧪 Backtest")
-    print("7. 📋 Reports")
-    print("8. 📊 Charts")
-    print("9. 🗄️  Database")
-    print("10. 🧹 Data Cleanup")
-    print("11. ⚙️  View Configuration")
-    print("12. 🔧 Test Connections")
-    print("13. ❌ Exit")
+    print("5. 💸 Dollar Cost Averaging (DCA)")
+    print("6. 🔀 Trade")
+    print("7. 🧪 Backtest")
+    print("8. 📋 Reports")
+    print("9. 📊 Charts")
+    print("10. 🗄️  Database")
+    print("11. 🧹 Data Cleanup")
+    print("12. ⚙️  View Configuration")
+    print("13. 🔧 Test Connections")
+    print("14. ❌ Exit")
     print("=" * 50)
 
 
@@ -661,7 +662,26 @@ async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
     to execute them all at once or one-by-one.
     """
     logger.info("Starting automated rebalancing process...")
+    
+    # Check trading status
+    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
+    is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
+    
     print("\n--- ⚖️ Automated Rebalancing ---")
+    
+    # Display trading status banner
+    if not is_live:
+        print("🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run).")
+    else:
+        print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
+    
+    if is_testnet:
+        print("🧪 TESTNET MODE: Using testnet for all operations.")
+    else:
+        print("🌐 MAINNET MODE: Using mainnet for all operations.")
+    
+    print()  # Add spacing
+    
     loop = asyncio.get_event_loop()
 
     # 1. Get Suggestions
@@ -755,22 +775,23 @@ async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
                             f"✅ {result.data.get('trades_executed', 0)} trade(s) executed successfully!"
                         )
                     else:
-                        print("❌ No trades executed.")
+                        print("❌ Rebalancing failed:")
                         for err in result.errors:
                             print("   -", err)
+                    break
                 except Exception as e:
-                    print(f"❌ Error during trade execution: {e}")
-                return
+                    logger.error(f"Error during rebalancing execution: {e}", exc_info=True)
+                    print(f"❌ Error during rebalancing: {e}")
+                    break
             else:
-                print(
-                    "❌ Invalid command. Please type 'EXECUTE ALL', 'EXECUTE', or press Enter to return."
-                )
+                print("❌ Invalid input. Please type 'EXECUTE ALL' or 'EXECUTE'.")
+
     except (KeyboardInterrupt, EOFError):
         print("\nReturning to main menu...")
         return
     except Exception as e:
+        logger.error(f"Unexpected error in rebalancing: {e}", exc_info=True)
         print(f"❌ Unexpected error: {e}")
-        return
 
 
 async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
@@ -1556,8 +1577,27 @@ async def test_connections(tracker: CryptoPortfolioTracker):
 async def run_trading_menu(tracker: CryptoPortfolioTracker):
     """Runs the trading menu."""
     loop = asyncio.get_event_loop()
+    
+    # Check trading status
+    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
+    is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
+    
+    print("\n--- 🔀 Trading ---")
+    
+    # Display trading status banner
+    if not is_live:
+        print("🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run).")
+    else:
+        print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
+    
+    if is_testnet:
+        print("🧪 TESTNET MODE: Using testnet for all operations.")
+    else:
+        print("🌐 MAINNET MODE: Using mainnet for all operations.")
+    
+    print()  # Add spacing
+    
     while True:
-        print("\n--- 🔀 Trading ---\n")
         print("Select trading Mode:")
         print("1. Manual Trade (Buy/Sell)")
         print("2. Live Trading Strategy")
@@ -1587,17 +1627,197 @@ async def run_trading_menu(tracker: CryptoPortfolioTracker):
             return
 
 
+async def run_dca_menu(tracker: CryptoPortfolioTracker):
+    """Runs an interactive session for Dollar Cost Averaging (DCA)."""
+    print("\n--- 💸 Dollar Cost Averaging (DCA) ---")
+    
+    # Check trading status
+    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
+    is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
+    
+    if not is_live:
+        print("🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run).")
+    else:
+        print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
+    
+    if is_testnet:
+        print("🧪 TESTNET MODE: Using testnet for all operations.")
+    else:
+        print("🌐 MAINNET MODE: Using mainnet for all operations.")
+    
+    loop = asyncio.get_event_loop()
+    
+    try:
+        # 1. Display current USDT balance
+        print("\n💰 Available USDT Balance:")
+        usdt_balances = tracker.get_available_usdt_balance()
+        print(f"   Spot + Earn: ${usdt_balances['spot_earn']:,.2f}")
+        print(f"   Funding:     ${usdt_balances['funding']:,.2f}")
+        print(f"   Total:       ${usdt_balances['total']:,.2f}")
+        
+        if usdt_balances['total'] <= 0:
+            print("❌ No USDT available for DCA. Please add funds first.")
+            return
+        
+        # 2. Get DCA amount
+        while True:
+            amount_str = await loop.run_in_executor(
+                None, input, f"\nEnter DCA amount (USDT) [max: ${usdt_balances['total']:,.2f}]: "
+            )
+            amount_str = amount_str.strip()
+            if not amount_str:
+                print("Returning to main menu...")
+                return
+            
+            try:
+                dca_amount = float(amount_str)
+                if dca_amount <= 0:
+                    print("❌ Amount must be greater than zero.")
+                    continue
+                
+                # Validate amount
+                is_valid, message = tracker.validate_dca_amount(dca_amount)
+                if not is_valid:
+                    print(f"❌ {message}")
+                    continue
+                
+                break
+            except ValueError:
+                print("❌ Invalid amount. Please enter a valid number.")
+        
+        # 3. Get DCA method
+        print("\n📊 DCA Method:")
+        print("1. Proportional - Distribute funds to maintain current portfolio proportions")
+        print("2. Target-Weight - Distribute funds to reach your target allocation")
+        
+        while True:
+            method_choice = await loop.run_in_executor(
+                None, input, "Select method (1-2): "
+            )
+            method_choice = method_choice.strip()
+            if not method_choice:
+                print("Returning to main menu...")
+                return
+            
+            if method_choice == "1":
+                dca_method = "proportional"
+                break
+            elif method_choice == "2":
+                dca_method = "target_weight"
+                break
+            else:
+                print("❌ Invalid choice. Please select 1 or 2.")
+        
+        # 4. Calculate DCA suggestions
+        print(f"\n🔄 Calculating {dca_method.replace('_', ' ').title()} DCA suggestions...")
+        
+        suggestions = await tracker.get_dca_suggestions(dca_amount, dca_method)
+        
+        if "error" in suggestions:
+            print(f"❌ {suggestions['error']}")
+            return
+        
+        # 5. Display current portfolio status
+        print("\n📊 Current Portfolio Status:")
+        current_portfolio = suggestions.get("current_portfolio", pd.DataFrame())
+        target_allocation = suggestions.get("target_allocation", {})
+        
+        if not current_portfolio.empty:
+            print(f"   Total Value: ${suggestions['current_portfolio_value']:,.2f}")
+            print("   Current Holdings:")
+            for _, row in current_portfolio.iterrows():
+                symbol = row['symbol']
+                value = row['value_usd']
+                pct = (value / suggestions['current_portfolio_value']) * 100 if suggestions['current_portfolio_value'] > 0 else 0
+                target_pct = target_allocation.get(symbol, 0) * 100
+                print(f"     {symbol}: ${value:,.2f} ({pct:.1f}%) [Target: {target_pct:.1f}%]")
+        else:
+            print("   No current holdings found.")
+        
+        # 6. Display DCA suggestions
+        print(f"\n💡 {dca_method.replace('_', ' ').title()} DCA Suggestions:")
+        trade_amounts = suggestions.get(dca_method, {})
+        
+        if not trade_amounts:
+            print("   No actionable trades found for the selected method.")
+            return
+        
+        total_buy_amount = 0
+        total_sell_amount = 0
+        
+        for asset, amount in trade_amounts.items():
+            if abs(amount) > 0.01:  # Minimum threshold
+                if amount > 0:
+                    print(f"   BUY  {asset}: ${amount:,.2f}")
+                    total_buy_amount += amount
+                else:
+                    print(f"   SELL {asset}: ${abs(amount):,.2f}")
+                    total_sell_amount += abs(amount)
+        
+        print(f"\n   Total Buy:  ${total_buy_amount:,.2f}")
+        print(f"   Total Sell: ${total_sell_amount:,.2f}")
+        print(f"   Net:        ${total_buy_amount - total_sell_amount:,.2f}")
+        
+        # 7. Confirmation
+        print("\n" + "=" * 60)
+        print(" PLEASE CONFIRM DCA EXECUTION ")
+        print(f"   Method:     {dca_method.replace('_', ' ').title()}")
+        print(f"   Amount:     ${dca_amount:,.2f} USDT")
+        print(f"   Trades:     {len([a for a in trade_amounts.values() if abs(a) > 0.01])}")
+        print(f"   Live Mode:  {'YES' if is_live else 'NO'}")
+        print("=" * 60)
+        
+        confirm = await loop.run_in_executor(None, input, "Type 'EXECUTE' to confirm DCA: ")
+        confirm = confirm.strip()
+        
+        if confirm == "EXECUTE":
+            # Prepare trades for execution
+            selected_trades = []
+            for asset, amount in trade_amounts.items():
+                if abs(amount) > 0.01:
+                    selected_trades.append({
+                        "asset": asset,
+                        "amount": amount,
+                        "method": dca_method
+                    })
+            
+            # Execute DCA trades
+            print("\n🔄 Executing DCA trades...")
+            result = await tracker.execute_dca_trades(selected_trades, dca_method, is_live)
+            
+            # Display results
+            print("\n📋 DCA Execution Results:")
+            for msg in result.messages:
+                print(f"   {msg}")
+            
+            if result.success:
+                print("✅ DCA executed successfully!")
+            else:
+                print("❌ DCA failed:")
+                for err in result.errors:
+                    print("   -", err)
+        else:
+            print("🛑 DCA cancelled by user.")
+    
+    except (KeyboardInterrupt, EOFError):
+        print("\nReturning to main menu...")
+        return
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        return
+
+
 async def run_main_menu(tracker: CryptoPortfolioTracker):
     """Runs the main interactive menu loop."""
     loop = asyncio.get_event_loop()
     offline_mode = getattr(tracker, "offline_mode", False)
-    unavailable_offline = {1, 2, 3, 4, 5, 7, 8, 12}
+    unavailable_offline = {1, 2, 3, 4, 5, 6, 8, 9, 13}
     try:
         while True:
             print_main_menu(offline_mode)
             try:
                 choice_str = await loop.run_in_executor(
-                    None, input, "Select option (1-13): "
+                    None, input, "Select option (1-14): "
                 )
                 choice = int(choice_str) if choice_str.isdigit() else -1
 
@@ -1625,22 +1845,24 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
                     case 4:
                         await run_rebalance_and_execute(tracker)
                     case 5:
-                        await run_trading_menu(tracker)
+                        await run_dca_menu(tracker)
                     case 6:
-                        await run_backtesting_menu(tracker)
+                        await run_trading_menu(tracker)
                     case 7:
-                        await export_reports_menu(tracker)
+                        await run_backtesting_menu(tracker)
                     case 8:
-                        await run_chart_selection_menu(tracker)
+                        await export_reports_menu(tracker)
                     case 9:
-                        await run_backup_and_restore_menu(tracker)
+                        await run_chart_selection_menu(tracker)
                     case 10:
-                        await run_data_cleanup_menu(tracker)
+                        await run_backup_and_restore_menu(tracker)
                     case 11:
-                        print_configuration(tracker)
+                        await run_data_cleanup_menu(tracker)
                     case 12:
-                        await test_connections(tracker)
+                        print_configuration(tracker)
                     case 13:
+                        await test_connections(tracker)
+                    case 14:
                         print("👋 Exiting. Goodbye!")
                         break
                     case _:
@@ -1689,7 +1911,7 @@ async def amain():
     try:
         try:
             tracker = CryptoPortfolioTracker(config_manager)
-        except NetworkUnavailableError:
+        except NetworkOperationError:
             resp = await loop.run_in_executor(
                 None,
                 input,
