@@ -52,6 +52,7 @@ from typing import List, Dict, Any, Optional
 @dataclass
 class TradeResult:
     """Result of a trade."""
+
     success: bool
     messages: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -60,6 +61,7 @@ class TradeResult:
 
 class ExecutionMode(Enum):
     """Execution modes for rebalancing trades."""
+
     AUTO = "auto"
     BULK = "bulk"
     INTERACTIVE = "interactive"
@@ -695,7 +697,10 @@ class CryptoPortfolioTracker:
                 self.logger.info(
                     f"DRY RUN: Would redeem {shortfall:.8f} {asset} from {product_id}."
                 )
-                return True, messages  # Return True to allow the simulated trade to continue
+                return (
+                    True,
+                    messages,
+                )  # Return True to allow the simulated trade to continue
 
         except BinanceAPIException as e:
             self.logger.error(
@@ -712,7 +717,9 @@ class CryptoPortfolioTracker:
             )
             return False, messages
 
-    def _execute_directional_trade(self, trade: Dict[str, Any], client: Client) -> TradeResult:
+    def _execute_directional_trade(
+        self, trade: Dict[str, Any], client: Client
+    ) -> TradeResult:
         """Helper function to execute a single directional BUY or SELL trade."""
         result = TradeResult(success=False)
         symbol = trade["Symbol"]
@@ -811,9 +818,11 @@ class CryptoPortfolioTracker:
         return result
 
     async def execute_rebalancing_trades_core(
-        self, suggestions_df, earn_balances,
+        self,
+        suggestions_df,
+        earn_balances,
         confirmation_callback: Optional[Callable[[str], bool]] = None,
-        execution_mode: ExecutionMode = ExecutionMode.CONFIRM
+        execution_mode: ExecutionMode = ExecutionMode.CONFIRM,
     ) -> TradeResult:
         """
         Execute rebalancing trades with UI-agnostic confirmation handling.
@@ -826,7 +835,7 @@ class CryptoPortfolioTracker:
         """
         result = TradeResult(success=False)
         trades_executed_count = 0
-        
+
         if suggestions_df.empty or "Signal" not in suggestions_df.columns:
             result.messages.append("No rebalancing suggestions to execute.")
             return result
@@ -877,12 +886,10 @@ class CryptoPortfolioTracker:
         if execution_mode == ExecutionMode.AUTO:
             # WebUI mode - auto confirm all trades
             items_to_process = list(trades_to_execute.iterrows())
-            
+
         elif execution_mode == ExecutionMode.BULK:
             # Bulk execution mode - execute all trades immediately
-            result.messages.append(
-                "🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨"
-            )
+            result.messages.append("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
             result.messages.append(
                 trades_to_execute[
                     ["Symbol", "Signal", "Suggested Action Detail"]
@@ -891,40 +898,44 @@ class CryptoPortfolioTracker:
             result.messages.append("=" * 80)
             self.logger.info("User confirmed bulk trade execution.")
             items_to_process = list(trades_to_execute.iterrows())
-            
+
         elif execution_mode == ExecutionMode.INTERACTIVE and confirmation_callback:
             # Interactive mode - ask for each trade individually
-            result.messages.append("👀 Entering interactive confirmation mode. You will be prompted for each trade.")
+            result.messages.append(
+                "👀 Entering interactive confirmation mode. You will be prompted for each trade."
+            )
             result.messages.append("")
-            
+
             for _, row in trades_to_execute.iterrows():
                 symbol = row["Symbol"]
                 signal = row["Signal"]
-                
+
                 # Ask for individual trade approval
-                approval_prompt = f"Approve this trade for {symbol}? Type YES to confirm: "
+                approval_prompt = (
+                    f"Approve this trade for {symbol}? Type YES to confirm: "
+                )
                 approved = confirmation_callback(approval_prompt)
-                
+
                 if approved:
                     self.logger.info(f"User approved trade for {symbol}.")
                     items_to_process.append((_, row))
                 else:
                     self.logger.info(f"User rejected trade for {symbol}.")
-                    
+
         elif execution_mode == ExecutionMode.CONFIRM and confirmation_callback:
             # Legacy confirmation mode - use callback for bulk confirmation
-            result.messages.append(
-                "🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨"
-            )
+            result.messages.append("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
             result.messages.append(
                 trades_to_execute[
                     ["Symbol", "Signal", "Suggested Action Detail"]
                 ].to_string(index=False)
             )
             result.messages.append("=" * 80)
-            
+
             # Use callback for confirmation
-            confirmed = confirmation_callback("Type EXECUTE ALL to proceed with all trades listed above: ")
+            confirmed = confirmation_callback(
+                "Type EXECUTE ALL to proceed with all trades listed above: "
+            )
             if confirmed:
                 self.logger.info("User confirmed bulk trade execution.")
                 items_to_process = list(trades_to_execute.iterrows())
@@ -933,7 +944,9 @@ class CryptoPortfolioTracker:
                 return result
         else:
             # No confirmation mechanism available - skip execution
-            result.messages.append("🛑 No confirmation mechanism available. Skipping trade execution.")
+            result.messages.append(
+                "🛑 No confirmation mechanism available. Skipping trade execution."
+            )
             return result
 
         if not items_to_process:
@@ -983,8 +996,12 @@ class CryptoPortfolioTracker:
                         continue
 
                     # Use the updated _redeem_from_earn_if_needed method
-                    redemption_success, redemption_messages = self._redeem_from_earn_if_needed(
-                        asset=symbol, required_amount=adjusted_quantity, is_live=is_live
+                    redemption_success, redemption_messages = (
+                        self._redeem_from_earn_if_needed(
+                            asset=symbol,
+                            required_amount=adjusted_quantity,
+                            is_live=is_live,
+                        )
                     )
                     result.messages.extend(redemption_messages)
 
@@ -1002,12 +1019,16 @@ class CryptoPortfolioTracker:
                             order = self.binance_client.order_market_sell(
                                 symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}"
                             )
-                            result.messages.append(f"✅ LIVE SELL ORDER PLACED: {order}")
+                            result.messages.append(
+                                f"✅ LIVE SELL ORDER PLACED: {order}"
+                            )
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             trades_executed_count += 1
                             simulated_balances[symbol] -= adjusted_quantity
                         except Exception as e:
-                            result.messages.append(f"❌ LIVE SELL FAILED for {symbol}: {e}")
+                            result.messages.append(
+                                f"❌ LIVE SELL FAILED for {symbol}: {e}"
+                            )
                             self.logger.error(f"LIVE SELL FAILED for {symbol}: {e}")
                             result.errors.append(f"SELL {symbol}: {e}")
                     else:
@@ -1040,7 +1061,9 @@ class CryptoPortfolioTracker:
                             trades_executed_count += 1
                             simulated_balances["USDT"] -= usd_value
                         except Exception as e:
-                            result.messages.append(f"❌ LIVE BUY FAILED for {symbol}: {e}")
+                            result.messages.append(
+                                f"❌ LIVE BUY FAILED for {symbol}: {e}"
+                            )
                             self.logger.error(f"LIVE BUY FAILED for {symbol}: {e}")
                             result.errors.append(f"BUY {symbol}: {e}")
                     else:
@@ -1054,12 +1077,16 @@ class CryptoPortfolioTracker:
                         simulated_balances["USDT"] -= usd_value
 
             except Exception as e:
-                result.messages.append(f"❌ Unexpected error executing trade for {symbol}: {e}")
+                result.messages.append(
+                    f"❌ Unexpected error executing trade for {symbol}: {e}"
+                )
                 self.logger.error(f"Unexpected error executing trade for {symbol}: {e}")
                 result.errors.append(f"{symbol}: {e}")
 
         result.messages.append("\n" + "=" * 80)
-        result.messages.append(f"✅ {trades_executed_count} trade(s) executed successfully!")
+        result.messages.append(
+            f"✅ {trades_executed_count} trade(s) executed successfully!"
+        )
         result.data["trades_executed"] = trades_executed_count
         result.success = trades_executed_count > 0
 
@@ -1907,106 +1934,114 @@ class CryptoPortfolioTracker:
     def cleanup_old_data(self):
         """Clean up old portfolio data."""
         self.db_manager.cleanup_old_data()
-    
+
     def calculate_proportional_dca(
-        self, 
-        new_funds: float, 
-        target_allocation: Dict[str, float]
+        self, new_funds: float, target_allocation: Dict[str, float]
     ) -> Dict[str, float]:
         """
         Calculate Proportional DCA buy amounts.
         Formula: Buy Amount = New Funds × Target Allocation %
-        
+
         Args:
             new_funds: Amount of USDT to invest
             target_allocation: Target allocation percentages (e.g., {"BTC": 0.35, "ETH": 0.20})
-            
+
         Returns:
             Dictionary mapping asset to buy amount
         """
         if new_funds <= 0:
             self.logger.warning("New funds must be greater than 0 for DCA calculation")
             return {}
-        
+
         trades = {}
         for asset, target_pct in target_allocation.items():
             buy_amount = new_funds * target_pct
             if buy_amount > 0:
                 trades[asset] = buy_amount
-        
-        self.logger.info(f"Calculated Proportional DCA for {len(trades)} assets with {new_funds} USDT")
+
+        self.logger.info(
+            f"Calculated Proportional DCA for {len(trades)} assets with {new_funds} USDT"
+        )
         return trades
 
     def calculate_target_weight_dca(
-        self, 
-        new_funds: float, 
+        self,
+        new_funds: float,
         current_portfolio: pd.DataFrame,
-        target_allocation: Dict[str, float]
+        target_allocation: Dict[str, float],
     ) -> Dict[str, float]:
         """
         Calculate Target-Weight Rebalancing DCA buy amounts.
         Formula: Buy/Sell Amount = (New Total × Target %) - Current Value
-        
+
         Args:
             new_funds: Amount of USDT to invest
             current_portfolio: DataFrame with current holdings (must have 'symbol' and 'value_usd' columns)
             target_allocation: Target allocation percentages
-            
+
         Returns:
             Dictionary mapping asset to buy/sell amount (positive = buy, negative = sell)
         """
         if new_funds <= 0:
             self.logger.warning("New funds must be greater than 0 for DCA calculation")
             return {}
-        
+
         if current_portfolio.empty:
-            self.logger.warning("Current portfolio is empty, cannot calculate Target-Weight DCA")
+            self.logger.warning(
+                "Current portfolio is empty, cannot calculate Target-Weight DCA"
+            )
             return {}
-        
+
         # Get current portfolio value
         current_portfolio_value = current_portfolio["value_usd"].sum()
         new_total = current_portfolio_value + new_funds
-        
-        self.logger.info(f"Target-Weight DCA: Current portfolio ${current_portfolio_value:,.2f}, New funds ${new_funds:,.2f}, New total ${new_total:,.2f}")
-        
+
+        self.logger.info(
+            f"Target-Weight DCA: Current portfolio ${current_portfolio_value:,.2f}, New funds ${new_funds:,.2f}, New total ${new_total:,.2f}"
+        )
+
         trades = {}
         for asset, target_pct in target_allocation.items():
             # Find current value of this asset
             asset_row = current_portfolio[current_portfolio["symbol"] == asset]
-            current_value = asset_row["value_usd"].iloc[0] if not asset_row.empty else 0.0
-            
+            current_value = (
+                asset_row["value_usd"].iloc[0] if not asset_row.empty else 0.0
+            )
+
             # Calculate target value
             target_value = new_total * target_pct
-            
+
             # Calculate buy/sell amount
             trade_amount = target_value - current_value
-            
+
             # Only include if there's a meaningful trade (minimum threshold)
             min_trade_threshold = 0.01  # $0.01 minimum
             if abs(trade_amount) >= min_trade_threshold:
                 trades[asset] = trade_amount
-                self.logger.debug(f"{asset}: Current ${current_value:,.2f}, Target ${target_value:,.2f}, Trade ${trade_amount:,.2f}")
-        
+                self.logger.debug(
+                    f"{asset}: Current ${current_value:,.2f}, Target ${target_value:,.2f}, Trade ${trade_amount:,.2f}"
+                )
+
         self.logger.info(f"Calculated Target-Weight DCA for {len(trades)} assets")
         return trades
 
     def get_available_usdt_balance(self) -> Dict[str, float]:
         """
         Get USDT balances from all wallets.
-        
+
         Returns:
             Dictionary with spot_earn, funding, and total USDT balances
         """
         spot_earn_balance = 0.0
         funding_balance = 0.0
-        
+
         try:
             # Get Spot + Earn balance (consolidated)
             spot_balance = float(
                 self.binance_client.get_asset_balance(asset="USDT").get("free", 0.0)
             )
             spot_earn_balance += spot_balance
-            
+
             # Add Earn balance if not in testnet
             if not self.config_manager.is_testnet_mode:
                 earn_positions = self.fetcher.fetch_simple_earn_balances(
@@ -2014,60 +2049,62 @@ class CryptoPortfolioTracker:
                 )
                 earn_balance = earn_positions.get("USDT", 0.0)
                 spot_earn_balance += earn_balance
-            
+
             # Get Funding balance
             funding_balances = self.fetcher.fetch_funding_balance()
             for balance in funding_balances:
                 if balance.get("asset") == "USDT":
                     funding_balance = float(balance.get("free", 0.0))
                     break
-                    
+
         except Exception as e:
             self.logger.error(f"Error fetching USDT balances: {e}")
-        
+
         total_balance = spot_earn_balance + funding_balance
-        
-        self.logger.info(f"USDT Balances - Spot+Earn: ${spot_earn_balance:,.2f}, Funding: ${funding_balance:,.2f}, Total: ${total_balance:,.2f}")
-        
+
+        self.logger.info(
+            f"USDT Balances - Spot+Earn: ${spot_earn_balance:,.2f}, Funding: ${funding_balance:,.2f}, Total: ${total_balance:,.2f}"
+        )
+
         return {
             "spot_earn": spot_earn_balance,
             "funding": funding_balance,
-            "total": total_balance
+            "total": total_balance,
         }
 
     def validate_dca_amount(self, amount: float) -> Tuple[bool, str]:
         """
         Validate if user can afford the DCA amount.
-        
+
         Args:
             amount: USDT amount to validate
-            
+
         Returns:
             Tuple of (is_valid, message)
         """
         if amount <= 0:
             return False, "Amount must be greater than 0"
-        
+
         available_balance = self.get_available_usdt_balance()
         total_available = available_balance["total"]
-        
+
         if amount > total_available:
             return False, f"Insufficient USDT. Available: ${total_available:,.2f}"
-        
+
         return True, f"✅ Sufficient funds available (${total_available:,.2f})"
 
     async def get_dca_suggestions(
-        self, 
+        self,
         new_funds: float,
-        method: str = "both"  # "proportional", "target_weight", "both"
+        method: str = "both",  # "proportional", "target_weight", "both"
     ) -> Dict[str, Any]:
         """
         Get comprehensive DCA suggestions for both methods.
-        
+
         Args:
             new_funds: Amount of USDT to invest
             method: Which DCA method to calculate ("proportional", "target_weight", "both")
-            
+
         Returns:
             Dictionary with DCA suggestions and portfolio data
         """
@@ -2082,31 +2119,35 @@ class CryptoPortfolioTracker:
                 "current_portfolio": pd.DataFrame(),
                 "target_allocation": {},
                 "available_usdt": {"total": 0},
-                "new_funds": new_funds
+                "new_funds": new_funds,
             }
-        
+
         # Get current portfolio metrics
         metrics = await self.calculate_portfolio_metrics()
-        
+
         # Get target allocation from config
         target_allocation = self.config.get("target_allocation", {})
-        
+
         # Get available USDT
         available_usdt = self.get_available_usdt_balance()
-        
+
         # Get core portfolio (assets in target allocation)
         core_portfolio = metrics.get("core_holdings_df", pd.DataFrame())
-        
+
         # Calculate DCA methods
         proportional_trades = {}
         target_weight_trades = {}
-        
+
         if method in ["proportional", "both"]:
-            proportional_trades = self.calculate_proportional_dca(new_funds, target_allocation)
-        
+            proportional_trades = self.calculate_proportional_dca(
+                new_funds, target_allocation
+            )
+
         if method in ["target_weight", "both"]:
-            target_weight_trades = self.calculate_target_weight_dca(new_funds, core_portfolio, target_allocation)
-        
+            target_weight_trades = self.calculate_target_weight_dca(
+                new_funds, core_portfolio, target_allocation
+            )
+
         return {
             "proportional": proportional_trades,
             "target_weight": target_weight_trades,
@@ -2114,45 +2155,48 @@ class CryptoPortfolioTracker:
             "target_allocation": target_allocation,
             "available_usdt": available_usdt,
             "new_funds": new_funds,
-            "current_portfolio_value": core_portfolio["value_usd"].sum() if not core_portfolio.empty else 0.0
+            "current_portfolio_value": core_portfolio["value_usd"].sum()
+            if not core_portfolio.empty
+            else 0.0,
         }
 
     async def execute_dca_trades(
-        self,
-        selected_trades: List[Dict[str, Any]],
-        method: str,
-        is_live: bool = False
+        self, selected_trades: List[Dict[str, Any]], method: str, is_live: bool = False
     ) -> TradeResult:
         """
         Execute selected DCA trades using existing trade execution infrastructure.
-        
+
         Args:
             selected_trades: List of trade dictionaries [{"asset": str, "amount": float, "method": str}]
             method: DCA method used ("proportional" or "target_weight")
             is_live: Whether to execute live trades
-            
+
         Returns:
             TradeResult with execution results
         """
         result = TradeResult(success=True)  # Initialize with success=True
-        
+
         if not selected_trades:
             result.messages.append("No trades selected for execution")
             result.success = False  # Set to False if no trades
             return result
-        
-        self.logger.info(f"Executing {len(selected_trades)} DCA trades using {method} method")
-        
+
+        self.logger.info(
+            f"Executing {len(selected_trades)} DCA trades using {method} method"
+        )
+
         for trade in selected_trades:
             asset = trade["asset"]
             amount = trade["amount"]
-            
+
             # Determine trade type based on amount
             trade_type = "BUY" if amount > 0 else "SELL"
             trade_amount = abs(amount)
-            
-            self.logger.info(f"Executing DCA {trade_type} for {asset}: ${trade_amount:,.2f}")
-            
+
+            self.logger.info(
+                f"Executing DCA {trade_type} for {asset}: ${trade_amount:,.2f}"
+            )
+
             # Use existing trade execution method
             trade_result = await self.execute_manual_trade_core(
                 trade_type=trade_type,
@@ -2160,26 +2204,25 @@ class CryptoPortfolioTracker:
                 trade_ticker=f"{asset}USDT",
                 amount=trade_amount,
                 is_quote_qty=True,
-                is_live=is_live
+                is_live=is_live,
             )
-            
+
             # Aggregate results
             result.success &= trade_result.success
             result.messages.extend(trade_result.messages)
             result.errors.extend(trade_result.errors)
-        
+
         return result
 
     def validate_dca_execution(
-        self, 
-        selected_trades: List[Dict[str, Any]]
+        self, selected_trades: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
         Validate DCA execution before proceeding.
-        
+
         Args:
             selected_trades: List of trade dictionaries [{"asset": str, "amount": float, "method": str}]
-            
+
         Returns:
             Dictionary with validation results
         """
@@ -2187,13 +2230,15 @@ class CryptoPortfolioTracker:
         is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
         is_testnet = self.config.get("portfolio", {}).get("testnet_mode", True)
         min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 5.0)
-        
+
         # Calculate total USDT needed
-        total_usdt_needed = sum(abs(trade["amount"]) for trade in selected_trades if trade["amount"] > 0)
-        
+        total_usdt_needed = sum(
+            abs(trade["amount"]) for trade in selected_trades if trade["amount"] > 0
+        )
+
         # Get available USDT balances
         available_balance = self.get_available_usdt_balance()
-        
+
         # Validation results
         validation = {
             "can_execute": True,
@@ -2208,37 +2253,43 @@ class CryptoPortfolioTracker:
                 "num_trades": len(selected_trades),
                 "is_live": is_live,
                 "is_testnet": is_testnet,
-                "min_trade_usd": min_trade_usd
-            }
+                "min_trade_usd": min_trade_usd,
+            },
         }
-        
+
         # 1. Check total USDT requirement
         if total_usdt_needed > available_balance["total"]:
             validation["can_execute"] = False
             validation["errors"].append(
                 f"Insufficient USDT. Need ${total_usdt_needed:,.2f}, Available ${available_balance['total']:,.2f}"
             )
-        
+
         # 2. Check minimum trade amounts
-        small_trades = [trade for trade in selected_trades if abs(trade["amount"]) < min_trade_usd]
+        small_trades = [
+            trade for trade in selected_trades if abs(trade["amount"]) < min_trade_usd
+        ]
         if small_trades:
-            small_assets = [t['asset'] for t in small_trades]
+            small_assets = [t["asset"] for t in small_trades]
             validation["warnings"].append(
                 f"Some trades below minimum (${min_trade_usd}): {small_assets}"
             )
-        
+
         # 3. Check if Earn redemption needed - IMPROVED LOGIC
         # Only warn if we need more than what's in Spot+Earn AND we have USDT in Earn AND no USDT in funding
-        if (total_usdt_needed > available_balance["spot_earn"] and 
-            available_balance["spot_earn"] > 0 and 
-            available_balance["funding"] == 0):
+        if (
+            total_usdt_needed > available_balance["spot_earn"]
+            and available_balance["spot_earn"] > 0
+            and available_balance["funding"] == 0
+        ):
             validation["warnings"].append(
                 f"USDT in Earn wallet may need redemption. Spot+Earn: ${available_balance['spot_earn']:,.2f}, Needed: ${total_usdt_needed:,.2f}"
             )
-        
+
         # Note: Live trading status is already shown in the UI banner, so no need to repeat here
-        
-        self.logger.info(f"DCA validation completed. Can execute: {validation['can_execute']}")
+
+        self.logger.info(
+            f"DCA validation completed. Can execute: {validation['can_execute']}"
+        )
         return validation
 
     def save_snapshot(self, metrics: Dict[str, Any]):
@@ -2265,3 +2316,54 @@ class CryptoPortfolioTracker:
             unrealized_pl=unrealized_pl_usd,
             unrealized_pl_percent=unrealized_pl_percent,
         )
+
+    async def transfer_funding_to_spot(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> TradeResult:
+        """
+        Transfer funds from funding wallet to spot wallet.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
+        result = TradeResult(success=False)
+
+        try:
+            # Validate inputs
+            if not asset or amount <= 0:
+                result.errors.append("Invalid asset or amount")
+                return result
+
+            # Check if we have a Binance client
+            if not self.binance_client:
+                result.errors.append("Binance client not initialized")
+                return result
+
+            # Sync time with Binance server
+            self._sync_binance_client_time(self.binance_client, context="transfer")
+
+            # Execute the transfer
+            transfer_result = self.fetcher.transfer_funding_to_spot(
+                asset=asset, amount=amount, is_live=is_live
+            )
+
+            # Process the result
+            if transfer_result["success"]:
+                result.success = True
+                result.messages.extend(transfer_result["messages"])
+                if transfer_result.get("transfer_id"):
+                    result.data["transfer_id"] = transfer_result["transfer_id"]
+            else:
+                result.errors.extend(transfer_result["errors"])
+
+        except Exception as e:
+            error_msg = f"Unexpected error during transfer: {e}"
+            self.logger.error(error_msg, exc_info=True)
+            result.errors.append(error_msg)
+
+        return result

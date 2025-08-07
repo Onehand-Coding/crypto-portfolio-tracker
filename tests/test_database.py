@@ -34,7 +34,7 @@ class TestDatabaseManager:
                 "quantity": 0.1,
                 "price_usd": 50000.0,
                 "fee_usd": 5.0,
-                "transaction_hash": "hash1"
+                "transaction_hash": "hash1",
             },
             {
                 "symbol": "ETH",
@@ -43,12 +43,12 @@ class TestDatabaseManager:
                 "quantity": 1.0,
                 "price_usd": 3000.0,
                 "fee_usd": 3.0,
-                "transaction_hash": "hash2"
-            }
+                "transaction_hash": "hash2",
+            },
         ]
-        
+
         db_manager.bulk_insert_transactions(transactions)
-        
+
         # Verify transactions were inserted
         all_transactions = db_manager.get_all_transactions()
         assert len(all_transactions) >= 2
@@ -57,7 +57,7 @@ class TestDatabaseManager:
         """Test total invested capital calculation."""
         # Insert test asset and transactions
         asset_id = db_manager.get_asset_id("BTC", "Bitcoin", "bitcoin")
-    
+
         # Use the correct transaction format that the method expects
         transactions = [
             {
@@ -68,22 +68,22 @@ class TestDatabaseManager:
                 "quantity": 0.1,
                 "price_usd": 50000.0,
                 "fee_usd": 5.0,
-                "transaction_hash": "hash1"
+                "transaction_hash": "hash1",
             }
         ]
         # ACTUALLY INSERT THE TRANSACTIONS
         db_manager.bulk_insert_transactions(transactions)
-    
+
         # Calculate total invested
         total = db_manager.calculate_total_invested_capital()
-    
+
         assert total == 5000.0  # 0.1 * 50000 (fee is not included in this calculation)
 
     def test_get_holdings(self, db_manager):
         """Test holdings retrieval."""
         # Insert test data
         asset_id = db_manager.get_asset_id("BTC", "Bitcoin", "bitcoin")
-        
+
         transactions = [
             {
                 "symbol": "BTC",
@@ -92,11 +92,11 @@ class TestDatabaseManager:
                 "quantity": 0.1,
                 "price_usd": 50000.0,
                 "fee_usd": 5.0,
-                "transaction_hash": "hash1"
+                "transaction_hash": "hash1",
             }
         ]
         db_manager.bulk_insert_transactions(transactions)
-        
+
         holdings = db_manager.get_holdings()
         assert isinstance(holdings, pd.DataFrame)
         # Holdings might be empty if no transactions are processed yet
@@ -106,14 +106,16 @@ class TestDatabaseManager:
         """Test error handling in database operations."""
         # Test with invalid data
         with pytest.raises(Exception):
-            db_manager.bulk_insert_transactions([
-                {
-                    "symbol": "INVALID",
-                    "timestamp": "invalid_timestamp",
-                    "type": "INVALID_TYPE",
-                    "quantity": "not_a_number",
-                    "price_usd": "not_a_number",
-                    "fee_usd": "not_a_number",
-                    "transaction_hash": "hash1"
-                }
-            ]) 
+            db_manager.bulk_insert_transactions(
+                [
+                    {
+                        "symbol": "INVALID",
+                        "timestamp": "invalid_timestamp",
+                        "type": "INVALID_TYPE",
+                        "quantity": "not_a_number",
+                        "price_usd": "not_a_number",
+                        "fee_usd": "not_a_number",
+                        "transaction_hash": "hash1",
+                    }
+                ]
+            )

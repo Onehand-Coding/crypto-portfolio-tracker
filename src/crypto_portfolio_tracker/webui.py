@@ -21,7 +21,10 @@ from jinja2 import Environment, FileSystemLoader
 from crypto_portfolio_tracker import trading_strategies
 from crypto_portfolio_tracker.config import ConfigManager
 from crypto_portfolio_tracker.strategy_backtester import StrategyBacktester
-from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker, ExecutionMode
+from crypto_portfolio_tracker.portfolio_tracker import (
+    CryptoPortfolioTracker,
+    ExecutionMode,
+)
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
 from crypto_portfolio_tracker.exceptions import (
@@ -257,6 +260,7 @@ class PortfolioDashboard:
                 "⚖️ Rebalance",
                 "💸 DCA",
                 "💰 Trade",
+                "💵 Transfer",
                 "🧪 Backtest",
                 "🗄️ Database",
                 "⚙️ Settings",
@@ -294,6 +298,163 @@ class PortfolioDashboard:
             )
 
         return page
+
+    def render_transfer_page(self):
+        """Renders the transfer funds page."""
+        st.header("💵 Transfer Funds")
+        st.markdown("Transfer funds from funding wallet to spot wallet for trading.")
+
+        # Get tracker first
+        tracker = self.initialize_tracker()
+        if not tracker:
+            st.error("❌ Failed to initialize tracker.")
+            return
+
+        # --- Trading Status Banner ---
+        is_live = self.config_manager.is_live
+        is_testnet = self.config_manager.is_testnet_mode
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if is_live:
+                st.error("🔴 LIVE TRADING ENABLED")
+            else:
+                st.warning("🟡 LIVE TRADING DISABLED")
+        with col2:
+            if is_testnet:
+                st.info("🧪 TESTNET CONNECTION")
+            else:
+                st.info("🌐 MAINNET CONNECTION")
+        with col3:
+            if is_live:
+                st.error("⚠️ ORDERS WILL BE PLACED")
+            else:
+                st.success("✅ SIMULATION MODE")
+
+        # Get current balances
+        try:
+            # Get USDT balances
+            usdt_balances = tracker.get_available_usdt_balance()
+
+            # Get comprehensive spot wallet information
+            spot_balances_df = tracker.fetch_binance_balances()
+            total_spot_value = 0.0
+            spot_holdings = []
+
+            if not spot_balances_df.empty:
+                symbols = spot_balances_df["symbol"].tolist()
+                current_prices = tracker._get_current_prices(symbols)
+
+                for _, row in spot_balances_df.iterrows():
+                    symbol = row["symbol"]
+                    quantity = row["quantity"]
+                    price = current_prices.get(symbol, 0.0)
+                    asset_value = quantity * price
+                    total_spot_value += asset_value
+
+                    if asset_value > 1.0:  # Only show holdings worth more than $1
+                        spot_holdings.append(
+                            {
+                                "symbol": symbol,
+                                "quantity": quantity,
+                                "price": price,
+                                "value": asset_value,
+                            }
+                        )
+
+            # Display comprehensive balance information
+            st.markdown("#### 💰 Wallet Balance Overview")
+
+            # Show individual holdings
+            if spot_holdings:
+                st.markdown("**📊 Current Spot Wallet Holdings:**")
+                for holding in sorted(
+                    spot_holdings, key=lambda x: x["value"], reverse=True
+                ):
+                    st.text(
+                        f"   {holding['symbol']}: ${holding['value']:,.2f} ({holding['quantity']:.8g} @ ${holding['price']:,.2f})"
+                    )
+
+            # Display summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Spot Wallet Value", f"${total_spot_value:,.2f}")
+            with col2:
+                st.metric("USDT in Spot + Earn", f"${usdt_balances['spot_earn']:,.2f}")
+            with col3:
+                st.metric("USDT in Funding", f"${usdt_balances['funding']:,.2f}")
+            with col4:
+                st.metric("Total USDT Available", f"${usdt_balances['total']:,.2f}")
+
+            if usdt_balances["funding"] <= 0:
+                st.error("❌ No USDT available in funding wallet for transfer.")
+                return
+
+            # Transfer form
+            st.markdown("#### 💵 Transfer Configuration")
+
+            with st.form("transfer_form"):
+                transfer_amount = st.number_input(
+                    "Amount to Transfer (USDT)",
+                    min_value=0.01,
+                    max_value=float(usdt_balances["funding"]),
+                    value=min(100.0, float(usdt_balances["funding"])),
+                    step=0.01,
+                    help=f"Maximum available: ${usdt_balances['funding']:,.2f}",
+                )
+
+                # Show transfer impact
+                st.markdown("** Transfer Impact:**")
+                st.text(f"   After transfer, you'll have:")
+                st.text(
+                    f"   - ${usdt_balances['spot_earn'] + transfer_amount:,.2f} USDT in Spot + Earn"
+                )
+                st.text(
+                    f"   - ${usdt_balances['funding'] - transfer_amount:,.2f} USDT remaining in Funding"
+                )
+                st.text(
+                    f"   - Total trading power: ${total_spot_value + transfer_amount:,.2f}"
+                )
+
+                submitted = st.form_submit_button("Transfer Funds")
+
+                if submitted:
+                    if transfer_amount <= 0:
+                        st.error("❌ Amount must be greater than zero.")
+                        return
+
+                    if transfer_amount > usdt_balances["funding"]:
+                        st.error(
+                            f"❌ Amount exceeds available funding balance (${usdt_balances['funding']:,.2f})."
+                        )
+                        return
+
+                    # Execute transfer
+                    with st.spinner(" Executing transfer..."):
+                        import asyncio
+
+                        result = asyncio.run(
+                            tracker.transfer_funding_to_spot(
+                                asset="USDT", amount=transfer_amount, is_live=is_live
+                            )
+                        )
+
+                    # Display results
+                    st.markdown("#### 📋 Transfer Results")
+
+                    if result.success:
+                        st.success("✅ Transfer executed successfully!")
+                        for msg in result.messages:
+                            st.write(f"• {msg}")
+                    else:
+                        st.error("❌ Transfer failed:")
+                        for err in result.errors:
+                            st.write(f"• {err}")
+
+                    # Refresh the page to show updated balances
+                    st.rerun()
+
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
 
     def run_full_sync(self):
         """Run full portfolio sync and update session state with real metrics."""
@@ -1319,14 +1480,20 @@ class PortfolioDashboard:
         is_testnet = self.config_manager.is_testnet_mode
         col1, col2, col3 = st.columns(3)
         with col1:
-            if is_live: st.error("🔴 LIVE TRADING ENABLED")
-            else: st.warning("🟡 LIVE TRADING DISABLED")
+            if is_live:
+                st.error("🔴 LIVE TRADING ENABLED")
+            else:
+                st.warning("🟡 LIVE TRADING DISABLED")
         with col2:
-            if is_testnet: st.info("🧪 TESTNET CONNECTION")
-            else: st.info("🌐 MAINNET CONNECTION")
+            if is_testnet:
+                st.info("🧪 TESTNET CONNECTION")
+            else:
+                st.info("🌐 MAINNET CONNECTION")
         with col3:
-            if is_live: st.error("⚠️ ORDERS WILL BE PLACED")
-            else: st.success("✅ SIMULATION MODE")
+            if is_live:
+                st.error("⚠️ ORDERS WILL BE PLACED")
+            else:
+                st.success("✅ SIMULATION MODE")
 
         # Initialize session state
         if "rebalance_metrics" not in st.session_state:
@@ -2726,7 +2893,9 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                             "Drift Threshold (%)",
                             min_value=1.0,
                             max_value=20.0,
-                            value=3.0,
+                            value=self.tracker.config.get("rebalance_technical", {})
+                            .get("majors", {})
+                            .get("allocation_drift_threshold_pct", 3.0),
                             step=0.5,
                             help="Drift threshold for BTC/ETH before rebalancing triggers",
                             key="majors_drift",
@@ -2737,7 +2906,9 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                             "Drift Threshold (%)",
                             min_value=1.0,
                             max_value=20.0,
-                            value=5.0,
+                            value=self.tracker.config.get("rebalance_technical", {})
+                            .get("alts", {})
+                            .get("allocation_drift_threshold_pct", 3.50),
                             step=0.5,
                             help="Drift threshold for altcoins before rebalancing triggers",
                             key="alts_drift",
@@ -3359,38 +3530,48 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
         tracker = self.initialize_tracker()
         if not tracker:
-            st.error("❌ Tracker not initialized"); return
+            st.error("❌ Tracker not initialized")
+            return
 
         # Initialize state
-        if 'dca_step' not in st.session_state:
-            st.session_state.dca_step = 'initial'
+        if "dca_step" not in st.session_state:
+            st.session_state.dca_step = "initial"
 
         # --- Trading Status Banner ---
         is_live = self.config_manager.is_live
         is_testnet = self.config_manager.is_testnet_mode
         col1, col2, col3 = st.columns(3)
         with col1:
-            if is_live: st.error("🔴 LIVE TRADING ENABLED")
-            else: st.warning("🟡 LIVE TRADING DISABLED")
+            if is_live:
+                st.error("🔴 LIVE TRADING ENABLED")
+            else:
+                st.warning("🟡 LIVE TRADING DISABLED")
         with col2:
-            if is_testnet: st.info("🧪 TESTNET CONNECTION")
-            else: st.info("🌐 MAINNET CONNECTION")
+            if is_testnet:
+                st.info("🧪 TESTNET CONNECTION")
+            else:
+                st.info("🌐 MAINNET CONNECTION")
         with col3:
-            if is_live: st.error("⚠️ ORDERS WILL BE PLACED")
-            else: st.success("✅ SIMULATION MODE")
+            if is_live:
+                st.error("⚠️ ORDERS WILL BE PLACED")
+            else:
+                st.success("✅ SIMULATION MODE")
 
         # --- Balance Display Section ---
         st.markdown("### 💰 Available USDT")
         usdt_balances = tracker.get_available_usdt_balance()
         col1, col2, col3 = st.columns(3)
-        with col1: st.metric("Spot + Earn Balance", f"${usdt_balances['spot_earn']:,.2f}")
-        with col2: st.metric("Funding Balance", f"${usdt_balances['funding']:,.2f}")
-        with col3: st.metric("Total Available", f"${usdt_balances['total']:,.2f}")
+        with col1:
+            st.metric("Spot + Earn Balance", f"${usdt_balances['spot_earn']:,.2f}")
+        with col2:
+            st.metric("Funding Balance", f"${usdt_balances['funding']:,.2f}")
+        with col3:
+            st.metric("Total Available", f"${usdt_balances['total']:,.2f}")
         st.markdown("---")
 
         # --- Current Portfolio Status ---
         st.markdown("### 📊 Current Portfolio Status")
-        
+
         # Get current portfolio metrics
         metrics = st.session_state.get("portfolio_metrics")
         if not metrics:
@@ -3399,46 +3580,54 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 self.run_full_sync()
                 st.rerun()
             return
-        
+
         # Get current portfolio data
         core_portfolio = metrics.get("core_holdings_df", pd.DataFrame())
         target_allocation = tracker.config.get("target_allocation", {})
-        
+
         if not core_portfolio.empty:
             st.markdown("#### 🎯 Current vs Target Allocation")
-            
+
             # Create comparison table
             comparison_data = []
             for asset in target_allocation.keys():
                 asset_row = core_portfolio[core_portfolio["symbol"] == asset]
-                current_value = asset_row["value_usd"].iloc[0] if not asset_row.empty else 0.0
-                current_pct = asset_row["core_allocation"].iloc[0] * 100 if not asset_row.empty else 0.0
+                current_value = (
+                    asset_row["value_usd"].iloc[0] if not asset_row.empty else 0.0
+                )
+                current_pct = (
+                    asset_row["core_allocation"].iloc[0] * 100
+                    if not asset_row.empty
+                    else 0.0
+                )
                 target_pct = target_allocation[asset] * 100
-                
-                comparison_data.append({
-                    "Asset": asset,
-                    "Current %": f"{current_pct:.2f}%",
-                    "Target %": f"{target_pct:.2f}%",
-                    "Current Value": f"${current_value:,.2f}"
-                })
-            
+
+                comparison_data.append(
+                    {
+                        "Asset": asset,
+                        "Current %": f"{current_pct:.2f}%",
+                        "Target %": f"{target_pct:.2f}%",
+                        "Current Value": f"${current_value:,.2f}",
+                    }
+                )
+
             comparison_df = pd.DataFrame(comparison_data)
             st.dataframe(comparison_df, use_container_width=True, hide_index=True)
-            
+
             # Store current portfolio value for DCA calculations
             total_value = core_portfolio["value_usd"].sum()
             st.session_state.current_portfolio_value = total_value
         else:
             st.info("No core portfolio data available")
-        
+
         st.markdown("---")
 
         # --- State Controller ---
-        if st.session_state.dca_step == 'initial':
+        if st.session_state.dca_step == "initial":
             self._render_dca_initial_view(tracker)
-        elif st.session_state.dca_step == 'confirm':
+        elif st.session_state.dca_step == "confirm":
             self._render_dca_confirmation_view(tracker)
-        elif st.session_state.dca_step == 'results':
+        elif st.session_state.dca_step == "results":
             self._render_dca_results_view(tracker)
 
     def _render_dca_initial_view(self, tracker):
@@ -3452,51 +3641,65 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             dca_method = st.radio(
                 "DCA Method:",
                 ["Proportional", "Target-Weight"],
-                help="Proportional: Distributes funds to maintain current portfolio proportions. Target-Weight: Distributes funds to reach your target allocation."
+                help="Proportional: Distributes funds to maintain current portfolio proportions. Target-Weight: Distributes funds to reach your target allocation.",
             )
-        
+
         with col2:
             new_funds = st.number_input(
-                "New Fund (USDT)", 
-                min_value=0.0, 
-                step=0.01, 
-                help="Amount of USDT to invest"
+                "New Fund (USDT)",
+                min_value=0.0,
+                step=0.01,
+                help="Amount of USDT to invest",
             )
 
         is_valid, message = tracker.validate_dca_amount(new_funds)
         if new_funds > 0:
-            if is_valid: st.success(message)
-            else: st.error(message); return
+            if is_valid:
+                st.success(message)
+            else:
+                st.error(message)
+                return
 
-        if not (new_funds > 0 and is_valid): return
+        if not (new_funds > 0 and is_valid):
+            return
 
         with st.spinner("Calculating DCA suggestions..."):
             suggestions = asyncio.run(tracker.get_dca_suggestions(new_funds))
             if "error" in suggestions:
-                st.error(f"❌ {suggestions['error']}"); return
+                st.error(f"❌ {suggestions['error']}")
+                return
 
         st.markdown("### 📋 DCA Trade Suggestions")
         st.info(f"📊 Using **{dca_method}** DCA method")
 
         trade_amounts = suggestions.get(dca_method.lower().replace("-", "_"), {})
 
-        all_trades = [{"asset": asset, "amount": amount, "method": dca_method} for asset, amount in trade_amounts.items() if abs(amount) > 0.01]
+        all_trades = [
+            {"asset": asset, "amount": amount, "method": dca_method}
+            for asset, amount in trade_amounts.items()
+            if abs(amount) > 0.01
+        ]
 
         if not all_trades:
-            st.info("No actionable trades found for the selected method."); return
+            st.info("No actionable trades found for the selected method.")
+            return
 
         st.markdown("#### ✅ Select Trades to Execute")
         selected_for_execution = []
         for i, trade in enumerate(all_trades):
-            trade_type = "BUY" if trade['amount'] > 0 else "SELL"
+            trade_type = "BUY" if trade["amount"] > 0 else "SELL"
             label = f"**{trade['asset']}**: {trade_type} ${abs(trade['amount']):,.2f}"
             if st.checkbox(label, key=f"dca_trade_{i}", value=True):
                 selected_for_execution.append(trade)
 
         st.markdown("---")
-        if st.button("Execute Selected Trades", type="primary", disabled=not selected_for_execution):
+        if st.button(
+            "Execute Selected Trades",
+            type="primary",
+            disabled=not selected_for_execution,
+        ):
             st.session_state.dca_trades_for_confirmation = selected_for_execution
-            st.session_state.dca_step = 'confirm'
+            st.session_state.dca_step = "confirm"
             st.rerun()
 
     def _render_dca_confirmation_view(self, tracker):
@@ -3505,8 +3708,9 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         selected_trades = st.session_state.get("dca_trades_for_confirmation", [])
         if not selected_trades:
             st.warning("No trades found for confirmation. Returning to calculator.")
-            st.session_state.dca_step = 'initial'
-            st.rerun(); return
+            st.session_state.dca_step = "initial"
+            st.rerun()
+            return
 
         validation = tracker.validate_dca_execution(selected_trades)
         summary = validation["summary"]
@@ -3516,19 +3720,21 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         with col1:
             st.metric("Total USDT Needed", f"${summary['total_needed']:,.2f}")
         with col2:
-            st.metric("Number of Trades", summary['num_trades'])
+            st.metric("Number of Trades", summary["num_trades"])
 
         if validation["errors"]:
             st.error("❌ Execution Blocked:")
-            for error in validation["errors"]: st.write(f"• {error}")
+            for error in validation["errors"]:
+                st.write(f"• {error}")
             if st.button("Back to Calculator"):
-                st.session_state.dca_step = 'initial'
+                st.session_state.dca_step = "initial"
                 st.rerun()
             return
 
         if validation["warnings"]:
             st.warning("⚠️ Please Review:")
-            for warning in validation["warnings"]: st.write(f"• {warning}")
+            for warning in validation["warnings"]:
+                st.write(f"• {warning}")
 
         st.markdown("---")
         col1, col2 = st.columns(2)
@@ -3537,7 +3743,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 self._execute_dca_trades_now(tracker, selected_trades, validation)
         with col2:
             if st.button("❌CANCEL", use_container_width=True):
-                st.session_state.dca_step = 'initial'
+                st.session_state.dca_step = "initial"
                 del st.session_state.dca_trades_for_confirmation
                 st.rerun()
 
@@ -3547,17 +3753,19 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             with st.spinner("Executing DCA trades..."):
                 is_live = validation.get("summary", {}).get("is_live", False)
                 method = trades[0]["method"] if trades else "proportional"
-                result = asyncio.run(tracker.execute_dca_trades(
-                    selected_trades=trades,
-                    method=method,
-                    is_live=is_live
-                ))
+                result = asyncio.run(
+                    tracker.execute_dca_trades(
+                        selected_trades=trades, method=method, is_live=is_live
+                    )
+                )
             st.session_state.dca_execution_result_data = result
         except Exception as e:
-            st.session_state.dca_execution_result_data = f"An unexpected error occurred during execution: {e}"
+            st.session_state.dca_execution_result_data = (
+                f"An unexpected error occurred during execution: {e}"
+            )
 
-        st.session_state.dca_step = 'results'
-        if 'dca_trades_for_confirmation' in st.session_state:
+        st.session_state.dca_step = "results"
+        if "dca_trades_for_confirmation" in st.session_state:
             del st.session_state.dca_trades_for_confirmation
         st.rerun()
 
@@ -3568,29 +3776,29 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 
         # If no result data exists, reset to initial state
         if not result:
-            st.session_state.dca_step = 'initial'
+            st.session_state.dca_step = "initial"
             st.rerun()
             return
 
-        if isinstance(result, str): # Handle error strings
+        if isinstance(result, str):  # Handle error strings
             st.error(result)
-        elif result: # Handle TradeResult object
+        elif result:  # Handle TradeResult object
             if result.success:
                 st.success("✅ DCA trades processed successfully!")
             else:
                 st.error("❌ Some DCA trades failed.")
 
-            st.code('\n'.join(result.messages), language='text')
+            st.code("\n".join(result.messages), language="text")
             if result.errors:
                 st.error("Errors Reported:")
-                st.code('\n'.join(result.errors), language='text')
+                st.code("\n".join(result.errors), language="text")
 
         if st.button("🔄 Clear Results"):
             # Clear all DCA-related session state
-            st.session_state.dca_step = 'initial'
-            if 'dca_execution_result_data' in st.session_state:
+            st.session_state.dca_step = "initial"
+            if "dca_execution_result_data" in st.session_state:
                 del st.session_state.dca_execution_result_data
-            if 'dca_trades_for_confirmation' in st.session_state:
+            if "dca_trades_for_confirmation" in st.session_state:
                 del st.session_state.dca_trades_for_confirmation
             st.rerun()
 
@@ -4932,6 +5140,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             "⚖️ Rebalance": self.render_rebalancing,
             "💸 DCA": self.render_dca_page,
             "💰 Trade": self.render_trading,
+            "💵 Transfer": self.render_transfer_page,
             "🧪 Backtest": self.render_backtesting,
             "🗄️ Database": self.render_data_management,
             "⚙️ Settings": self.render_settings_and_status,
@@ -4940,6 +5149,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             page_mapping[selected_page]()
         else:
             st.error("Page not found")
+
 
 # Run the dashboard
 if __name__ == "__main__":

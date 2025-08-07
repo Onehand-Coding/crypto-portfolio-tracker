@@ -1159,6 +1159,94 @@ class BinanceFetcher:
             )
             return []
 
+    def transfer_funding_to_spot(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Transfer funds from funding wallet to spot wallet using Binance API.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            Dictionary with success status, messages, and any errors
+        """
+        result = {"success": False, "messages": [], "errors": [], "transfer_id": None}
+
+        try:
+            # Validate inputs
+            if not asset or amount <= 0:
+                result["errors"].append("Invalid asset or amount")
+                return result
+
+            # Check funding balance first
+            funding_balances = self.fetch_funding_balance()
+            funding_balance = 0.0
+
+            for balance in funding_balances:
+                if balance.get("asset") == asset:
+                    funding_balance = float(balance.get("free", 0.0))
+                    break
+
+            if funding_balance < amount:
+                result["errors"].append(
+                    f"Insufficient {asset} in funding wallet. Available: {funding_balance:.8f}, Required: {amount:.8f}"
+                )
+                return result
+
+            result["messages"].append(
+                f"✅ Funding wallet has sufficient {asset} balance: {funding_balance:.8f}"
+            )
+
+            if not is_live:
+                result["messages"].append(
+                    f"(Dry Run) Would transfer {amount:.8f} {asset} from funding to spot wallet"
+                )
+                result["success"] = True
+                return result
+
+            # Execute the transfer using Binance Asset Transfer API
+            # The correct type for funding to spot is "FUNDING_MAIN" (from funding to main)
+            transfer_params = {
+                "type": "FUNDING_MAIN",  # This transfers FROM funding TO main (spot)
+                "asset": asset,
+                "amount": f"{amount:.8f}",
+            }
+
+            self.logger.info(f"Executing transfer: {transfer_params}")
+
+            # Use the asset transfer endpoint
+            transfer_result = self.binance_client._request_margin_api(
+                "post", "asset/transfer", signed=True, data=transfer_params
+            )
+
+            self.logger.info(f"Transfer response: {transfer_result}")
+
+            if transfer_result and transfer_result.get("tranId"):
+                result["transfer_id"] = transfer_result["tranId"]
+                result["messages"].append(
+                    f"✅ Successfully transferred {amount:.8f} {asset} from funding to spot wallet"
+                )
+                result["messages"].append(f"Transfer ID: {transfer_result['tranId']}")
+                result["success"] = True
+            else:
+                result["errors"].append(
+                    f"Transfer failed - no transfer ID returned. Response: {transfer_result}"
+                )
+
+        except BinanceAPIException as e:
+            error_msg = f"Binance API error during transfer: {e}"
+            self.logger.error(error_msg)
+            result["errors"].append(error_msg)
+        except Exception as e:
+            error_msg = f"Unexpected error during transfer: {e}"
+            self.logger.error(error_msg, exc_info=True)
+            result["errors"].append(error_msg)
+
+        return result
+
     def _resync_time(self):
         """Synchronize local time with Binance server."""
         try:

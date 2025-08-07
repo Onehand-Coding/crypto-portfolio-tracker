@@ -27,6 +27,12 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
   - **Granular Control**: Use one-by-one confirmation of each trade, or  approve all suggested trades at once.
   - **Manual Trading**: A dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
   - **Directional Strategy Trading**: Run technical strategies live with safety checks
+- **Dollar Cost Averaging (DCA)**: Automated investment strategy for consistent portfolio growth:
+  - **Proportional DCA**: Distribute new funds to maintain current portfolio proportions, ideal for maintaining existing allocation ratios
+  - **Target-Weight DCA**: Allocate new funds to reach your target allocation percentages, perfect for gradually achieving desired portfolio balance
+  - **Smart Validation**: Automatic validation of DCA amounts against available USDT balance and minimum trade requirements
+  - **Flexible Execution**: Choose between manual confirmation or automated execution with comprehensive trade preview
+  - **Balance Integration**: Seamlessly combines Spot and Earn wallet balances for maximum buying power
 - **Dual Backtesting Engines**: Test and validate strategies with two specialized backtesters:
   - **Directional Strategy Backtester**: Evaluate entry/exit signals from technical trading strategies
   - **Rebalancing Strategy Backtester**: Simulate long-term performance of allocation-based rebalancing
