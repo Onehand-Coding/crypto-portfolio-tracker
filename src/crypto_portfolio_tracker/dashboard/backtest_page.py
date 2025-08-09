@@ -360,7 +360,7 @@ def render_backtest_page(dashboard):
                 st.markdown("**🎯 Target Allocation:**")
                 target_alloc = current_config.get("target_allocation", {})
                 for asset, pct in target_alloc.items():
-                    st.text(f"  {asset}: {pct:.1%}")
+                    st.text(f"- {asset}: {pct:.1%}")
 
             with col2:
                 st.markdown("**⚙️ Rebalancing Settings:**")
@@ -368,9 +368,14 @@ def render_backtest_page(dashboard):
                 majors_config = rebalance_config.get("majors", {})
                 alts_config = rebalance_config.get("alts", {})
 
-                st.text(f"  Majors Drift: {majors_config.get('allocation_drift_threshold_pct', 3.0):.1f}%")
-                st.text(f"  Alts Drift: {alts_config.get('allocation_drift_threshold_pct', 5.0):.1f}%")
-                st.text(f"  Frequency: {current_config.get('automation', {}).get('rebalancing', {}).get('frequency', 'monthly')}")
+                st.text(f" - Majors Drift Threshold: {majors_config["allocation_drift_threshold_pct"]:.1f}%")
+                st.text(f"- Alts Drift Threshold: {alts_config["allocation_drift_threshold_pct"]:.1f}%")
+                st.text(f"- Majors Sell Multiplier: {majors_config["sell_percentage_multiplier"]:.2f}")
+                st.text(f"- Majors Buy Multiplier: {majors_config["buy_amount_multiplier"]:.2f}")
+                st.text(f"- Alts Sell Multiplier: {alts_config["sell_percentage_multiplier"]:.2f}")
+                st.text(f"- Alts Buy Multiplier: {alts_config["buy_amount_multiplier"]:.2f}")
+                st.text(f"- Frequency: {current_config["automation"]["rebalancing"]["frequency"].title()}")
+                st.text(f"- Bear Market Suppression: {rebalance_config["market_regime_rules"]["suppress_buys_in_bear"]}")
 
         # Run Rebalancing Backtest Button
         st.markdown("---")
@@ -533,19 +538,17 @@ def render_backtest_page(dashboard):
                         "\n".join(backtester.trade_log), language="text"
                     )
 
-            # Save as Default button - Better positioned at the bottom
+            # Save as Default button
             if hasattr(backtester, "summary_stats"):
                 st.markdown("---")
-                st.markdown("### 💾 Save Configuration")
-                st.info("💡 **Satisfied with these results?** Save these proven parameters as your default settings for live trading.")
+                st.markdown("### 💾 Save Configuration", help="💡 **Satisfied with these results?** Save these proven parameters as your default settings for live trading.")
 
                 col1, col2, col3 = st.columns([1, 2, 1])
                 with col2:
                     if st.button(
-                        "💾 Save These Settings as Default",
+                        "💾 Save as Default",
                         type="primary",
                         use_container_width=True,
-                        help="Save the current backtest parameters as your default rebalancing settings"
                     ):
                         st.session_state.show_save_confirmation = True
                         st.rerun()
@@ -555,25 +558,27 @@ def render_backtest_page(dashboard):
             params = st.session_state.last_backtest_params
 
             st.warning("⚠️ **Confirm Settings Overwrite**")
-            st.markdown(f"""
-You are about to overwrite your current default settings with:
 
-**Rebalancing Parameters:**
-- Majors Drift Threshold: {params['majors_drift_threshold']:.1f}%
-- Alts Drift Threshold: {params['alts_drift_threshold']:.1f}%
-- Majors Sell Multiplier: {params['majors_sell_multiplier']:.2f}
-- Majors Buy Multiplier: {params['majors_buy_multiplier']:.2f}
-- Alts Sell Multiplier: {params['alts_sell_multiplier']:.2f}
-- Alts Buy Multiplier: {params['alts_buy_multiplier']:.2f}
-- Frequency: {params['selected_frequency'].title()}
-- Bear Market Suppression: {params['suppress_buys_in_bear']}
+            st.markdown("You are about to overwrite your current default settings with:")
+            col_target, col_param = st.columns(2)
 
-**Target Allocation:**
-""")
+            with col_target:
+                st.markdown("**🎯 Target Allocation:**")
 
-            # Show current allocation
-            for asset, pct in params['custom_allocation'].items():
-                st.text(f"  {asset}: {pct:.1%}")
+                # Show current allocation
+                for asset, pct in params['custom_allocation'].items():
+                    st.text(f"- {asset}: {pct:.1%}")
+
+            with col_param:
+                st.markdown("**⚙️ Rebalancing Settings:**")
+                st.text(f" - Majors Drift Threshold: {params['majors_drift_threshold']:.1f}%")
+                st.text(f"- Alts Drift Threshold: {params['alts_drift_threshold']:.1f}%")
+                st.text(f"- Majors Sell Multiplier: {params['majors_sell_multiplier']:.2f}")
+                st.text(f"- Majors Buy Multiplier: {params['majors_buy_multiplier']:.2f}")
+                st.text(f"- Alts Sell Multiplier: {params['alts_sell_multiplier']:.2f}")
+                st.text(f"- Alts Buy Multiplier: {params['alts_buy_multiplier']:.2f}")
+                st.text(f"- Frequency: {params['selected_frequency'].title()}")
+                st.text(f"- Bear Market Suppression: {params['suppress_buys_in_bear']}")
 
             st.markdown("---")
 
@@ -595,11 +600,11 @@ You are about to overwrite your current default settings with:
                         dashboard.config_manager.save_config()
                         dashboard.reload()
 
-                        st.success("✅ Settings saved as default! Your proven parameters are now active.")
-                        st.info("💡 These settings will be used for live rebalancing and future backtests.")
-
-                        # Reset confirmation state
+                        st.success("✅ Settings saved as default!")
                         st.session_state.show_save_confirmation = False
+                        st.session_state.backtest_results = None
+                        st.session_state.last_backtest_params = None
+                        st.rerun()
 
                     except Exception as e:
                         st.error(f"❌ Failed to save settings: {str(e)}")
@@ -607,6 +612,8 @@ You are about to overwrite your current default settings with:
             with confirm_col3:
                 if st.button("❌ Cancel", type="secondary", key="cancel_save"):
                     st.session_state.show_save_confirmation = False
+                    st.session_state.backtest_results = None
+                    st.session_state.last_backtest_params = None
                     st.rerun()
 
     # --- Strategy Backtest Tab ---
