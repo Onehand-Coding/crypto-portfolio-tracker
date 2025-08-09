@@ -5127,6 +5127,32 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
                 else:
                     st.warning("📄 Log file not found at the configured path.")
 
+    def _generate_signals(
+        self, tracker, selected_account, config, strategy_class, selected_coins, param_inputs, param_specs
+    ):
+        """Generate trading signals for multiple coins."""
+        signals = []
+        
+        # Create analyzer instance with required config and binance_client
+        analyzer = CryptoTrendAnalyzer(
+            config=config, 
+            binance_client=tracker.binance_client
+        )
+        
+        with st.spinner("Generating signals..."):
+            for coin in selected_coins:
+                try:
+                    signal = self._generate_coin_signal(
+                        analyzer, strategy_class, coin, param_inputs, param_specs
+                    )
+                    if signal:
+                        signals.append(signal)
+                except Exception as e:
+                    st.warning(f"Error generating signal for {coin}: {e}")
+                    continue
+        
+        return signals1
+
     def run(self):
         """Main application runner"""
         self.setup_logging()
