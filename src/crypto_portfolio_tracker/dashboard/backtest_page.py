@@ -10,7 +10,52 @@ from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
 
 
+def create_custom_config(dashboard, custom_allocation, majors_drift_threshold,
+                        alts_drift_threshold, majors_sell_multiplier,
+                        majors_buy_multiplier, alts_sell_multiplier,
+                        alts_buy_multiplier, selected_frequency,
+                        suppress_buys_in_bear):
+    """Create custom config with user parameters"""
+    custom_config = dashboard.config_manager.config.copy()
+
+    # Update rebalancing parameters
+    custom_config["rebalance_technical"] = {
+        "market_regime_rules": {
+            "suppress_buys_in_bear": suppress_buys_in_bear
+        },
+        "majors": {
+            "allocation_drift_threshold_pct": majors_drift_threshold,
+            "sell_percentage_multiplier": majors_sell_multiplier,
+            "buy_amount_multiplier": majors_buy_multiplier,
+        },
+        "alts": {
+            "allocation_drift_threshold_pct": alts_drift_threshold,
+            "sell_percentage_multiplier": alts_sell_multiplier,
+            "buy_amount_multiplier": alts_buy_multiplier,
+        },
+    }
+
+    # Update target allocation if user customized it
+    if abs(sum(custom_allocation.values()) - 1.0) < 0.001:
+        custom_config["target_allocation"] = custom_allocation
+
+    # Add frequency setting
+    automation_config = custom_config.setdefault("automation", {})
+    rebalancing_config = automation_config.setdefault("rebalancing", {})
+    rebalancing_config["frequency"] = selected_frequency
+
+    return custom_config
+
+
 def render_backtest_page(dashboard):
+    # Initialize session state
+    if 'show_save_confirmation' not in st.session_state:
+        st.session_state.show_save_confirmation = False
+    if 'backtest_results' not in st.session_state:
+        st.session_state.backtest_results = None
+    if 'last_backtest_params' not in st.session_state:
+        st.session_state.last_backtest_params = None
+
     st.markdown("## 🧪 Backtesting")
     st.markdown(
         "Test your trading strategies and rebalancing approaches with historical data"
@@ -28,7 +73,7 @@ def render_backtest_page(dashboard):
         # Basic Settings Section
         with st.container():
             st.subheader("💰 Basic Configuration")
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
 
             with col1:
                 initial_capital = st.number_input(
@@ -59,6 +104,17 @@ def render_backtest_page(dashboard):
                     )
                 else:
                     period = selected_period_option
+
+            with col3:
+                # Add frequency selection
+                frequency_options = ["weekly", "monthly", "quarterly"]
+                selected_frequency = st.selectbox(
+                    "Rebalancing Frequency",
+                    frequency_options,
+                    index=1,  # Default to monthly
+                    key="rebalance_frequency",
+                    help="How often to check and rebalance the portfolio",
+                )
 
         # Advanced Parameters Section
         with st.expander("🔧 Advanced Rebalancing Parameters", expanded=False):
@@ -294,6 +350,28 @@ def render_backtest_page(dashboard):
                         )
                         st.rerun()
 
+        # Current Settings Display
+        with st.expander("📋 Current Default Settings", expanded=False):
+            tracker = dashboard.initialize_tracker()
+            current_config = tracker.config
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**🎯 Target Allocation:**")
+                target_alloc = current_config.get("target_allocation", {})
+                for asset, pct in target_alloc.items():
+                    st.text(f"  {asset}: {pct:.1%}")
+
+            with col2:
+                st.markdown("**⚙️ Rebalancing Settings:**")
+                rebalance_config = current_config.get("rebalance_technical", {})
+                majors_config = rebalance_config.get("majors", {})
+                alts_config = rebalance_config.get("alts", {})
+
+                st.text(f"  Majors Drift: {majors_config.get('allocation_drift_threshold_pct', 3.0):.1f}%")
+                st.text(f"  Alts Drift: {alts_config.get('allocation_drift_threshold_pct', 5.0):.1f}%")
+                st.text(f"  Frequency: {current_config.get('automation', {}).get('rebalancing', {}).get('frequency', 'monthly')}")
+
         # Run Rebalancing Backtest Button
         st.markdown("---")
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -314,138 +392,222 @@ def render_backtest_page(dashboard):
                     f"❌ Cannot run backtest: Total allocation is {total_alloc:.2%} which exceeds 100%. Please adjust your allocations."
                 )
             else:
+                # Create custom config with user parameters
+                custom_config = create_custom_config(
+                    dashboard, custom_allocation, majors_drift_threshold,
+                    alts_drift_threshold, majors_sell_multiplier,
+                    majors_buy_multiplier, alts_sell_multiplier,
+                    alts_buy_multiplier, selected_frequency, suppress_buys_in_bear
+                )
+
+                # Store parameters for potential saving
+                st.session_state.last_backtest_params = {
+                    'custom_allocation': custom_allocation.copy(),
+                    'majors_drift_threshold': majors_drift_threshold,
+                    'alts_drift_threshold': alts_drift_threshold,
+                    'majors_sell_multiplier': majors_sell_multiplier,
+                    'majors_buy_multiplier': majors_buy_multiplier,
+                    'alts_sell_multiplier': alts_sell_multiplier,
+                    'alts_buy_multiplier': alts_buy_multiplier,
+                    'selected_frequency': selected_frequency,
+                    'suppress_buys_in_bear': suppress_buys_in_bear
+                }
+
                 with st.spinner("🔄 Running rebalancing backtest analysis..."):
                     try:
-                        # Create custom config with user parameters
-                        custom_config = dashboard.config_manager.config.copy()
-
-                        # Update rebalancing parameters
-                        custom_config["rebalance_technical"] = {
-                            "market_regime_rules": {
-                                "suppress_buys_in_bear": suppress_buys_in_bear
-                            },
-                            "majors": {
-                                "allocation_drift_threshold_pct": majors_drift_threshold,
-                                "sell_percentage_multiplier": majors_sell_multiplier,
-                                "buy_amount_multiplier": majors_buy_multiplier,
-                            },
-                            "alts": {
-                                "allocation_drift_threshold_pct": alts_drift_threshold,
-                                "sell_percentage_multiplier": alts_sell_multiplier,
-                                "buy_amount_multiplier": alts_buy_multiplier,
-                            },
-                        }
-
-                        # Update target allocation if user customized it
-                        if abs(sum(custom_allocation.values()) - 1.0) < 0.001:
-                            custom_config["target_allocation"] = custom_allocation
-
                         backtester = RebalancingBacktester(config=custom_config)
                         backtester.run(
-                            initial_capital=initial_capital, period=period
+                            initial_capital=initial_capital,
+                            period=period,
+                            frequency=selected_frequency
                         )
+
+                        # Store results in session state
+                        st.session_state.backtest_results = backtester
 
                         st.success(
-                            "✅ Rebalancing backtest completed successfully!"
+                            f"✅ Rebalancing backtest completed successfully! ({selected_frequency.title()} frequency)"
                         )
-
-                        # Results Section
-                        if hasattr(backtester, "summary_stats"):
-                            st.markdown("## 📊 Rebalancing Results")
-
-                            # Key metrics in columns
-                            stats = backtester.summary_stats
-                            metric_cols = st.columns(4)
-
-                            with metric_cols[0]:
-                                st.metric(
-                                    "Strategy Return",
-                                    f"{stats['Strategy Total Return']:.1%}",
-                                    delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H",
-                                )
-
-                            with metric_cols[1]:
-                                st.metric(
-                                    "Final Value",
-                                    f"${stats['Final Portfolio Value']:,.0f}",
-                                    delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}",
-                                )
-
-                            with metric_cols[2]:
-                                st.metric(
-                                    "Max Drawdown",
-                                    f"{stats['Maximum Drawdown']:.1%}",
-                                )
-
-                            with metric_cols[3]:
-                                st.metric(
-                                    "Total Trades",
-                                    f"{stats['Total Trades Executed']}",
-                                )
-
-                            # Detailed Results Table
-                            with st.expander(
-                                "📋 Detailed Performance Metrics", expanded=True
-                            ):
-                                st.table(
-                                    {
-                                        "Metric": [
-                                            "Initial Capital",
-                                            "Final Portfolio Value",
-                                            "Strategy Total Return",
-                                            "Buy & Hold Return",
-                                            "Strategy Outperformance",
-                                            "Maximum Drawdown",
-                                            "Annualized Volatility",
-                                            "Sharpe Ratio",
-                                            "Total Trades Executed",
-                                        ],
-                                        "Value": [
-                                            f"${stats['Initial Capital']:,.2f}",
-                                            f"${stats['Final Portfolio Value']:,.2f}",
-                                            f"{stats['Strategy Total Return']:.2%}",
-                                            f"{stats['Buy & Hold Return']:.2%}",
-                                            f"{stats['Strategy Outperformance']:+.2%}",
-                                            f"{stats['Maximum Drawdown']:.2%}",
-                                            f"{stats['Annualized Volatility']:.2%}",
-                                            f"{stats['Sharpe Ratio']:.2f}",
-                                            f"{stats['Total Trades Executed']}",
-                                        ],
-                                    }
-                                )
-
-                        # Equity Curve
-                        if hasattr(backtester, "portfolio_value_history"):
-                            st.markdown("### 📈 Portfolio Equity Curve")
-                            if (
-                                isinstance(backtester.portfolio_value_history, list)
-                                and backtester.portfolio_value_history
-                            ):
-                                # Convert to DataFrame with proper date index
-                                df = pd.DataFrame(
-                                    backtester.portfolio_value_history
-                                )
-                                df["date"] = pd.to_datetime(df["date"])
-                                df = df.set_index("date")
-                                df = df.rename(
-                                    columns={"value": "Portfolio Value ($)"}
-                                )
-
-                                # Create the chart with proper date axis
-                                st.line_chart(df, use_container_width=True)
-
-                        # Trade Log
-                        if hasattr(backtester, "trade_log"):
-                            with st.expander("📝 Rebalancing Trade Log"):
-                                st.code(
-                                    "\n".join(backtester.trade_log), language="text"
-                                )
 
                     except Exception as e:
                         st.error(f"❌ Rebalancing backtest failed: {str(e)}")
                         st.info(
                             "💡 Try adjusting the parameters or check your allocation settings"
                         )
+
+        # Display Results Section (from session state)
+        if st.session_state.backtest_results is not None:
+            backtester = st.session_state.backtest_results
+
+            # Results Section
+            if hasattr(backtester, "summary_stats"):
+                st.markdown("## 📊 Rebalancing Results")
+
+                # Key metrics in columns
+                stats = backtester.summary_stats
+                metric_cols = st.columns(4)
+
+                with metric_cols[0]:
+                    st.metric(
+                        "Strategy Return",
+                        f"{stats['Strategy Total Return']:.1%}",
+                        delta=f"{stats['Strategy Outperformance']:+.1%} vs B&H",
+                    )
+
+                with metric_cols[1]:
+                    st.metric(
+                        "Final Value",
+                        f"${stats['Final Portfolio Value']:,.0f}",
+                        delta=f"${stats['Final Portfolio Value'] - stats['Initial Capital']:+,.0f}",
+                    )
+
+                with metric_cols[2]:
+                    st.metric(
+                        "Max Drawdown",
+                        f"{stats['Maximum Drawdown']:.1%}",
+                    )
+
+                with metric_cols[3]:
+                    st.metric(
+                        "Total Trades",
+                        f"{stats['Total Trades Executed']}",
+                    )
+
+
+
+                # Detailed Results Table
+                with st.expander(
+                    "📋 Detailed Performance Metrics", expanded=True
+                ):
+                    st.table(
+                        {
+                            "Metric": [
+                                "Initial Capital",
+                                "Final Portfolio Value",
+                                "Strategy Total Return",
+                                "Buy & Hold Return",
+                                "Strategy Outperformance",
+                                "Maximum Drawdown",
+                                "Annualized Volatility",
+                                "Sharpe Ratio",
+                                "Total Trades Executed",
+                            ],
+                            "Value": [
+                                f"${stats['Initial Capital']:,.2f}",
+                                f"${stats['Final Portfolio Value']:,.2f}",
+                                f"{stats['Strategy Total Return']:.2%}",
+                                f"{stats['Buy & Hold Return']:.2%}",
+                                f"{stats['Strategy Outperformance']:+.2%}",
+                                f"{stats['Maximum Drawdown']:.2%}",
+                                f"{stats['Annualized Volatility']:.2%}",
+                                f"{stats['Sharpe Ratio']:.2f}",
+                                f"{stats['Total Trades Executed']}",
+                            ],
+                        }
+                    )
+
+            # Equity Curve
+            if hasattr(backtester, "portfolio_value_history"):
+                st.markdown("### 📈 Portfolio Equity Curve")
+                if (
+                    isinstance(backtester.portfolio_value_history, list)
+                    and backtester.portfolio_value_history
+                ):
+                    # Convert to DataFrame with proper date index
+                    df = pd.DataFrame(
+                        backtester.portfolio_value_history
+                    )
+                    df["date"] = pd.to_datetime(df["date"])
+                    df = df.set_index("date")
+                    df = df.rename(
+                        columns={"value": "Portfolio Value ($)"}
+                    )
+
+                    # Create the chart with proper date axis
+                    st.line_chart(df, use_container_width=True)
+
+            # Trade Log
+            if hasattr(backtester, "trade_log"):
+                with st.expander("📝 Rebalancing Trade Log"):
+                    st.code(
+                        "\n".join(backtester.trade_log), language="text"
+                    )
+
+            # Save as Default button - Better positioned at the bottom
+            if hasattr(backtester, "summary_stats"):
+                st.markdown("---")
+                st.markdown("### 💾 Save Configuration")
+                st.info("💡 **Satisfied with these results?** Save these proven parameters as your default settings for live trading.")
+
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    if st.button(
+                        "💾 Save These Settings as Default",
+                        type="primary",
+                        use_container_width=True,
+                        help="Save the current backtest parameters as your default rebalancing settings"
+                    ):
+                        st.session_state.show_save_confirmation = True
+                        st.rerun()
+
+        # Show confirmation dialog (outside of results section)
+        if st.session_state.show_save_confirmation and st.session_state.last_backtest_params:
+            params = st.session_state.last_backtest_params
+
+            st.warning("⚠️ **Confirm Settings Overwrite**")
+            st.markdown(f"""
+You are about to overwrite your current default settings with:
+
+**Rebalancing Parameters:**
+- Majors Drift Threshold: {params['majors_drift_threshold']:.1f}%
+- Alts Drift Threshold: {params['alts_drift_threshold']:.1f}%
+- Majors Sell Multiplier: {params['majors_sell_multiplier']:.2f}
+- Majors Buy Multiplier: {params['majors_buy_multiplier']:.2f}
+- Alts Sell Multiplier: {params['alts_sell_multiplier']:.2f}
+- Alts Buy Multiplier: {params['alts_buy_multiplier']:.2f}
+- Frequency: {params['selected_frequency'].title()}
+- Bear Market Suppression: {params['suppress_buys_in_bear']}
+
+**Target Allocation:**
+""")
+
+            # Show current allocation
+            for asset, pct in params['custom_allocation'].items():
+                st.text(f"  {asset}: {pct:.1%}")
+
+            st.markdown("---")
+
+            # Confirmation buttons
+            confirm_col1, confirm_col2, confirm_col3 = st.columns([1, 1, 1])
+            with confirm_col1:
+                if st.button("✅ Yes, Save Settings", type="primary", key="confirm_save"):
+                    try:
+                        # Create and save the configuration
+                        config_to_save = create_custom_config(
+                            dashboard, params['custom_allocation'], params['majors_drift_threshold'],
+                            params['alts_drift_threshold'], params['majors_sell_multiplier'],
+                            params['majors_buy_multiplier'], params['alts_sell_multiplier'],
+                            params['alts_buy_multiplier'], params['selected_frequency'],
+                            params['suppress_buys_in_bear']
+                        )
+
+                        dashboard.config_manager.config = config_to_save
+                        dashboard.config_manager.save_config()
+                        dashboard.reload()
+
+                        st.success("✅ Settings saved as default! Your proven parameters are now active.")
+                        st.info("💡 These settings will be used for live rebalancing and future backtests.")
+
+                        # Reset confirmation state
+                        st.session_state.show_save_confirmation = False
+
+                    except Exception as e:
+                        st.error(f"❌ Failed to save settings: {str(e)}")
+
+            with confirm_col3:
+                if st.button("❌ Cancel", type="secondary", key="cancel_save"):
+                    st.session_state.show_save_confirmation = False
+                    st.rerun()
 
     # --- Strategy Backtest Tab ---
     with tab2:

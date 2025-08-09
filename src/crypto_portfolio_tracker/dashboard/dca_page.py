@@ -1,11 +1,31 @@
 import asyncio
+from datetime import datetime, timezone
+
 import pandas as pd
 import streamlit as st
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 
 
 def render_dca_page(dashboard):
     """Render the Dollar Cost Averaging (DCA) page using a state machine."""
     st.markdown("## 💸 Dollar Cost Averaging (DCA)")
+
+    # Last and Next info
+    last_dca = dashboard.initialize_tracker().db_manager.get_latest_timestamp_for_source("DCA")
+    dca_freq = (
+        dashboard.config_manager.config.get("automation", {}).get("dca", {}).get("frequency")
+        or "monthly"
+    )
+    next_dca = ui_utils.compute_next_time(last_dca, dca_freq)
+    
+    col_last, _, col_next = st.columns([2, 1.8, 2])
+    with col_last:
+        if last_dca:
+            st.metric("Last DCA", ui_utils.format_datetime_local(last_dca))
+        else:
+            st.metric("Last DCA", "No trades yet")
+    with col_next:
+        st.metric(f"Next DCA ({dca_freq.title()})", ui_utils.format_datetime_local(next_dca))
 
     tracker = dashboard.initialize_tracker()
     if not tracker:
@@ -238,6 +258,7 @@ def _execute_dca_trades_now(tracker, trades, validation):
                 )
             )
         st.session_state.dca_execution_result_data = result
+        st.session_state.dca_batch_id = getattr(result, "data", {}).get("batch_id")
     except Exception as e:
         st.session_state.dca_execution_result_data = (
             f"An unexpected error occurred during execution: {e}"
@@ -268,6 +289,9 @@ def _render_dca_results_view(tracker):
             st.error("❌ Some DCA trades failed.")
 
         st.code("\n".join(result.messages), language="text")
+        batch_id = st.session_state.get("dca_batch_id")
+        if batch_id:
+            st.info(f"Batch ID: {batch_id}")
         if result.errors:
             st.error("Errors Reported:")
             st.code("\n".join(result.errors), language="text")

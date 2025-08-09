@@ -55,8 +55,8 @@ dev = [
 
 # CLI entry point
 [project.scripts]
-track-portfolio = "crypto_portfolio_tracker.__main__:main"
-track-portfolio-web = "crypto_portfolio_tracker.webui_launcher:main"
+track-portfolio-cli = "crypto_portfolio_tracker.__main__:main"
+track-portfolio-web = "crypto_portfolio_tracker.dashboard_launcher:main"
 
 # Test configuration
 [tool.pytest.ini_options]

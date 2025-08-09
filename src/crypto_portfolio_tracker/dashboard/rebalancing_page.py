@@ -1,8 +1,9 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 
 from crypto_portfolio_tracker.portfolio_tracker import ExecutionMode
 
@@ -10,6 +11,28 @@ from crypto_portfolio_tracker.portfolio_tracker import ExecutionMode
 
 def render_rebalancing_page(dashboard):
         st.markdown("## ⚖️ Portfolio Rebalancing")
+
+        # Last and Next info
+        tracker = dashboard.initialize_tracker()
+        last_rb = tracker.db_manager.get_latest_timestamp_for_source("REBALANCE")
+        # Fallback to last sync if no rebalancing trades found
+        if not last_rb:
+            last_sync = tracker.db_manager.get_latest_timestamp_for_source("SYNC")
+            last_rb = last_sync
+        rb_freq = (
+            dashboard.config_manager.config.get("automation", {}).get("rebalancing", {}).get("frequency")
+            or "weekly"
+        )
+        next_rb = ui_utils.compute_next_time(last_rb, rb_freq)
+        
+        col_last, _, col_next = st.columns([2, 1.8, 2])
+        with col_last:
+            if last_rb:
+                st.metric("Last Rebalance", ui_utils.format_datetime_local(last_rb))
+            else:
+                st.metric("Last Rebalance", "No trades yet")
+        with col_next:
+            st.metric(f"Next Check ({rb_freq.title()})", ui_utils.format_datetime_local(next_rb))
 
         # --- Trading Status Banner ---
         is_live = dashboard.config_manager.is_live
@@ -118,7 +141,7 @@ def render_rebalancing_page(dashboard):
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("#### 📊 Current Allocation")
+            st.markdown("#### 📊 Current Allocation", help="Allocations are shown as a percentage of your core portfolio (assets being rebalanced).")
             suggestions_df = st.session_state.rebalance_suggestions
             if suggestions_df is not None and not suggestions_df.empty:
                 # Build the status table from suggestions for uniformity
@@ -145,9 +168,6 @@ def render_rebalancing_page(dashboard):
                     "Value (USD)",
                 ]
                 st.dataframe(alloc_table, use_container_width=True, hide_index=True)
-                st.caption(
-                    "Allocations are shown as a percentage of your core portfolio (assets being rebalanced)."
-                )
             else:
                 st.info("Portfolio analysis required")
 
@@ -496,6 +516,8 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
 {output}
     === END EXECUTION LOG ===
     """
+                            # store batch id for UI
+                            st.session_state.rebalance_batch_id = result.data.get("batch_id")
                         else:
                             # Show both messages and errors
                             st.session_state.rebalance_results = f"""=== REBALANCING EXECUTION RESULTS ===
@@ -530,6 +552,7 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         if st.session_state.rebalance_results:
             st.markdown("### 📋 Execution Results & Logs")
             results = st.session_state.rebalance_results
+            batch_id = st.session_state.get("rebalance_batch_id")
 
             if "EXECUTION COMPLETED" in results:
                 st.success("✅ **Execution Successful!**")
@@ -557,3 +580,4 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
             else:
                 st.info("ℹ️ **Execution Information**")
                 st.code(results, language="text")
+

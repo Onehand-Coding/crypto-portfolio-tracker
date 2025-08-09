@@ -142,12 +142,17 @@ class RebalancingBacktester:
         self.logger.info("Successfully fetched and prepared historical data.")
         return True
 
-    def run(self, initial_capital: float, period: str):
+    def run(self, initial_capital: float, period: str, frequency: str = "monthly"):
         """
-        The main orchestration method for the backtest. This is self-contained and runs the whole process.
+        The main orchestration method for the backtest.
+        
+        Args:
+            initial_capital: Starting capital amount
+            period: Backtest period (e.g., "2y", "3y")
+            frequency: Rebalancing frequency ("weekly", "monthly", "quarterly")
         """
         self.reset_state(initial_capital)
-
+        
         original_assets = list(self.config.get("target_allocation", {}).keys())
 
         if not self._fetch_and_prepare_data(symbols=original_assets, period=period):
@@ -190,19 +195,23 @@ class RebalancingBacktester:
             }
 
         self.logger.info(
-            f"Running backtest with adjusted allocation for {len(assets_to_backtest)} assets."
+            f"Running {frequency} rebalancing backtest with adjusted allocation for {len(assets_to_backtest)} assets."
         )
 
         self._pre_calculate_indicators(assets_to_backtest)
-        self.run_simulation(self.executed_allocation)
+        self.run_simulation(self.executed_allocation, frequency)
         self.generate_report()
 
-    def run_simulation(self, target_allocation: Dict[str, float]):
+    def run_simulation(self, target_allocation: Dict[str, float], frequency: str = "monthly"):
         """
-        Executes the core simulation logic month by month.
+        Executes the core simulation logic with configurable frequency.
+        
+        Args:
+            target_allocation: Target allocation percentages
+            frequency: Rebalancing frequency ("weekly", "monthly", "quarterly")
         """
         self.logger.info(
-            f"Starting monthly rebalancing simulation from {self.data.index[0].date()} to {self.data.index[-1].date()}..."
+            f"Starting {frequency} rebalancing simulation from {self.data.index[0].date()} to {self.data.index[-1].date()}..."
         )
 
         portfolio = {"USDT": self.initial_capital}
@@ -212,7 +221,15 @@ class RebalancingBacktester:
         # --- Define a minimum price threshold to avoid dust trades ---
         min_price_threshold = 0.0001
 
-        rebalance_dates = self.data.resample("MS").first().index
+        # Map frequency to pandas resampling rule
+        frequency_map = {
+            "weekly": "W",
+            "monthly": "MS", 
+            "quarterly": "QS"
+        }
+        
+        resample_rule = frequency_map.get(frequency, "MS")  # Default to monthly
+        rebalance_dates = self.data.resample(resample_rule).first().index
 
         for date in rebalance_dates:
             if date not in self.data.index:

@@ -48,6 +48,33 @@ def render_settings_page(dashboard):
                         help="💵 Minimum USD value for trades. Smaller trades are ignored.",
                     )
 
+                    # Add trade schedules here
+                    st.markdown("---")
+                    st.markdown("#### 📆 Trade Schedules")
+
+                    freq_options = ["daily", "weekly", "biweekly", "monthly", "quarterly"]
+                    auto_cfg = config.setdefault("automation", {})
+                    dca_cfg = auto_cfg.setdefault("dca", {})
+                    rb_cfg = auto_cfg.setdefault("rebalancing", {})
+
+                    col_dca, col_rb = st.columns(2)
+                    with col_dca:
+                        new_dca_freq = st.selectbox(
+                            "DCA Frequency",
+                            freq_options,
+                            index=freq_options.index(dca_cfg.get("frequency", "monthly"))
+                            if dca_cfg.get("frequency", "monthly") in freq_options else 3,
+                            help="Frequency for Dollar Cost Averaging trades.",
+                        )
+                    with col_rb:
+                        new_rb_freq = st.selectbox(
+                            "Rebalancing Frequency",
+                            freq_options,
+                            index=freq_options.index(rb_cfg.get("frequency", "weekly"))
+                            if rb_cfg.get("frequency", "weekly") in freq_options else 1,
+                            help="Frequency for portfolio rebalancing checks.",
+                        )
+
                 with st.expander("⚙️ Trading Mode", expanded=False):
                     live_enabled_config = config.get("portfolio", {}).get(
                         "live_trading_enabled", False
@@ -104,6 +131,8 @@ def render_settings_page(dashboard):
                 ):
                     try:
                         config["portfolio"]["minimum_trade_usd"] = new_min_trade_usd
+                        config["automation"]["dca"]["frequency"] = new_dca_freq
+                        config["automation"]["rebalancing"]["frequency"] = new_rb_freq
                         config["portfolio"]["live_trading_enabled"] = new_live
                         config["portfolio"]["testnet_mode"] = new_testnet
                         config["portfolio"]["p2p_fiat_currency"] = (
@@ -119,8 +148,10 @@ def render_settings_page(dashboard):
                             for s in new_stablecoins.split(",")
                             if s.strip()
                         ]
+                        # Save and Reload
                         dashboard.config_manager.save_config()
                         dashboard.reload()
+
                         st.success("✅ Portfolio settings updated and applied!")
                         st.rerun()
                     except Exception as e:
@@ -250,7 +281,10 @@ def render_settings_page(dashboard):
                             new_cg_delay
                         )
                         config["history_lookback_days"] = new_lookback
+                        # Save and Reload
                         dashboard.config_manager.save_config()
+                        dashboard.reload()
+
                         st.success("✅ API settings updated and applied!")
                         st.rerun()
                     except Exception as e:
@@ -359,6 +393,7 @@ def render_settings_page(dashboard):
                                 new_console_enabled
                             )
                             dashboard.config_manager.save_config()
+                            dashboard.reload()
                             dashboard.setup_logging(level_override=new_level)
                             st.success(
                                 f"✅ Logging settings updated! Level: {level_icons.get(new_level, '')} {new_level}"
@@ -530,7 +565,10 @@ def render_settings_page(dashboard):
                         config["trend_analyzer"]["timeframe_settings"] = (
                             timeframe_settings
                         )
+                        # Save and Reload
                         dashboard.config_manager.save_config()
+                        dashboard.reload()
+
                         st.success(
                             "✅ Trend Analyzer settings updated and applied!"
                         )
@@ -564,8 +602,9 @@ def render_settings_page(dashboard):
                     try:
                         export_config = config.copy()
                         # Remove sensitive data
-                        export_config.pop("main_api_keys", None)
-                        export_config.pop("sub_accounts", None)
+                        del export_config["main_api_keys"]
+                        del export_config["sub_accounts"]
+                        del export_config["apis"]["coingecko"]["api_key"]
 
                         export_path_obj = Path(export_path)
                         export_path_obj.parent.mkdir(parents=True, exist_ok=True)
@@ -646,6 +685,7 @@ def render_settings_page(dashboard):
 
                                     config.update(new_config)
                                     dashboard.config_manager.save_config()
+                                    dashboard.reload()
 
                                     st.success(
                                         "✅ Configuration imported successfully! Please restart the application."

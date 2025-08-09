@@ -791,7 +791,7 @@ def _display_execution_results(dashboard):
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
-            _sync_portfolio_and_reset()
+            _sync_portfolio_and_reset(dashboard)
     with col2:
         if st.button(
             "🆕 New Strategy Run", type="secondary", use_container_width=True

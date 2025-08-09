@@ -65,31 +65,61 @@ The project follows a standard `src` layout for clean, maintainable, and distrib
 ```
 crypto-portfolio-tracker/
 ├── config/
-│   ├── default_config.json
-│   └── .gitkeep
+│   └── default_config.json
 ├── data/
-│   ├── portfolio.db
-│   ├── testnet_portfolio.db
-│   ├── coingecko_mappings.json
-│   ├── strategy_state.json
-│   ├── connection_state.json
-│   ├── db_backups/
 │   ├── cache/
 │   │   ├── backtest_data/
 │   │   ├── coingecko_historical/
+│   │   │   └── cache.db
 │   │   ├── fiat_exchange_rates/
+│   │   │   └── cache.db
+│   │   ├── rebalancing_presets/
 │   │   └── yfinance_historical/
+│   │       └── cache.db
+│   ├── db_backups/
+│   │   ├── portfolio.db.20250628_120358.bak
+│   │   └── ... (automated backups)
 │   ├── exports/
-│   └── trend_reports/
+│   │   ├── charts/
+│   │   ├── portfolio_report_*.xlsx
+│   │   ├── tax_report_*.xlsx
+│   │   ├── holdings_backup_*.csv
+│   │   ├── transactions_backup_*.csv
+│   │   └── trend_report_*.html
+│   ├── coingecko_mappings.json
+│   ├── connection_state.json
+│   ├── portfolio.db
+│   ├── strategy_state.json
+│   └── testnet_portfolio.db
 ├── logs/
 │   └── portfolio_tracker.log
 ├── src/
 │   └── crypto_portfolio_tracker/
+│       ├── dashboard/
+│       │   ├── __init__.py
+│       │   ├── app.py
+│       │   ├── backtest_page.py
+│       │   ├── database_page.py
+│       │   ├── dca_page.py
+│       │   ├── home_page.py
+│       │   ├── main_dashboard.py
+│       │   ├── market_page.py
+│       │   ├── rebalancing_page.py
+│       │   ├── settings_page.py
+│       │   ├── trading_page.py
+│       │   ├── transfer_page.py
+│       │   ├── ui_controller.py
+│       │   └── utils.py
+│       ├── templates/
+│       │   ├── report_template.html
+│       │   ├── tax_report_template.html
+│       │   └── trend_report_template.html
 │       ├── __init__.py
 │       ├── __main__.py
 │       ├── binance_fetcher.py
 │       ├── config.py
 │       ├── crypto_trend_analyzer.py
+│       ├── dashboard_launcher.py
 │       ├── database.py
 │       ├── exceptions.py
 │       ├── exporters.py
@@ -101,24 +131,21 @@ crypto-portfolio-tracker/
 │       ├── symbol_mapper.py
 │       ├── trading_strategies.py
 │       ├── utils.py
-│       ├── visualizations.py
-│       ├── webui.py
-│       ├── webui_launcher.py
-│       └── templates/
-│           ├── report_template.html
-│           ├── tax_report_template.html
-│           └── trend_report_template.html
+│       └── visualizations.py
 ├── tests/
+│   ├── conftest.py
+│   ├── test_api_integration.py
 │   ├── test_binance_fetcher.py
+│   ├── test_database.py
 │   ├── test_portfolio_tracker.py
+│   ├── test_portfolio_tracker_comprehensive.py
 │   └── test_price_enricher.py
+├── default_config.json.example
+├── LICENSE
 ├── main.py
 ├── pyproject.toml
-├── default_config.json.example
-├── uv.lock
-├── .gitignore
-├── LICENSE
-└── README.md
+├── README.md
+└── uv.lock
 ```
 
 ## 🛠 Installation & Setup

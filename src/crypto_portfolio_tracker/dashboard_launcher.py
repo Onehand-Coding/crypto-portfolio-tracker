@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 def main():
+    """Launches the streamlit dashboard."""
     script_path = Path(__file__).parent / "dashboard" / "app.py"
     try:
         subprocess.run(
