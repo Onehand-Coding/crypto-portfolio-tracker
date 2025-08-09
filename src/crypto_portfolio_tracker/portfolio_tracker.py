@@ -30,6 +30,7 @@ from binance.exceptions import BinanceAPIException
 from requests.exceptions import ConnectionError
 import socket
 from enum import Enum
+import uuid
 
 from . import trading_strategies
 from .config import ConfigManager
@@ -817,6 +818,64 @@ class CryptoPortfolioTracker:
 
         return result
 
+    def _make_tx_hash(
+        self,
+        source: str,
+        batch_id: str,
+        symbol: str,
+        side: str,
+        ts: datetime.datetime,
+        order: Optional[dict] = None,
+    ) -> str:
+        if order and isinstance(order, dict) and order.get("orderId"):
+            return f"binance:{order['orderId']}"
+        return f"{source}:{batch_id}:{symbol}:{side}:{int(ts.timestamp()*1000)}"
+
+    def _record_trade_transaction(
+        self,
+        *,
+        symbol: str,
+        side: str,  # "BUY" | "SELL"
+        quantity: float,
+        price_usd: float,
+        source: str,  # "REBALANCE" | "DCA"
+        mode: str,    # "LIVE" | "TESTNET" | "SIM"
+        batch_id: str,
+        order: Optional[dict] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        try:
+            ts = datetime.datetime.now(datetime.timezone.utc)
+            notes = {
+                "batch_id": batch_id,
+                "mode": mode,
+                "source": source,
+                "status": "FILLED" if not error else "ERROR",
+                "error": error,
+            }
+            if order and isinstance(order, dict):
+                # keep only lightweight identifiers
+                notes["order"] = {
+                    k: order.get(k)
+                    for k in ("orderId", "clientOrderId", "transactTime", "symbol", "side")
+                }
+            tx = {
+                "symbol": symbol,
+                "timestamp": ts,
+                "type": side,  # must be BUY/SELL per schema
+                "quantity": float(quantity) if quantity is not None else 0.0,
+                "price_usd": float(price_usd) if price_usd is not None else 0.0,
+                "fee_quantity": None,
+                "fee_currency": None,
+                "fee_usd": None,
+                "source": source,
+                "notes": json.dumps(notes, default=str),
+                "transaction_hash": self._make_tx_hash(source, batch_id, symbol, side, ts, order),
+            }
+            self.db_manager.bulk_insert_transactions([tx])
+        except Exception as e:
+            self.logger.error(f"Failed to record trade transaction: {e}", exc_info=True)
+
     async def execute_rebalancing_trades_core(
         self,
         suggestions_df,
@@ -856,6 +915,7 @@ class CryptoPortfolioTracker:
         portfolio_config = self.config.get("portfolio", {})
         min_trade_usd = portfolio_config.get("minimum_trade_usd", 10.0)
         is_live = portfolio_config.get("live_trading_enabled", False)
+        mode = "TESTNET" if self.config_manager.is_testnet_mode else ("LIVE" if is_live else "SIM")
 
         simulated_balances = {}
         all_trade_symbols = set(trades_to_execute["Symbol"].unique()) | {"USDT"}
@@ -1025,6 +1085,17 @@ class CryptoPortfolioTracker:
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             trades_executed_count += 1
                             simulated_balances[symbol] -= adjusted_quantity
+                            # record trade
+                            self._record_trade_transaction(
+                                symbol=symbol,
+                                side="SELL",
+                                quantity=adjusted_quantity,
+                                price_usd=current_price or 0.0,
+                                source="REBALANCE",
+                                mode=mode,
+                                batch_id=str(uuid.uuid4()),
+                                order=order,
+                            )
                         except Exception as e:
                             result.messages.append(
                                 f"❌ LIVE SELL FAILED for {symbol}: {e}"
@@ -1040,6 +1111,17 @@ class CryptoPortfolioTracker:
                         )
                         trades_executed_count += 1
                         simulated_balances[symbol] -= adjusted_quantity
+                        # record simulated trade
+                        self._record_trade_transaction(
+                            symbol=symbol,
+                            side="SELL",
+                            quantity=adjusted_quantity,
+                            price_usd=current_price or 0.0,
+                            source="REBALANCE",
+                            mode=mode,
+                            batch_id=str(uuid.uuid4()),
+                            order=None,
+                        )
 
                 elif signal == "BUY":
                     if usd_value > simulated_balances.get("USDT", 0.0):
@@ -1060,6 +1142,19 @@ class CryptoPortfolioTracker:
                             self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
                             trades_executed_count += 1
                             simulated_balances["USDT"] -= usd_value
+                            # record trade (approx quantity using current price)
+                            price_now = self._get_current_prices([symbol]).get(symbol, 0.0) or 0.0
+                            qty = (usd_value / price_now) if price_now > 0 else 0.0
+                            self._record_trade_transaction(
+                                symbol=symbol,
+                                side="BUY",
+                                quantity=qty,
+                                price_usd=price_now,
+                                source="REBALANCE",
+                                mode=mode,
+                                batch_id=str(uuid.uuid4()),
+                                order=order,
+                            )
                         except Exception as e:
                             result.messages.append(
                                 f"❌ LIVE BUY FAILED for {symbol}: {e}"
@@ -1075,6 +1170,18 @@ class CryptoPortfolioTracker:
                         )
                         trades_executed_count += 1
                         simulated_balances["USDT"] -= usd_value
+                        price_now = self._get_current_prices([symbol]).get(symbol, 0.0) or 0.0
+                        qty = (usd_value / price_now) if price_now > 0 else 0.0
+                        self._record_trade_transaction(
+                            symbol=symbol,
+                            side="BUY",
+                            quantity=qty,
+                            price_usd=price_now,
+                            source="REBALANCE",
+                            mode=mode,
+                            batch_id=str(uuid.uuid4()),
+                            order=None,
+                        )
 
             except Exception as e:
                 result.messages.append(
@@ -1088,8 +1195,8 @@ class CryptoPortfolioTracker:
             f"✅ {trades_executed_count} trade(s) executed successfully!"
         )
         result.data["trades_executed"] = trades_executed_count
+        result.data["batch_id"] = str(uuid.uuid4())
         result.success = trades_executed_count > 0
-
         return result
 
     async def execute_manual_trade_core(
@@ -2175,6 +2282,8 @@ class CryptoPortfolioTracker:
             TradeResult with execution results
         """
         result = TradeResult(success=True)  # Initialize with success=True
+        batch_id = str(uuid.uuid4())
+        mode = "TESTNET" if self.config_manager.is_testnet_mode else ("LIVE" if is_live else "SIM")
 
         if not selected_trades:
             result.messages.append("No trades selected for execution")
@@ -2211,7 +2320,32 @@ class CryptoPortfolioTracker:
             result.success &= trade_result.success
             result.messages.extend(trade_result.messages)
             result.errors.extend(trade_result.errors)
+            # Record trade using actual order data
+            order_data = trade_result.data.get("order", {})
+            if order_data and "price" in order_data:
+                price_usd = float(order_data.get("price", 0))
+                qty = float(order_data.get("executedQty", trade_amount))
+            else:
+                price_usd = 0.0
+                qty = trade_amount
+            self._record_trade_transaction(
+                symbol=asset,
+                side=trade_type,
+                quantity=qty,
+                price_usd=price_usd,
+                source="DCA",
+                mode=mode,
+                batch_id=batch_id,
+                order=order_data,
+                error="\n".join(trade_result.errors) if trade_result.errors else None,
+            )
 
+        result.messages.append("\n" + "=" * 80)
+        result.messages.append(
+            f"✅ {len(selected_trades)} DCA trade(s) executed successfully!"
+        )
+        result.data["batch_id"] = batch_id
+        result.success = len(selected_trades) > 0
         return result
 
     def validate_dca_execution(
