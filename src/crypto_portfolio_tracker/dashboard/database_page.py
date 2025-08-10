@@ -1,4 +1,3 @@
-
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -69,9 +68,7 @@ def render_database_page(dashboard):
                     if st.button(
                         "Confirm Restore", key=f"confirm_restore_{selected_backup}"
                     ):
-                        success = tracker.db_manager.restore_from_backup(
-                            backup_path
-                        )
+                        success = tracker.db_manager.restore_from_backup(backup_path)
                         if success:
                             st.success(
                                 "Database restored. Please restart the app to use the restored data."
@@ -90,13 +87,9 @@ def render_database_page(dashboard):
                 "Select data to export", ["Holdings", "Transactions"]
             )
         with col2:
-            export_format = st.radio(
-                "Select format", ["CSV", "Excel"], horizontal=True
-            )
+            export_format = st.radio("Select format", ["CSV", "Excel"], horizontal=True)
 
-        if st.button(
-            "🚀 Generate Export", use_container_width=True, type="primary"
-        ):
+        if st.button("🚀 Generate Export", use_container_width=True, type="primary"):
             with st.spinner(f"Generating {export_type} export..."):
                 try:
                     result = tracker.export_data_backup(
@@ -205,9 +198,7 @@ def render_database_page(dashboard):
                 ]
                 if missing_cols:
                     st.error(f"❌ Missing required columns: {missing_cols}")
-                    st.info(
-                        "💡 Required columns: symbol, quantity, average_cost_basis"
-                    )
+                    st.info("💡 Required columns: symbol, quantity, average_cost_basis")
                     st.info("💡 All other columns will be imported if present")
                     st.stop()
 
@@ -236,9 +227,7 @@ def render_database_page(dashboard):
                 ]
                 if missing_cols:
                     st.error(f"❌ Missing required columns: {missing_cols}")
-                    st.info(
-                        "💡 Required columns: symbol, timestamp, type, quantity"
-                    )
+                    st.info("💡 Required columns: symbol, timestamp, type, quantity")
                     st.info("💡 All other columns will be imported if present")
                     st.stop()
 
@@ -259,10 +248,8 @@ def render_database_page(dashboard):
                     if st.button("Confirm Import"):
                         try:
                             transactions_list = df.to_dict(orient="records")
-                            rows_affected = (
-                                tracker.db_manager.bulk_insert_transactions(
-                                    transactions_list
-                                )
+                            rows_affected = tracker.db_manager.bulk_insert_transactions(
+                                transactions_list
                             )
                             st.success(
                                 f"✅ Successfully imported {rows_affected} transactions!"
@@ -323,9 +310,7 @@ def render_database_page(dashboard):
                 elif is_zero_values:
                     label = f"⚠️ Invalid Snapshot (Zero Values) | {timestamp_value} | Value: ${row['total_value_usd']:,.2f}"
                 else:
-                    label = (
-                        f"{timestamp_value} | Value: ${row['total_value_usd']:,.2f}"
-                    )
+                    label = f"{timestamp_value} | Value: ${row['total_value_usd']:,.2f}"
                 snapshot_labels.append(label)
 
             selected_idx = st.selectbox(
@@ -337,9 +322,7 @@ def render_database_page(dashboard):
 
             st.write("### Snapshot Details")
             display_dict = {
-                "Timestamp": str(
-                    selected_row.name
-                ),  # Use .name to access the index
+                "Timestamp": str(selected_row.name),  # Use .name to access the index
                 "Total Value (USD)": f"${selected_row['total_value_usd']:,.2f}",
                 "Total Cost Basis (USD)": f"${selected_row['total_cost_basis_usd']:,.2f}",
                 "Unrealized P/L (USD)": f"${selected_row['unrealized_pl_usd']:,.2f}",
@@ -496,9 +479,7 @@ def render_database_page(dashboard):
             st.warning("Database file not found.")
         st.write(f"**Backup Directory:** `{backup_dir}`")
         if backup_dir.exists():
-            st.write(
-                f"**Backups Available:** {len(list(backup_dir.glob('*.bak')))}"
-            )
+            st.write(f"**Backups Available:** {len(list(backup_dir.glob('*.bak')))}")
         else:
             st.warning("Backup directory not found.")
 
@@ -510,9 +491,7 @@ def render_database_page(dashboard):
             # Get raw data from database
             with tracker.db_manager._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM portfolio_snapshots ORDER BY timestamp"
-                )
+                cursor.execute("SELECT * FROM portfolio_snapshots ORDER BY timestamp")
                 raw_rows = cursor.fetchall()
 
             st.write(f"**Total snapshots in database:** {len(raw_rows)}")

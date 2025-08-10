@@ -6,7 +6,15 @@ import pandas as pd
 import streamlit as st
 
 from crypto_portfolio_tracker.visualizations import Visualizer
-from crypto_portfolio_tracker.utils import format_percent, format_usd, build_holdings_table, calculate_fifo_realized_gains, parse_df_string, clean_futures_balances, clean_funding_balances
+from crypto_portfolio_tracker.utils import (
+    format_percent,
+    format_usd,
+    build_holdings_table,
+    calculate_fifo_realized_gains,
+    parse_df_string,
+    clean_futures_balances,
+    clean_funding_balances,
+)
 
 
 def _display_metrics(metrics):
@@ -276,16 +284,10 @@ def render_home_page(dashboard):
 
         elif chart_choice == "Current vs. Target Allocation":
             st.subheader("Current vs. Target Allocation")
-            if (
-                holdings_df is not None
-                and not holdings_df.empty
-                and target_allocation
-            ):
+            if holdings_df is not None and not holdings_df.empty and target_allocation:
                 # Interactive version
-                fig_interactive = (
-                    visualizer.create_interactive_allocation_comparison(
-                        holdings_df, target_allocation
-                    )
+                fig_interactive = visualizer.create_interactive_allocation_comparison(
+                    holdings_df, target_allocation
                 )
                 st.plotly_chart(fig_interactive, use_container_width=True)
 
@@ -306,16 +308,12 @@ def render_home_page(dashboard):
                 and "unrealized_pl_usd" in holdings_df.columns
             ):
                 # Interactive version
-                fig_interactive = visualizer.create_interactive_pl_by_asset(
-                    holdings_df
-                )
+                fig_interactive = visualizer.create_interactive_pl_by_asset(holdings_df)
                 st.plotly_chart(fig_interactive, use_container_width=True)
 
                 # Add export button that saves to exports directory
                 if st.button("Export Chart", key="export_pl_by_asset"):
-                    visualizer.create_pl_by_asset_bar(
-                        holdings_df, save_to_disk=True
-                    )
+                    visualizer.create_pl_by_asset_bar(holdings_df, save_to_disk=True)
                     st.success("✅ Unrealized P/L by Asset Chart exported!")
             else:
                 st.info("No P/L data available for chart.")
@@ -324,9 +322,7 @@ def render_home_page(dashboard):
             st.subheader("Portfolio Value History")
             if snapshots is not None and not snapshots.empty:
                 # Interactive version
-                fig_interactive = visualizer.create_interactive_value_history(
-                    snapshots
-                )
+                fig_interactive = visualizer.create_interactive_value_history(snapshots)
                 st.plotly_chart(fig_interactive, use_container_width=True)
 
                 # Add export button that saves to exports directory
@@ -449,9 +445,7 @@ def render_home_page(dashboard):
                     "Trade Source",
                     "Notes",
                 ]
-                drop_cols = [
-                    col for col in ["id", "asset_id"] if col in tx_df.columns
-                ]
+                drop_cols = [col for col in ["id", "asset_id"] if col in tx_df.columns]
                 display_df = tx_df.drop(columns=drop_cols, errors="ignore").rename(
                     columns=col_map
                 )

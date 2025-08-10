@@ -539,10 +539,12 @@ async def run_rebalancing_backtest(tracker: CryptoPortfolioTracker):
 
         # Add frequency selection
         frequency = await loop.run_in_executor(
-            None, input, "Enter rebalancing frequency (weekly/monthly/quarterly - default: monthly): "
+            None,
+            input,
+            "Enter rebalancing frequency (weekly/monthly/quarterly - default: monthly): ",
         )
         frequency = frequency.strip().lower() if frequency.strip() else "monthly"
-        
+
         if frequency not in ["weekly", "monthly", "quarterly"]:
             print("❌ Invalid frequency. Using monthly as default.")
             frequency = "monthly"
@@ -564,7 +566,9 @@ async def run_rebalancing_backtest(tracker: CryptoPortfolioTracker):
                     "❌ Invalid format. Please use a number followed by 'd', 'm', or 'y' (e.g., '90d', '6m', '3y')."
                 )
 
-        backtester.run(initial_capital=initial_capital, period=period, frequency=frequency)
+        backtester.run(
+            initial_capital=initial_capital, period=period, frequency=frequency
+        )
 
     except Exception as e:
         logger.error(

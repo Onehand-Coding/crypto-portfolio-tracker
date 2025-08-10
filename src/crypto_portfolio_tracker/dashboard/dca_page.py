@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 from crypto_portfolio_tracker.dashboard import utils as ui_utils
+from crypto_portfolio_tracker.dashboard.components.transfer_widget import (
+    render_transfer_widget,
+)
 
 
 def render_dca_page(dashboard):
@@ -11,13 +14,17 @@ def render_dca_page(dashboard):
     st.markdown("## 💸 Dollar Cost Averaging (DCA)")
 
     # Last and Next info
-    last_dca = dashboard.initialize_tracker().db_manager.get_latest_timestamp_for_source("DCA")
+    last_dca = (
+        dashboard.initialize_tracker().db_manager.get_latest_timestamp_for_source("DCA")
+    )
     dca_freq = (
-        dashboard.config_manager.config.get("automation", {}).get("dca", {}).get("frequency")
+        dashboard.config_manager.config.get("automation", {})
+        .get("dca", {})
+        .get("frequency")
         or "monthly"
     )
     next_dca = ui_utils.compute_next_time(last_dca, dca_freq)
-    
+
     col_last, _, col_next = st.columns([2, 1.8, 2])
     with col_last:
         if last_dca:
@@ -25,7 +32,9 @@ def render_dca_page(dashboard):
         else:
             st.metric("Last DCA", "No trades yet")
     with col_next:
-        st.metric(f"Next DCA ({dca_freq.title()})", ui_utils.format_datetime_local(next_dca))
+        st.metric(
+            f"Next DCA ({dca_freq.title()})", ui_utils.format_datetime_local(next_dca)
+        )
 
     tracker = dashboard.initialize_tracker()
     if not tracker:
@@ -67,6 +76,11 @@ def render_dca_page(dashboard):
     with col3:
         st.metric("Total Available", f"${usdt_balances['total']:,.2f}")
     st.markdown("---")
+
+    # Contextual transfer (only when funding has balance)
+    if float(usdt_balances.get("funding", 0.0)) > 0:
+        # If user typed a DCA amount later, widget will still be helpful here with hint None
+        render_transfer_widget(dashboard, context="DCA")
 
     # --- Current Portfolio Status ---
     st.markdown("### 📊 Current Portfolio Status")
@@ -129,77 +143,79 @@ def render_dca_page(dashboard):
     elif st.session_state.dca_step == "results":
         _render_dca_results_view(tracker)
 
+
 def _render_dca_initial_view(tracker):
-        """Renders the main DCA calculator and trade selection view."""
-        st.markdown("### 🧮 DCA Calculator")
+    """Renders the main DCA calculator and trade selection view."""
+    st.markdown("### 🧮 DCA Calculator")
 
-        # Create a single row for the inputs
-        col1, col2 = st.columns(2)
+    # Create a single row for the inputs
+    col1, col2 = st.columns(2)
 
-        with col1:
-            dca_method = st.radio(
-                "DCA Method:",
-                ["Proportional", "Target-Weight"],
-                help="Proportional: Distributes funds to maintain current portfolio proportions. Target-Weight: Distributes funds to reach your target allocation.",
-            )
+    with col1:
+        dca_method = st.radio(
+            "DCA Method:",
+            ["Proportional", "Target-Weight"],
+            help="Proportional: Distributes funds to maintain current portfolio proportions. Target-Weight: Distributes funds to reach your target allocation.",
+        )
 
-        with col2:
-            new_funds = st.number_input(
-                "New Fund (USDT)",
-                min_value=0.0,
-                step=0.01,
-                help="Amount of USDT to invest",
-            )
+    with col2:
+        new_funds = st.number_input(
+            "New Fund (USDT)",
+            min_value=0.0,
+            step=0.01,
+            help="Amount of USDT to invest",
+        )
 
-        is_valid, message = tracker.validate_dca_amount(new_funds)
-        if new_funds > 0:
-            if is_valid:
-                st.success(message)
-            else:
-                st.error(message)
-                return
-
-        if not (new_funds > 0 and is_valid):
+    is_valid, message = tracker.validate_dca_amount(new_funds)
+    if new_funds > 0:
+        if is_valid:
+            st.success(message)
+        else:
+            st.error(message)
             return
 
-        with st.spinner("Calculating DCA suggestions..."):
-            suggestions = asyncio.run(tracker.get_dca_suggestions(new_funds))
-            if "error" in suggestions:
-                st.error(f"❌ {suggestions['error']}")
-                return
+    if not (new_funds > 0 and is_valid):
+        return
 
-        st.markdown("### 📋 DCA Trade Suggestions")
-        st.info(f"📊 Using **{dca_method}** DCA method")
-
-        trade_amounts = suggestions.get(dca_method.lower().replace("-", "_"), {})
-
-        all_trades = [
-            {"asset": asset, "amount": amount, "method": dca_method}
-            for asset, amount in trade_amounts.items()
-            if abs(amount) > 0.01
-        ]
-
-        if not all_trades:
-            st.info("No actionable trades found for the selected method.")
+    with st.spinner("Calculating DCA suggestions..."):
+        suggestions = asyncio.run(tracker.get_dca_suggestions(new_funds))
+        if "error" in suggestions:
+            st.error(f"❌ {suggestions['error']}")
             return
 
-        st.markdown("#### ✅ Select Trades to Execute")
-        selected_for_execution = []
-        for i, trade in enumerate(all_trades):
-            trade_type = "BUY" if trade["amount"] > 0 else "SELL"
-            label = f"**{trade['asset']}**: {trade_type} ${abs(trade['amount']):,.2f}"
-            if st.checkbox(label, key=f"dca_trade_{i}", value=True):
-                selected_for_execution.append(trade)
+    st.markdown("### 📋 DCA Trade Suggestions")
+    st.info(f"📊 Using **{dca_method}** DCA method")
 
-        st.markdown("---")
-        if st.button(
-            "Execute Selected Trades",
-            type="primary",
-            disabled=not selected_for_execution,
-        ):
-            st.session_state.dca_trades_for_confirmation = selected_for_execution
-            st.session_state.dca_step = "confirm"
-            st.rerun()
+    trade_amounts = suggestions.get(dca_method.lower().replace("-", "_"), {})
+
+    all_trades = [
+        {"asset": asset, "amount": amount, "method": dca_method}
+        for asset, amount in trade_amounts.items()
+        if abs(amount) > 0.01
+    ]
+
+    if not all_trades:
+        st.info("No actionable trades found for the selected method.")
+        return
+
+    st.markdown("#### ✅ Select Trades to Execute")
+    selected_for_execution = []
+    for i, trade in enumerate(all_trades):
+        trade_type = "BUY" if trade["amount"] > 0 else "SELL"
+        label = f"**{trade['asset']}**: {trade_type} ${abs(trade['amount']):,.2f}"
+        if st.checkbox(label, key=f"dca_trade_{i}", value=True):
+            selected_for_execution.append(trade)
+
+    st.markdown("---")
+    if st.button(
+        "Execute Selected Trades",
+        type="primary",
+        disabled=not selected_for_execution,
+    ):
+        st.session_state.dca_trades_for_confirmation = selected_for_execution
+        st.session_state.dca_step = "confirm"
+        st.rerun()
+
 
 def _render_dca_confirmation_view(tracker):
     """Renders the trade confirmation dialog."""
@@ -246,6 +262,7 @@ def _render_dca_confirmation_view(tracker):
             del st.session_state.dca_trades_for_confirmation
             st.rerun()
 
+
 def _execute_dca_trades_now(tracker, trades, validation):
     """Executes the trades and transitions to the results view."""
     try:
@@ -268,6 +285,7 @@ def _execute_dca_trades_now(tracker, trades, validation):
     if "dca_trades_for_confirmation" in st.session_state:
         del st.session_state.dca_trades_for_confirmation
     st.rerun()
+
 
 def _render_dca_results_view(tracker):
     """Renders the final results of the DCA execution."""

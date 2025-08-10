@@ -5,6 +5,9 @@ from datetime import datetime
 import streamlit as st
 
 from crypto_portfolio_tracker import trading_strategies
+from crypto_portfolio_tracker.dashboard.components.transfer_widget import (
+    render_transfer_widget,
+)
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 
 
@@ -78,6 +81,7 @@ def render_trading_page(dashboard):
     # (Removed debug output at the end of the trading page)
     pass
 
+
 def _render_manual_trading(dashboard):
     """Render the manual trading page."""
     st.markdown("### 📝 Manual Trading")
@@ -97,6 +101,14 @@ def _render_manual_trading(dashboard):
     else:
         st.info("USDT balance unavailable.")
 
+    # Contextual transfer (only when funding has balance)
+    try:
+        balances = tracker.get_available_usdt_balance()
+        if float(balances.get("funding", 0.0)) > 0:
+            render_transfer_widget(dashboard, context="trading")
+    except Exception:
+        pass
+
     # --- SHOW EXECUTION RESULTS IF AVAILABLE ---
     if st.session_state.trading_results:
         st.markdown("### 📋 Execution Results")
@@ -106,9 +118,7 @@ def _render_manual_trading(dashboard):
         elif "Error" in st.session_state.trading_results:
             st.error("❌ **Trade execution failed**")
             st.code(st.session_state.trading_results, language="text")
-        if st.button(
-            "🔄 Clear Results", type="secondary", use_container_width=True
-        ):
+        if st.button("🔄 Clear Results", type="secondary", use_container_width=True):
             st.session_state.trading_results = None
             st.session_state.manual_trade_data = {}
             st.rerun()
@@ -174,6 +184,7 @@ def _render_manual_trading(dashboard):
     if not amount_input:
         st.warning("⚠️ Please enter an amount")
 
+
 def _show_trade_confirmation(dashboard):
     """Shows the trade confirmation interface."""
     data = st.session_state.manual_trade_data
@@ -211,6 +222,7 @@ def _show_trade_confirmation(dashboard):
             st.session_state.trading_results = "Trade cancelled by user."
             st.rerun()
 
+
 def _confirm_manual_trade(dashboard, trade_type, symbol, amount_input, is_quote_qty):
     """Makes the actual trade."""
     st.session_state.trading_executing = True
@@ -226,9 +238,7 @@ def _confirm_manual_trade(dashboard, trade_type, symbol, amount_input, is_quote_
 
                 numeric_part = re.search(r"[\d\.]+", amount_input)
                 if not numeric_part:
-                    st.error(
-                        "❌ Invalid amount format. Please enter a valid number."
-                    )
+                    st.error("❌ Invalid amount format. Please enter a valid number.")
                     # Set debug output even on error
                     st.session_state.trade_debug_output = {
                         "error": "Invalid amount format",
@@ -287,14 +297,13 @@ def _confirm_manual_trade(dashboard, trade_type, symbol, amount_input, is_quote_
                         "is_quote_qty": is_quote_qty,
                     },
                 }
-                st.session_state.trading_results = (
-                    f"❌ **Execution Error**: {str(e)}"
-                )
+                st.session_state.trading_results = f"❌ **Execution Error**: {str(e)}"
                 # CRITICAL: Clear manual_trade_data even on error
                 st.session_state.manual_trade_data = {}
     finally:
         st.session_state.trading_executing = False
         st.rerun()
+
 
 def _sync_portfolio_and_reset(dashboard):
     with st.spinner("🔄 Syncing portfolio and updating data..."):
@@ -302,9 +311,7 @@ def _sync_portfolio_and_reset(dashboard):
             tracker = dashboard.initialize_tracker()
             metrics = asyncio.run(tracker.run_full_sync())
             st.session_state.portfolio_metrics = metrics
-            st.session_state.last_sync = datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            st.session_state.last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Get current trading mode to determine what to reset
             current_trading_mode = st.session_state.get("trading_mode", "manual")
@@ -354,6 +361,7 @@ def _sync_portfolio_and_reset(dashboard):
 
     # Also update the reset flag handling in the main method
 
+
 def _render_live_strategy_trading(dashboard):
     if st.session_state.get("strategy_reset_flag"):
         st.session_state.strategy_signals = None
@@ -375,9 +383,7 @@ def _render_live_strategy_trading(dashboard):
 
     # Defensive: No API keys
     if not any(acc.get("api_key") or acc.get("binance_key") for acc in accounts):
-        st.error(
-            "❌ No API keys found for any account. Cannot run live strategies."
-        )
+        st.error("❌ No API keys found for any account. Cannot run live strategies.")
         return
 
     account_names = [acc["name"] for acc in accounts]
@@ -398,13 +404,19 @@ def _render_live_strategy_trading(dashboard):
     else:
         st.info("USDT balance unavailable.")
 
+    # Contextual transfer (only when funding has balance)
+    try:
+        balances = tracker.get_available_usdt_balance()
+        if float(balances.get("funding", 0.0)) > 0:
+            render_transfer_widget(dashboard, context="strategy trading")
+    except Exception:
+        pass
+
     # --- 2. Strategy Selection ---
     available_strategies = _get_available_strategies(dashboard, account_type)
 
     if not available_strategies:
-        st.error(
-            f"❌ No suitable strategies found for account type '{account_type}'."
-        )
+        st.error(f"❌ No suitable strategies found for account type '{account_type}'.")
         return
 
     strategy_names = list(available_strategies.keys())
@@ -480,11 +492,18 @@ def _render_live_strategy_trading(dashboard):
         disabled=not signals,
     ):
         _execute_strategy_signals(
-            dashboard, tracker, selected_account, config, signals, trade_config, usdt_balance
+            dashboard,
+            tracker,
+            selected_account,
+            config,
+            signals,
+            trade_config,
+            usdt_balance,
         )
 
     # --- 8. Show Execution Results ---
     _display_execution_results(dashboard)
+
 
 def _get_usdt_balance(dashboard, tracker, selected_account):
     """Get USDT balance for the selected account."""
@@ -504,6 +523,7 @@ def _get_usdt_balance(dashboard, tracker, selected_account):
     except Exception as e:
         st.info(f"USDT balance unavailable. Error: {e}")
         return None
+
 
 def _get_available_strategies(dashboard, account_type):
     """Get strategies available for the account type."""
@@ -531,6 +551,7 @@ def _get_available_strategies(dashboard, account_type):
     else:
         return all_strategies
 
+
 def _get_coin_options(dashboard, config):
     """Get available coin options."""
     symbol_mapper = dashboard.config_manager.symbol_mapper
@@ -548,6 +569,7 @@ def _get_coin_options(dashboard, config):
 
     non_core_symbols = sorted(set(all_symbols) - set(core_coins_upper))
     return core_coins_upper + non_core_symbols
+
 
 def _render_parameter_input(dashboard, param, spec):
     """Render input field for a strategy parameter."""
@@ -576,6 +598,7 @@ def _render_parameter_input(dashboard, param, spec):
         return st.checkbox(label, value=bool(default), key=key)
     else:
         return st.text_input(label, value=str(default), key=key)
+
 
 def _render_trade_amount_config(dashboard):
     """Render trade amount configuration."""
@@ -606,6 +629,7 @@ def _render_trade_amount_config(dashboard):
         )
         return {"mode": "fixed", "value": trade_amount}
 
+
 def _generate_coin_signal(
     dashboard, analyzer, strategy_class, coin, param_inputs, param_specs
 ):
@@ -631,9 +655,7 @@ def _generate_coin_signal(
     period = "7d" if "m" in interval or "h" in interval else "1y"
 
     data = asyncio.run(
-        analyzer.fetch_crypto_data_async(
-            yf_ticker, period=period, interval=interval
-        )
+        analyzer.fetch_crypto_data_async(yf_ticker, period=period, interval=interval)
     )
 
     if data is None or data.empty:
@@ -650,17 +672,22 @@ def _generate_coin_signal(
         }
     return None
 
+
 def _generate_signals(
-    dashboard, tracker, selected_account, config, strategy_class, selected_coins, param_inputs, param_specs
+    dashboard,
+    tracker,
+    selected_account,
+    config,
+    strategy_class,
+    selected_coins,
+    param_inputs,
+    param_specs,
 ):
     """Generate trading signals for multiple coins."""
     signals = []
 
     # Create analyzer instance with required config and binance_client
-    analyzer = CryptoTrendAnalyzer(
-        config=config,
-        binance_client=tracker.binance_client
-    )
+    analyzer = CryptoTrendAnalyzer(config=config, binance_client=tracker.binance_client)
 
     with st.spinner("Generating signals..."):
         for coin in selected_coins:
@@ -676,6 +703,7 @@ def _generate_signals(
 
     return signals
 
+
 def _execute_strategy_signals(
     dashboard, tracker, selected_account, config, signals, trade_config, usdt_balance
 ):
@@ -683,9 +711,7 @@ def _execute_strategy_signals(
     with st.spinner("Executing trades..."):
         try:
             results = []
-            min_trade_usd = config.get("portfolio", {}).get(
-                "minimum_trade_usd", 10.0
-            )
+            min_trade_usd = config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
             is_live = config.get("portfolio", {}).get("live_trading_enabled", False)
 
             for trade in signals:
@@ -711,6 +737,7 @@ def _execute_strategy_signals(
         except Exception as e:
             st.session_state.trading_results = f"❌ Execution Error: {e}"
             st.error(f"Execution failed: {e}")
+
 
 def _execute_single_trade(
     dashboard, tracker, trade, trade_config, usdt_balance, min_trade_usd, is_live
@@ -760,14 +787,13 @@ def _execute_single_trade(
         else:
             # Return error message
             error_msg = (
-                "\n".join(result.errors)
-                if result.errors
-                else "Unknown error occurred"
+                "\n".join(result.errors) if result.errors else "Unknown error occurred"
             )
             return f"{trade_type} {symbol}: ❌ FAILED - {error_msg}"
 
     finally:
         loop.close()
+
 
 def _display_execution_results(dashboard):
     """Display execution results and post-execution options."""
@@ -793,9 +819,7 @@ def _display_execution_results(dashboard):
         if st.button("🔄 Sync Portfolio", type="primary", use_container_width=True):
             _sync_portfolio_and_reset(dashboard)
     with col2:
-        if st.button(
-            "🆕 New Strategy Run", type="secondary", use_container_width=True
-        ):
+        if st.button("🆕 New Strategy Run", type="secondary", use_container_width=True):
             st.session_state.trading_results = None
             st.session_state.strategy_signals = None
             st.rerun()

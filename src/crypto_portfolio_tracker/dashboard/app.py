@@ -10,7 +10,6 @@ from crypto_portfolio_tracker.dashboard import (
     rebalancing_page,
     dca_page,
     trading_page,
-    transfer_page,
     backtest_page,
     database_page,
     settings_page,
@@ -45,8 +44,7 @@ def main():
         dca_page.render_dca_page(dashboard)
     elif page == "💰 Trade":
         trading_page.render_trading_page(dashboard)
-    elif page == "💵 Transfer":
-        transfer_page.render_transfer_page(dashboard)
+    # Transfer page removed; transfer widget is now contextual in DCA/Trade/Rebalance
     elif page == "🧪 Backtest":
         backtest_page.render_backtest_page(dashboard)
     elif page == "🗄️ Database":

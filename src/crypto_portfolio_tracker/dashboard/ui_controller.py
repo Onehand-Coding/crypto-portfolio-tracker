@@ -25,7 +25,9 @@ class Dashboard:
                 self.config_manager = ConfigManager()
 
             logging_config = self.config_manager.config.get("logging", {})
-            log_level_str = (level_override or logging_config.get("level", "INFO")).upper()
+            log_level_str = (
+                level_override or logging_config.get("level", "INFO")
+            ).upper()
             log_level = getattr(logging, log_level_str, logging.INFO)
             logging.basicConfig(
                 level=log_level,
@@ -56,7 +58,9 @@ class Dashboard:
             try:
                 if self.config_manager is None:
                     self.config_manager = ConfigManager()
-                tracker = CryptoPortfolioTracker(self.config_manager, force_offline=True)
+                tracker = CryptoPortfolioTracker(
+                    self.config_manager, force_offline=True
+                )
                 st.session_state.tracker_initialized = True
                 st.session_state.offline_mode = True
                 st.session_state.tracker = tracker
@@ -76,7 +80,7 @@ class Dashboard:
             "offline_mode": False,
             "last_sync": None,
             "portfolio_metrics": None,
-            "confirm_delete": None
+            "confirm_delete": None,
         }
         for key, value in defaults.items():
             if key not in st.session_state:
@@ -103,7 +107,9 @@ class Dashboard:
             with st.spinner("Running full sync and analysis..."):
                 metrics = asyncio.run(tracker.run_full_sync())
                 st.session_state.portfolio_metrics = metrics
-                st.session_state.last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.last_sync = datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 st.success("✅ Full sync completed successfully!")
         except Exception as e:
             st.error(f"Sync failed: {str(e)}")

@@ -80,12 +80,14 @@ def format_currency(value):
     except (TypeError, ValueError):
         return "$0.00"
 
+
 def _add_months(dt: datetime, months: int) -> datetime:
     # clamp day to last day of target month
     y = dt.year + (dt.month - 1 + months) // 12
     m = (dt.month - 1 + months) % 12 + 1
     d = min(dt.day, monthrange(y, m)[1])
     return dt.replace(year=y, month=m, day=d)
+
 
 def compute_next_time(last_dt: datetime | None, frequency: str) -> datetime:
     base = last_dt or datetime.now(timezone.utc)
@@ -101,24 +103,26 @@ def compute_next_time(last_dt: datetime | None, frequency: str) -> datetime:
     # default monthly
     return _add_months(base, 1)
 
+
 def format_datetime_local(dt: datetime, include_timezone: bool = True) -> str:
     """Format datetime in local timezone with optional timezone indicator."""
     if dt is None:
         return "No data"
-    
+
     # Convert UTC to local time
     if dt.tzinfo is None:
         # Assume UTC if no timezone info
         dt = dt.replace(tzinfo=timezone.utc)
-    
+
     local_dt = dt.astimezone()
-    
+
     if include_timezone:
         # Get timezone abbreviation (e.g., PST, EST, etc.)
         tz_abbr = local_dt.strftime("%Z")
         return local_dt.strftime("%Y-%m-%d %H:%M %Z")
     else:
         return local_dt.strftime("%Y-%m-%d %H:%M")
+
 
 def get_timezone_info() -> str:
     """Get current timezone information for display."""

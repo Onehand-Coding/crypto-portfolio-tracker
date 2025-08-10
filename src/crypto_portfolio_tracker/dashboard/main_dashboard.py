@@ -53,7 +53,6 @@ def render_sidebar(dashboard):
             "⚖️ Rebalance",
             "💸 DCA",
             "💰 Trade",
-            "💵 Transfer",
             "🧪 Backtest",
             "🗄️ Database",
             "⚙️ Settings",

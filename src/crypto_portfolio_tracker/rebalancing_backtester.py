@@ -145,14 +145,14 @@ class RebalancingBacktester:
     def run(self, initial_capital: float, period: str, frequency: str = "monthly"):
         """
         The main orchestration method for the backtest.
-        
+
         Args:
             initial_capital: Starting capital amount
             period: Backtest period (e.g., "2y", "3y")
             frequency: Rebalancing frequency ("weekly", "monthly", "quarterly")
         """
         self.reset_state(initial_capital)
-        
+
         original_assets = list(self.config.get("target_allocation", {}).keys())
 
         if not self._fetch_and_prepare_data(symbols=original_assets, period=period):
@@ -202,10 +202,12 @@ class RebalancingBacktester:
         self.run_simulation(self.executed_allocation, frequency)
         self.generate_report()
 
-    def run_simulation(self, target_allocation: Dict[str, float], frequency: str = "monthly"):
+    def run_simulation(
+        self, target_allocation: Dict[str, float], frequency: str = "monthly"
+    ):
         """
         Executes the core simulation logic with configurable frequency.
-        
+
         Args:
             target_allocation: Target allocation percentages
             frequency: Rebalancing frequency ("weekly", "monthly", "quarterly")
@@ -222,12 +224,8 @@ class RebalancingBacktester:
         min_price_threshold = 0.0001
 
         # Map frequency to pandas resampling rule
-        frequency_map = {
-            "weekly": "W",
-            "monthly": "MS", 
-            "quarterly": "QS"
-        }
-        
+        frequency_map = {"weekly": "W", "monthly": "MS", "quarterly": "QS"}
+
         resample_rule = frequency_map.get(frequency, "MS")  # Default to monthly
         rebalance_dates = self.data.resample(resample_rule).first().index
 

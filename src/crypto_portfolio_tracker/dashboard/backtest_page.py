@@ -10,19 +10,24 @@ from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
 
 
-def create_custom_config(dashboard, custom_allocation, majors_drift_threshold,
-                        alts_drift_threshold, majors_sell_multiplier,
-                        majors_buy_multiplier, alts_sell_multiplier,
-                        alts_buy_multiplier, selected_frequency,
-                        suppress_buys_in_bear):
+def create_custom_config(
+    dashboard,
+    custom_allocation,
+    majors_drift_threshold,
+    alts_drift_threshold,
+    majors_sell_multiplier,
+    majors_buy_multiplier,
+    alts_sell_multiplier,
+    alts_buy_multiplier,
+    selected_frequency,
+    suppress_buys_in_bear,
+):
     """Create custom config with user parameters"""
     custom_config = dashboard.config_manager.config.copy()
 
     # Update rebalancing parameters
     custom_config["rebalance_technical"] = {
-        "market_regime_rules": {
-            "suppress_buys_in_bear": suppress_buys_in_bear
-        },
+        "market_regime_rules": {"suppress_buys_in_bear": suppress_buys_in_bear},
         "majors": {
             "allocation_drift_threshold_pct": majors_drift_threshold,
             "sell_percentage_multiplier": majors_sell_multiplier,
@@ -49,11 +54,11 @@ def create_custom_config(dashboard, custom_allocation, majors_drift_threshold,
 
 def render_backtest_page(dashboard):
     # Initialize session state
-    if 'show_save_confirmation' not in st.session_state:
+    if "show_save_confirmation" not in st.session_state:
         st.session_state.show_save_confirmation = False
-    if 'backtest_results' not in st.session_state:
+    if "backtest_results" not in st.session_state:
         st.session_state.backtest_results = None
-    if 'last_backtest_params' not in st.session_state:
+    if "last_backtest_params" not in st.session_state:
         st.session_state.last_backtest_params = None
 
     st.markdown("## 🧪 Backtesting")
@@ -250,12 +255,10 @@ def render_backtest_page(dashboard):
 
                             def update_allocation(asset_name):
                                 def callback():
-                                    new_value = st.session_state[
-                                        f"alloc_{asset_name}"
-                                    ]
-                                    st.session_state.custom_allocation[
-                                        asset_name
-                                    ] = new_value / 100.0
+                                    new_value = st.session_state[f"alloc_{asset_name}"]
+                                    st.session_state.custom_allocation[asset_name] = (
+                                        new_value / 100.0
+                                    )
 
                                 return callback
 
@@ -309,18 +312,13 @@ def render_backtest_page(dashboard):
                             # Show button only when a valid asset is selected
                             if add_asset and add_asset != "Select an asset...":
                                 if st.button("➕ Add", key="add_asset_btn"):
-                                    if (
-                                        add_asset
-                                        and add_asset != "Select an asset..."
-                                    ):
+                                    if add_asset and add_asset != "Select an asset...":
                                         custom_allocation[add_asset] = (
                                             0.0  # Default to 0% allocation
                                         )
                                         # Increment counter to force selectbox reset
                                         st.session_state["add_asset_counter"] = (
-                                            st.session_state.get(
-                                                "add_asset_counter", 0
-                                            )
+                                            st.session_state.get("add_asset_counter", 0)
                                             + 1
                                         )
                                         st.rerun()  # Force rerun to update the UI
@@ -345,9 +343,7 @@ def render_backtest_page(dashboard):
                         st.success(f"✅ Total: {total_alloc:.2%}")
                 with col2:
                     if st.button("🔄 Reset to Default", key="reset_allocation"):
-                        st.session_state.custom_allocation = (
-                            default_allocation.copy()
-                        )
+                        st.session_state.custom_allocation = default_allocation.copy()
                         st.rerun()
 
         # Current Settings Display
@@ -368,14 +364,30 @@ def render_backtest_page(dashboard):
                 majors_config = rebalance_config.get("majors", {})
                 alts_config = rebalance_config.get("alts", {})
 
-                st.text(f" - Majors Drift Threshold: {majors_config["allocation_drift_threshold_pct"]:.1f}%")
-                st.text(f"- Alts Drift Threshold: {alts_config["allocation_drift_threshold_pct"]:.1f}%")
-                st.text(f"- Majors Sell Multiplier: {majors_config["sell_percentage_multiplier"]:.2f}")
-                st.text(f"- Majors Buy Multiplier: {majors_config["buy_amount_multiplier"]:.2f}")
-                st.text(f"- Alts Sell Multiplier: {alts_config["sell_percentage_multiplier"]:.2f}")
-                st.text(f"- Alts Buy Multiplier: {alts_config["buy_amount_multiplier"]:.2f}")
-                st.text(f"- Frequency: {current_config["automation"]["rebalancing"]["frequency"].title()}")
-                st.text(f"- Bear Market Suppression: {rebalance_config["market_regime_rules"]["suppress_buys_in_bear"]}")
+                st.text(
+                    f" - Majors Drift Threshold: {majors_config['allocation_drift_threshold_pct']:.1f}%"
+                )
+                st.text(
+                    f"- Alts Drift Threshold: {alts_config['allocation_drift_threshold_pct']:.1f}%"
+                )
+                st.text(
+                    f"- Majors Sell Multiplier: {majors_config['sell_percentage_multiplier']:.2f}"
+                )
+                st.text(
+                    f"- Majors Buy Multiplier: {majors_config['buy_amount_multiplier']:.2f}"
+                )
+                st.text(
+                    f"- Alts Sell Multiplier: {alts_config['sell_percentage_multiplier']:.2f}"
+                )
+                st.text(
+                    f"- Alts Buy Multiplier: {alts_config['buy_amount_multiplier']:.2f}"
+                )
+                st.text(
+                    f"- Frequency: {current_config['automation']['rebalancing']['frequency'].title()}"
+                )
+                st.text(
+                    f"- Bear Market Suppression: {rebalance_config['market_regime_rules']['suppress_buys_in_bear']}"
+                )
 
         # Run Rebalancing Backtest Button
         st.markdown("---")
@@ -389,9 +401,7 @@ def render_backtest_page(dashboard):
 
         if run_rebalance_backtest:
             # Validate allocation before running backtest
-            total_alloc = (
-                sum(custom_allocation.values()) if custom_allocation else 0
-            )
+            total_alloc = sum(custom_allocation.values()) if custom_allocation else 0
             if total_alloc > 1.0:
                 st.error(
                     f"❌ Cannot run backtest: Total allocation is {total_alloc:.2%} which exceeds 100%. Please adjust your allocations."
@@ -399,23 +409,29 @@ def render_backtest_page(dashboard):
             else:
                 # Create custom config with user parameters
                 custom_config = create_custom_config(
-                    dashboard, custom_allocation, majors_drift_threshold,
-                    alts_drift_threshold, majors_sell_multiplier,
-                    majors_buy_multiplier, alts_sell_multiplier,
-                    alts_buy_multiplier, selected_frequency, suppress_buys_in_bear
+                    dashboard,
+                    custom_allocation,
+                    majors_drift_threshold,
+                    alts_drift_threshold,
+                    majors_sell_multiplier,
+                    majors_buy_multiplier,
+                    alts_sell_multiplier,
+                    alts_buy_multiplier,
+                    selected_frequency,
+                    suppress_buys_in_bear,
                 )
 
                 # Store parameters for potential saving
                 st.session_state.last_backtest_params = {
-                    'custom_allocation': custom_allocation.copy(),
-                    'majors_drift_threshold': majors_drift_threshold,
-                    'alts_drift_threshold': alts_drift_threshold,
-                    'majors_sell_multiplier': majors_sell_multiplier,
-                    'majors_buy_multiplier': majors_buy_multiplier,
-                    'alts_sell_multiplier': alts_sell_multiplier,
-                    'alts_buy_multiplier': alts_buy_multiplier,
-                    'selected_frequency': selected_frequency,
-                    'suppress_buys_in_bear': suppress_buys_in_bear
+                    "custom_allocation": custom_allocation.copy(),
+                    "majors_drift_threshold": majors_drift_threshold,
+                    "alts_drift_threshold": alts_drift_threshold,
+                    "majors_sell_multiplier": majors_sell_multiplier,
+                    "majors_buy_multiplier": majors_buy_multiplier,
+                    "alts_sell_multiplier": alts_sell_multiplier,
+                    "alts_buy_multiplier": alts_buy_multiplier,
+                    "selected_frequency": selected_frequency,
+                    "suppress_buys_in_bear": suppress_buys_in_bear,
                 }
 
                 with st.spinner("🔄 Running rebalancing backtest analysis..."):
@@ -424,7 +440,7 @@ def render_backtest_page(dashboard):
                         backtester.run(
                             initial_capital=initial_capital,
                             period=period,
-                            frequency=selected_frequency
+                            frequency=selected_frequency,
                         )
 
                         # Store results in session state
@@ -478,12 +494,8 @@ def render_backtest_page(dashboard):
                         f"{stats['Total Trades Executed']}",
                     )
 
-
-
                 # Detailed Results Table
-                with st.expander(
-                    "📋 Detailed Performance Metrics", expanded=True
-                ):
+                with st.expander("📋 Detailed Performance Metrics", expanded=True):
                     st.table(
                         {
                             "Metric": [
@@ -519,14 +531,10 @@ def render_backtest_page(dashboard):
                     and backtester.portfolio_value_history
                 ):
                     # Convert to DataFrame with proper date index
-                    df = pd.DataFrame(
-                        backtester.portfolio_value_history
-                    )
+                    df = pd.DataFrame(backtester.portfolio_value_history)
                     df["date"] = pd.to_datetime(df["date"])
                     df = df.set_index("date")
-                    df = df.rename(
-                        columns={"value": "Portfolio Value ($)"}
-                    )
+                    df = df.rename(columns={"value": "Portfolio Value ($)"})
 
                     # Create the chart with proper date axis
                     st.line_chart(df, use_container_width=True)
@@ -534,14 +542,15 @@ def render_backtest_page(dashboard):
             # Trade Log
             if hasattr(backtester, "trade_log"):
                 with st.expander("📝 Rebalancing Trade Log"):
-                    st.code(
-                        "\n".join(backtester.trade_log), language="text"
-                    )
+                    st.code("\n".join(backtester.trade_log), language="text")
 
             # Save as Default button
             if hasattr(backtester, "summary_stats"):
                 st.markdown("---")
-                st.markdown("### 💾 Save Configuration", help="💡 **Satisfied with these results?** Save these proven parameters as your default settings for live trading.")
+                st.markdown(
+                    "### 💾 Save Configuration",
+                    help="💡 **Satisfied with these results?** Save these proven parameters as your default settings for live trading.",
+                )
 
                 col1, col2, col3 = st.columns([1, 2, 1])
                 with col2:
@@ -554,27 +563,40 @@ def render_backtest_page(dashboard):
                         st.rerun()
 
         # Show confirmation dialog (outside of results section)
-        if st.session_state.show_save_confirmation and st.session_state.last_backtest_params:
+        if (
+            st.session_state.show_save_confirmation
+            and st.session_state.last_backtest_params
+        ):
             params = st.session_state.last_backtest_params
 
             st.warning("⚠️ **Confirm Settings Overwrite**")
 
-            st.markdown("You are about to overwrite your current default settings with:")
+            st.markdown(
+                "You are about to overwrite your current default settings with:"
+            )
             col_target, col_param = st.columns(2)
 
             with col_target:
                 st.markdown("**🎯 Target Allocation:**")
 
                 # Show current allocation
-                for asset, pct in params['custom_allocation'].items():
+                for asset, pct in params["custom_allocation"].items():
                     st.text(f"- {asset}: {pct:.1%}")
 
             with col_param:
                 st.markdown("**⚙️ Rebalancing Settings:**")
-                st.text(f" - Majors Drift Threshold: {params['majors_drift_threshold']:.1f}%")
-                st.text(f"- Alts Drift Threshold: {params['alts_drift_threshold']:.1f}%")
-                st.text(f"- Majors Sell Multiplier: {params['majors_sell_multiplier']:.2f}")
-                st.text(f"- Majors Buy Multiplier: {params['majors_buy_multiplier']:.2f}")
+                st.text(
+                    f" - Majors Drift Threshold: {params['majors_drift_threshold']:.1f}%"
+                )
+                st.text(
+                    f"- Alts Drift Threshold: {params['alts_drift_threshold']:.1f}%"
+                )
+                st.text(
+                    f"- Majors Sell Multiplier: {params['majors_sell_multiplier']:.2f}"
+                )
+                st.text(
+                    f"- Majors Buy Multiplier: {params['majors_buy_multiplier']:.2f}"
+                )
                 st.text(f"- Alts Sell Multiplier: {params['alts_sell_multiplier']:.2f}")
                 st.text(f"- Alts Buy Multiplier: {params['alts_buy_multiplier']:.2f}")
                 st.text(f"- Frequency: {params['selected_frequency'].title()}")
@@ -585,15 +607,22 @@ def render_backtest_page(dashboard):
             # Confirmation buttons
             confirm_col1, confirm_col2, confirm_col3 = st.columns([1, 1, 1])
             with confirm_col1:
-                if st.button("✅ Yes, Save Settings", type="primary", key="confirm_save"):
+                if st.button(
+                    "✅ Yes, Save Settings", type="primary", key="confirm_save"
+                ):
                     try:
                         # Create and save the configuration
                         config_to_save = create_custom_config(
-                            dashboard, params['custom_allocation'], params['majors_drift_threshold'],
-                            params['alts_drift_threshold'], params['majors_sell_multiplier'],
-                            params['majors_buy_multiplier'], params['alts_sell_multiplier'],
-                            params['alts_buy_multiplier'], params['selected_frequency'],
-                            params['suppress_buys_in_bear']
+                            dashboard,
+                            params["custom_allocation"],
+                            params["majors_drift_threshold"],
+                            params["alts_drift_threshold"],
+                            params["majors_sell_multiplier"],
+                            params["majors_buy_multiplier"],
+                            params["alts_sell_multiplier"],
+                            params["alts_buy_multiplier"],
+                            params["selected_frequency"],
+                            params["suppress_buys_in_bear"],
                         )
 
                         dashboard.config_manager.config = config_to_save
@@ -628,9 +657,7 @@ def render_backtest_page(dashboard):
             st.subheader("📈 Strategy Selection")
             all_strategies = {
                 name: obj
-                for name, obj in inspect.getmembers(
-                    trading_strategies, inspect.isclass
-                )
+                for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
                 if issubclass(obj, trading_strategies.Strategy)
                 and obj is not trading_strategies.Strategy
             }
@@ -737,9 +764,7 @@ def render_backtest_page(dashboard):
 
             # --- Warn about yfinance data limits for high-frequency intervals ---
             if ("15m" in interval and "y" in period) or (
-                "1h" in interval
-                and "y" in period
-                and int(period.replace("y", "")) > 2
+                "1h" in interval and "y" in period and int(period.replace("y", "")) > 2
             ):
                 st.warning(
                     "⚠️ For 15m interval, use a period ≤ 60d. For 1h interval, use a period ≤ 729d. Adjust your selection to avoid data errors."
@@ -766,12 +791,8 @@ def render_backtest_page(dashboard):
         if run_backtest:
             with st.spinner("🔄 Running backtest analysis..."):
                 try:
-                    analyzer = CryptoTrendAnalyzer(
-                        config=config, binance_client=None
-                    )
-                    backtester = StrategyBacktester(
-                        config=config, analyzer=analyzer
-                    )
+                    analyzer = CryptoTrendAnalyzer(config=config, binance_client=None)
+                    backtester = StrategyBacktester(config=config, analyzer=analyzer)
                     strategy_instance = strategy_class(
                         analyzer=analyzer, **param_inputs
                     )
@@ -817,9 +838,7 @@ def render_backtest_page(dashboard):
                             )
 
                         with metric_cols[3]:
-                            st.metric(
-                                "Sharpe Ratio", f"{stats['Sharpe Ratio']:.2f}"
-                            )
+                            st.metric("Sharpe Ratio", f"{stats['Sharpe Ratio']:.2f}")
 
                         # Detailed Results Table
                         with st.expander(
@@ -875,9 +894,7 @@ def render_backtest_page(dashboard):
                     # Trade Log
                     if hasattr(backtester, "trade_log"):
                         with st.expander("📝 Trade Execution Log"):
-                            st.code(
-                                "\n".join(backtester.trade_log), language="text"
-                            )
+                            st.code("\n".join(backtester.trade_log), language="text")
 
                 except Exception as e:
                     st.error(f"❌ Backtest failed: {str(e)}")

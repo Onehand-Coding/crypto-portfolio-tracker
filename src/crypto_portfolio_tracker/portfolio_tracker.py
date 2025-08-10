@@ -829,7 +829,7 @@ class CryptoPortfolioTracker:
     ) -> str:
         if order and isinstance(order, dict) and order.get("orderId"):
             return f"binance:{order['orderId']}"
-        return f"{source}:{batch_id}:{symbol}:{side}:{int(ts.timestamp()*1000)}"
+        return f"{source}:{batch_id}:{symbol}:{side}:{int(ts.timestamp() * 1000)}"
 
     def _record_trade_transaction(
         self,
@@ -839,7 +839,7 @@ class CryptoPortfolioTracker:
         quantity: float,
         price_usd: float,
         source: str,  # "REBALANCE" | "DCA"
-        mode: str,    # "LIVE" | "TESTNET" | "SIM"
+        mode: str,  # "LIVE" | "TESTNET" | "SIM"
         batch_id: str,
         order: Optional[dict] = None,
         error: Optional[str] = None,
@@ -857,7 +857,13 @@ class CryptoPortfolioTracker:
                 # keep only lightweight identifiers
                 notes["order"] = {
                     k: order.get(k)
-                    for k in ("orderId", "clientOrderId", "transactTime", "symbol", "side")
+                    for k in (
+                        "orderId",
+                        "clientOrderId",
+                        "transactTime",
+                        "symbol",
+                        "side",
+                    )
                 }
             tx = {
                 "symbol": symbol,
@@ -870,7 +876,9 @@ class CryptoPortfolioTracker:
                 "fee_usd": None,
                 "source": source,
                 "notes": json.dumps(notes, default=str),
-                "transaction_hash": self._make_tx_hash(source, batch_id, symbol, side, ts, order),
+                "transaction_hash": self._make_tx_hash(
+                    source, batch_id, symbol, side, ts, order
+                ),
             }
             self.db_manager.bulk_insert_transactions([tx])
         except Exception as e:
@@ -915,7 +923,11 @@ class CryptoPortfolioTracker:
         portfolio_config = self.config.get("portfolio", {})
         min_trade_usd = portfolio_config.get("minimum_trade_usd", 10.0)
         is_live = portfolio_config.get("live_trading_enabled", False)
-        mode = "TESTNET" if self.config_manager.is_testnet_mode else ("LIVE" if is_live else "SIM")
+        mode = (
+            "TESTNET"
+            if self.config_manager.is_testnet_mode
+            else ("LIVE" if is_live else "SIM")
+        )
 
         simulated_balances = {}
         all_trade_symbols = set(trades_to_execute["Symbol"].unique()) | {"USDT"}
@@ -1143,7 +1155,10 @@ class CryptoPortfolioTracker:
                             trades_executed_count += 1
                             simulated_balances["USDT"] -= usd_value
                             # record trade (approx quantity using current price)
-                            price_now = self._get_current_prices([symbol]).get(symbol, 0.0) or 0.0
+                            price_now = (
+                                self._get_current_prices([symbol]).get(symbol, 0.0)
+                                or 0.0
+                            )
                             qty = (usd_value / price_now) if price_now > 0 else 0.0
                             self._record_trade_transaction(
                                 symbol=symbol,
@@ -1170,7 +1185,9 @@ class CryptoPortfolioTracker:
                         )
                         trades_executed_count += 1
                         simulated_balances["USDT"] -= usd_value
-                        price_now = self._get_current_prices([symbol]).get(symbol, 0.0) or 0.0
+                        price_now = (
+                            self._get_current_prices([symbol]).get(symbol, 0.0) or 0.0
+                        )
                         qty = (usd_value / price_now) if price_now > 0 else 0.0
                         self._record_trade_transaction(
                             symbol=symbol,
@@ -2283,7 +2300,11 @@ class CryptoPortfolioTracker:
         """
         result = TradeResult(success=True)  # Initialize with success=True
         batch_id = str(uuid.uuid4())
-        mode = "TESTNET" if self.config_manager.is_testnet_mode else ("LIVE" if is_live else "SIM")
+        mode = (
+            "TESTNET"
+            if self.config_manager.is_testnet_mode
+            else ("LIVE" if is_live else "SIM")
+        )
 
         if not selected_trades:
             result.messages.append("No trades selected for execution")

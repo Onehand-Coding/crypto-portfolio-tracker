@@ -50,9 +50,15 @@ def render_settings_page(dashboard):
 
                     # Add trade schedules here
                     st.markdown("---")
-                    st.markdown("#### 📆 Trade Schedules")
+                    st.text("📆 Trade Schedules")
 
-                    freq_options = ["daily", "weekly", "biweekly", "monthly", "quarterly"]
+                    freq_options = [
+                        "daily",
+                        "weekly",
+                        "biweekly",
+                        "monthly",
+                        "quarterly",
+                    ]
                     auto_cfg = config.setdefault("automation", {})
                     dca_cfg = auto_cfg.setdefault("dca", {})
                     rb_cfg = auto_cfg.setdefault("rebalancing", {})
@@ -62,8 +68,11 @@ def render_settings_page(dashboard):
                         new_dca_freq = st.selectbox(
                             "DCA Frequency",
                             freq_options,
-                            index=freq_options.index(dca_cfg.get("frequency", "monthly"))
-                            if dca_cfg.get("frequency", "monthly") in freq_options else 3,
+                            index=freq_options.index(
+                                dca_cfg.get("frequency", "monthly")
+                            )
+                            if dca_cfg.get("frequency", "monthly") in freq_options
+                            else 3,
                             help="Frequency for Dollar Cost Averaging trades.",
                         )
                     with col_rb:
@@ -71,7 +80,8 @@ def render_settings_page(dashboard):
                             "Rebalancing Frequency",
                             freq_options,
                             index=freq_options.index(rb_cfg.get("frequency", "weekly"))
-                            if rb_cfg.get("frequency", "weekly") in freq_options else 1,
+                            if rb_cfg.get("frequency", "weekly") in freq_options
+                            else 1,
                             help="Frequency for portfolio rebalancing checks.",
                         )
 
@@ -104,9 +114,7 @@ def render_settings_page(dashboard):
                         help="💱 Fiat currency code (e.g., USD, EUR, PHP) for P2P trades.",
                     )
 
-                    crypto_quotes = config.get("portfolio", {}).get(
-                        "crypto_quotes", []
-                    )
+                    crypto_quotes = config.get("portfolio", {}).get("crypto_quotes", [])
                     new_crypto_quotes = st.text_input(
                         "₿ Crypto Quotes (comma-separated)",
                         value=", ".join(crypto_quotes),
@@ -164,9 +172,7 @@ def render_settings_page(dashboard):
 
                 with st.expander("⏱️ Timeout Settings", expanded=False):
                     coingecko_timeout = (
-                        config.get("apis", {})
-                        .get("coingecko", {})
-                        .get("timeout", 30)
+                        config.get("apis", {}).get("coingecko", {}).get("timeout", 30)
                     )
                     binance_timeout = (
                         config.get("apis", {}).get("binance", {}).get("timeout", 60)
@@ -236,7 +242,7 @@ def render_settings_page(dashboard):
                     )
 
                 with st.expander("📅 Historical Data Settings", expanded=False):
-                    st.markdown("**Data Lookback Periods**")
+                    st.text("Data Lookback Periods")
                     lookback = config.get("history_lookback_days", {})
                     lookback_types = [
                         ("trades", 90, "💼"),
@@ -273,13 +279,9 @@ def render_settings_page(dashboard):
                     try:
                         config["apis"]["coingecko"]["timeout"] = new_cg_timeout
                         config["apis"]["binance"]["timeout"] = new_bi_timeout
-                        config["apis"]["binance"]["recv_window"] = (
-                            new_bi_recv_window
-                        )
+                        config["apis"]["binance"]["recv_window"] = new_bi_recv_window
                         config["apis"]["binance"]["request_delay_ms"] = new_bi_delay
-                        config["apis"]["coingecko"]["request_delay_ms"] = (
-                            new_cg_delay
-                        )
+                        config["apis"]["coingecko"]["request_delay_ms"] = new_cg_delay
                         config["history_lookback_days"] = new_lookback
                         # Save and Reload
                         dashboard.config_manager.save_config()
@@ -334,9 +336,7 @@ def render_settings_page(dashboard):
                         help="📁 Path to store log file. Ensure directory is writable.",
                     )
 
-                    console_config = config.get("logging", {}).get(
-                        "console_config", {}
-                    )
+                    console_config = config.get("logging", {}).get("console_config", {})
                     console_enabled = console_config.get("enabled", True)
                     new_console_enabled = st.toggle(
                         "🖥️ Enable Console Logging",
@@ -559,9 +559,7 @@ def render_settings_page(dashboard):
                         ]
                         config["trend_analyzer"]["rsi_period"] = new_rsi_period
                         config["trend_analyzer"]["rsi_oversold"] = new_rsi_oversold
-                        config["trend_analyzer"]["rsi_overbought"] = (
-                            new_rsi_overbought
-                        )
+                        config["trend_analyzer"]["rsi_overbought"] = new_rsi_overbought
                         config["trend_analyzer"]["timeframe_settings"] = (
                             timeframe_settings
                         )
@@ -569,14 +567,10 @@ def render_settings_page(dashboard):
                         dashboard.config_manager.save_config()
                         dashboard.reload()
 
-                        st.success(
-                            "✅ Trend Analyzer settings updated and applied!"
-                        )
+                        st.success("✅ Trend Analyzer settings updated and applied!")
                         st.rerun()
                     except Exception as e:
-                        st.error(
-                            f"❌ Failed to save trend analyzer settings: {str(e)}"
-                        )
+                        st.error(f"❌ Failed to save trend analyzer settings: {str(e)}")
 
         # --- Import/Export Config ---
         st.markdown("---")
@@ -612,9 +606,7 @@ def render_settings_page(dashboard):
                         with open(export_path_obj, "w") as f:
                             json.dump(export_config, f, indent=2)
 
-                        st.success(
-                            f"✅ Configuration exported to `{export_path_obj}`"
-                        )
+                        st.success(f"✅ Configuration exported to `{export_path_obj}`")
                     except Exception as e:
                         st.error(f"❌ Failed to export configuration: {str(e)}")
 
@@ -703,9 +695,7 @@ def render_settings_page(dashboard):
                     except json.JSONDecodeError as e:
                         st.error(f"❌ Invalid JSON file: {str(e)}")
                     except Exception as e:
-                        st.error(
-                            f"❌ Failed to process configuration file: {str(e)}"
-                        )
+                        st.error(f"❌ Failed to process configuration file: {str(e)}")
 
     # --- System Status Tab ---
     with tab_status:
@@ -787,9 +777,7 @@ def render_settings_page(dashboard):
                     db_path = tracker.db_manager.db_path
                     if os.path.exists(db_path):
                         db_size_kb = os.path.getsize(db_path) / 1024
-                        db_modified = datetime.fromtimestamp(
-                            os.path.getmtime(db_path)
-                        )
+                        db_modified = datetime.fromtimestamp(os.path.getmtime(db_path))
                         st.success(f"Database: `{os.path.basename(db_path)}`")
                         st.text(f"Size: {db_size_kb:.1f} KB")
                         st.text(
@@ -799,9 +787,7 @@ def render_settings_page(dashboard):
                         st.error("❌ Database file not found")
 
                     st.markdown("---")
-                    export_dir = config.get("exports", {}).get(
-                        "path", "data/exports/"
-                    )
+                    export_dir = config.get("exports", {}).get("path", "data/exports/")
                     cache_dir = config.get("cache", {}).get("path", "data/cache")
                     st.info(f"📁 Export Path: `{export_dir}`")
                     st.info(f"🗂️ Cache Path: `{cache_dir}`")
