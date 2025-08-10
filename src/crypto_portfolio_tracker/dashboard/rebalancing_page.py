@@ -14,6 +14,11 @@ from crypto_portfolio_tracker.portfolio_tracker import ExecutionMode
 def render_rebalancing_page(dashboard):
     st.markdown("## ⚖️ Portfolio Rebalancing")
 
+    # Offline guard: disable rebalancing workflows when offline
+    if dashboard.offline_mode:
+        st.info("⚠️ Offline mode: Rebalancing analysis and execution are unavailable.")
+        return
+
     # Last and Next info
     tracker = dashboard.initialize_tracker()
     last_rb = tracker.db_manager.get_latest_timestamp_for_source("REBALANCE")

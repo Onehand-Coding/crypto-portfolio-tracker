@@ -15,6 +15,11 @@ def render_trading_page(dashboard):
     """Render trading page"""
     st.markdown("## 💰 Trading")
 
+    # Offline guard: disable trading workflows when offline
+    if dashboard.offline_mode:
+        st.info("⚠️ Offline mode: Trading is unavailable.")
+        return
+
     # Initialize session state
     if "trading_mode" not in st.session_state:
         st.session_state.trading_mode = "manual"

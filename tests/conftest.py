@@ -15,7 +15,7 @@ from crypto_portfolio_tracker.database import DatabaseManager
 
 
 @pytest.fixture
-def mock_config_manager():
+def mock_config_manager(tmp_path):
     """Create a mock configuration manager with all required attributes."""
     config = Mock(spec=ConfigManager)
 
@@ -42,12 +42,12 @@ def mock_config_manager():
             },
         },
         "apis": {"binance": {"testnet": True, "timeout": 60}},
-        "database": {"path": "test_portfolio.db", "backup_retention_days": 7},
+        "database": {"path": str(tmp_path / "test_portfolio.db"), "backup_retention_days": 7},
     }
 
     # Mock other required methods
-    config.get_database_path.return_value = Path("test_portfolio.db")
-    config.get_backup_dir.return_value = Path("backups")
+    config.get_database_path.return_value = tmp_path / "test_portfolio.db"
+    config.get_backup_dir.return_value = tmp_path / "backups"
     config.is_live = False
     config.is_testnet_mode = True
 

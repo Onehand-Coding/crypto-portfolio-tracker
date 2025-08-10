@@ -1354,6 +1354,63 @@ class CryptoPortfolioTracker:
         )
         cost_basis_df = self.db_manager.get_holdings()
 
+        # In offline mode, avoid all network calls and build metrics from DB only
+        if self.offline_mode:
+            holdings_df = cost_basis_df.copy()
+            if not holdings_df.empty:
+                holdings_df = holdings_df.rename(columns={"quantity": "total_quantity"})
+                # Without network prices, set current_price to 0 and derive others to 0
+                holdings_df["spot_quantity"] = holdings_df.get("spot_quantity", 0.0)
+                holdings_df["earn_quantity"] = holdings_df.get("earn_quantity", 0.0)
+                holdings_df["current_price"] = 0.0
+                holdings_df["value_usd"] = 0.0
+                holdings_df["cost_basis_total"] = (
+                    holdings_df["total_quantity"] * holdings_df.get("average_cost_basis", 0.0)
+                )
+                holdings_df["unrealized_pl_usd"] = 0.0
+                holdings_df["unrealized_pl_percent"] = 0.0
+                target_symbols = list(self.config.get("target_allocation", {}).keys())
+                holdings_df["is_core"] = holdings_df["symbol"].isin(target_symbols)
+                core_holdings_df = holdings_df[holdings_df["is_core"]].copy()
+                other_holdings_df = holdings_df[~holdings_df["is_core"]].copy()
+            else:
+                holdings_df = pd.DataFrame(
+                    columns=[
+                        "symbol",
+                        "total_quantity",
+                        "spot_quantity",
+                        "earn_quantity",
+                        "value_usd",
+                        "average_cost_basis",
+                        "cost_basis_total",
+                    ]
+                )
+                core_holdings_df = holdings_df.copy()
+                other_holdings_df = holdings_df.copy()
+
+            metrics = {
+                "total_value_usd": 0.0,
+                "spot_earn_value_usd": 0.0,
+                "futures_value_usd": 0.0,
+                "funding_value_usd": 0.0,
+                "total_cost_basis_usd": holdings_df.get("cost_basis_total", pd.Series(dtype=float)).sum()
+                if not holdings_df.empty
+                else 0.0,
+                "unrealized_pl_usd": 0.0,
+                "unrealized_pl_percent": 0.0,
+                "total_invested_capital": self.db_manager.calculate_total_invested_capital(),
+                "overall_pl_usd": 0.0,
+                "overall_pl_percent": 0.0,
+                "holdings_df": holdings_df,
+                "core_holdings_df": core_holdings_df,
+                "other_holdings_df": other_holdings_df,
+                "futures_balances": [],
+                "funding_balances": [],
+                "timestamp": datetime.datetime.now(),
+            }
+            self.logger.info("Calculated offline metrics from database only.")
+            return metrics
+
         # 1. Calculate Spot + Earn Value
         total_balances_api_df = self.fetcher.fetch_binance_balances().rename(
             columns={"quantity": "total_quantity_api"}
@@ -1436,14 +1493,18 @@ class CryptoPortfolioTracker:
 
         # 2. Calculate Futures Value
         futures_value = 0
-        futures_balances = self.fetcher.fetch_futures_balance()
+        futures_balances = []
+        if not self.config_manager.is_testnet_mode:
+            futures_balances = self.fetcher.fetch_futures_balance()
         for item in futures_balances:
             if item.get("asset") == "USDT":
                 futures_value += float(item.get("balance", 0.0))
 
         # 3. Calculate Funding Wallet Value
         funding_value = 0
-        funding_balances_raw = self.fetcher.fetch_funding_balance()
+        funding_balances_raw = []
+        if not self.config_manager.is_testnet_mode:
+            funding_balances_raw = self.fetcher.fetch_funding_balance()
         funding_balances = [
             b for b in funding_balances_raw if float(b.get("free", 0.0)) > 1e-8
         ]
@@ -2174,12 +2235,13 @@ class CryptoPortfolioTracker:
                 earn_balance = earn_positions.get("USDT", 0.0)
                 spot_earn_balance += earn_balance
 
-            # Get Funding balance
-            funding_balances = self.fetcher.fetch_funding_balance()
-            for balance in funding_balances:
-                if balance.get("asset") == "USDT":
-                    funding_balance = float(balance.get("free", 0.0))
-                    break
+            # Get Funding balance (mainnet only)
+            if not self.config_manager.is_testnet_mode:
+                funding_balances = self.fetcher.fetch_funding_balance()
+                for balance in funding_balances:
+                    if balance.get("asset") == "USDT":
+                        funding_balance = float(balance.get("free", 0.0))
+                        break
 
         except Exception as e:
             self.logger.error(f"Error fetching USDT balances: {e}")

@@ -23,7 +23,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 from . import trading_strategies
 from .portfolio_tracker import CryptoPortfolioTracker, ExecutionMode
 from .config import ConfigManager
-from .exceptions import NetworkOperationError
+from .exceptions import NetworkOperationError, NetworkUnavailableError
 from .rebalancing_backtester import RebalancingBacktester
 from .strategy_backtester import StrategyBacktester
 from .crypto_trend_analyzer import CryptoTrendAnalyzer
@@ -159,8 +159,8 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
 
     timestamp = metrics.get("timestamp", pd.Timestamp.now())
     print(f"Timestamp:                   {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-    db_path = tracker.config.get("database", {}).get("path", "N/A")
-    db_name = Path(db_path).name
+    # Use ConfigManager to ensure the displayed DB matches the active mode
+    db_name = tracker.config_manager.get_database_path().name
     if tracker.config_manager.is_testnet_mode:
         print(f"Database:                    {db_name} (TESTNET MODE)")
     else:
@@ -580,7 +580,7 @@ async def run_rebalancing_backtest(tracker: CryptoPortfolioTracker):
 async def run_manual_trade_session(tracker: CryptoPortfolioTracker):
     """Runs an interactive session for placing a manual trade."""
     print("\n--- TRADE Manual Trading ---")
-    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
+    is_live = tracker.config_manager.is_live
     if not is_live:
         print(
             "🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run)."
@@ -684,8 +684,8 @@ async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
     logger.info("Starting automated rebalancing process...")
 
     # Check trading status
-    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
-    is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
+    is_live = tracker.config_manager.is_live
+    is_testnet = tracker.config_manager.is_testnet_mode
 
     print("\n--- ⚖️ Automated Rebalancing ---")
 
@@ -1134,10 +1134,8 @@ async def run_live_strategy(tracker: CryptoPortfolioTracker):
             )
             return
 
-        is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
-        is_testnet = (
-            tracker.config.get("apis", {}).get("binance", {}).get("testnet", False)
-        )
+        is_live = tracker.config_manager.is_live
+        is_testnet = tracker.config_manager.is_testnet_mode
 
         print("\n" + "=" * 80)
         print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
@@ -1603,8 +1601,8 @@ async def run_trading_menu(tracker: CryptoPortfolioTracker):
     loop = asyncio.get_event_loop()
 
     # Check trading status
-    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
-    is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
+    is_live = tracker.config_manager.is_live
+    is_testnet = tracker.config_manager.is_testnet_mode
 
     print("\n--- 🔀 Trading ---")
 
@@ -1658,8 +1656,8 @@ async def run_dca_menu(tracker: CryptoPortfolioTracker):
     print("\n--- 💸 Dollar Cost Averaging (DCA) ---")
 
     # Check trading status
-    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
-    is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
+    is_live = tracker.config_manager.is_live
+    is_testnet = tracker.config_manager.is_testnet_mode
 
     if not is_live:
         print(
@@ -1856,7 +1854,7 @@ async def run_transfer_menu(tracker: CryptoPortfolioTracker):
     print("\n--- 💸 Transfer Funds (Funding → Spot) ---")
 
     # Check trading status
-    is_live = tracker.config.get("portfolio", {}).get("live_trading_enabled", False)
+    is_live = tracker.config_manager.is_live
     is_testnet = tracker.config.get("portfolio", {}).get("testnet_mode", True)
 
     if not is_live:
@@ -1868,6 +1866,8 @@ async def run_transfer_menu(tracker: CryptoPortfolioTracker):
 
     if is_testnet:
         print("🧪 TESTNET MODE: Using testnet for all operations.")
+        print("⚠️ Transfer from Funding to Spot is not supported on Testnet. Returning to menu.")
+        return
     else:
         print("🌐 MAINNET MODE: Using mainnet for all operations.")
 
@@ -2109,7 +2109,7 @@ async def amain():
     try:
         try:
             tracker = CryptoPortfolioTracker(config_manager)
-        except NetworkOperationError:
+        except (NetworkOperationError, NetworkUnavailableError):
             resp = await loop.run_in_executor(
                 None,
                 input,

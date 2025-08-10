@@ -13,6 +13,11 @@ def render_dca_page(dashboard):
     """Render the Dollar Cost Averaging (DCA) page using a state machine."""
     st.markdown("## 💸 Dollar Cost Averaging (DCA)")
 
+    # Offline guard: disable DCA workflows when offline
+    if dashboard.offline_mode:
+        st.info("⚠️ Offline mode: DCA is unavailable.")
+        return
+
     # Last and Next info
     last_dca = (
         dashboard.initialize_tracker().db_manager.get_latest_timestamp_for_source("DCA")

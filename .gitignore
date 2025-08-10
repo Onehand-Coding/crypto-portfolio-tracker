@@ -69,3 +69,4 @@ data/
 !.env.example
 
 /config/default_config.json
+context.txt
