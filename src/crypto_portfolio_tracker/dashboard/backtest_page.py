@@ -303,7 +303,7 @@ def render_backtest_page(dashboard):
                         col1, col2 = st.columns([3, 1])
                         with col1:
                             add_asset = st.selectbox(
-                                "",  # Empty label to avoid extra spacing
+                                "Select Asset",
                                 ["Select an asset..."] + available_to_add,
                                 key=f"add_asset_select_{st.session_state.get('add_asset_counter', 0)}",
                                 label_visibility="collapsed",  # Hide the label completely
