@@ -116,5 +116,13 @@
     "rsi_period": 14,
     "rsi_oversold": 30,
     "rsi_overbought": 70
+  },
+  "automation": {
+    "dca": {
+      "frequency": "monthly"
+    },
+    "rebalancing": {
+      "frequency": "monthly"
+    }
   }
 }

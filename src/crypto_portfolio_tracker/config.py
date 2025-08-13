@@ -160,6 +160,7 @@ class ConfigManager:
         """Converts all relative paths in the config to absolute paths."""
         paths_to_resolve = {
             ("database", "path"),
+            ("database", "testnet_path"),
             ("logging", "file_config", "path"),
             ("exports", "path"),
             ("cache", "path"),
