@@ -124,5 +124,13 @@
     "rebalancing": {
       "frequency": "monthly"
     }
+  },
+  "profit_taking": {
+    "enabled": true,
+    "min_opportunity_score": 60,
+    "min_unrealized_gain_pct": 15.0,
+    "min_unrealized_gain_usd": 10.0,
+    "max_gain_take_pct": 50,
+    "default_take_percentage": 30
   }
 }

@@ -42,7 +42,10 @@ def mock_config_manager(tmp_path):
             },
         },
         "apis": {"binance": {"testnet": True, "timeout": 60}},
-        "database": {"path": str(tmp_path / "test_portfolio.db"), "backup_retention_days": 7},
+        "database": {
+            "path": str(tmp_path / "test_portfolio.db"),
+            "backup_retention_days": 7,
+        },
     }
 
     # Mock other required methods

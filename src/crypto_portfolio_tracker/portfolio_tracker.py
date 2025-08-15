@@ -8,11 +8,14 @@ import re
 import json
 import time
 import copy
+import uuid
+import socket
 import inspect
 import asyncio
 import logging
 import datetime
 import functools
+from enum import Enum
 from pathlib import Path
 from diskcache import Cache
 from collections import deque
@@ -28,9 +31,6 @@ from binance.client import Client
 from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException
 from requests.exceptions import ConnectionError
-import socket
-from enum import Enum
-import uuid
 
 from . import trading_strategies
 from .config import ConfigManager
@@ -43,6 +43,7 @@ from .strategy_backtester import StrategyBacktester
 from .crypto_trend_analyzer import CryptoTrendAnalyzer
 from .rebalancing_backtester import RebalancingBacktester
 from .rebalancing_logic import get_live_rebalance_suggestions
+from .profit_taking_logic import ProfitTakingAnalyzer, ProfitOpportunity
 from .exporters import ExcelExporter, HtmlExporter, CsvExporter
 from .exceptions import NetworkOperationError, NetworkUnavailableError
 
@@ -818,6 +819,237 @@ class CryptoPortfolioTracker:
 
         return result
 
+    async def get_profit_taking_opportunities(
+        self,
+        core_holdings_df: Optional[pd.DataFrame] = None,
+        rebalance_suggestions_df: Optional[pd.DataFrame] = None,
+        cached_trend_data: Optional[Dict[str, Any]] = None,
+    ) -> List[ProfitOpportunity]:
+        """
+        Analyzes portfolio for profit-taking opportunities.
+
+        Args:
+            core_holdings_df: Optional pre-computed core holdings DataFrame
+            rebalance_suggestions_df: Optional pre-computed rebalancing suggestions DataFrame
+            cached_trend_data: Optional cached trend analysis data from rebalancing workflow
+
+        Returns:
+            List of ProfitOpportunity objects for assets that meet criteria
+        """
+        self.logger.info("Analyzing profit-taking opportunities...")
+
+        try:
+            # Get rebalancing suggestions if not provided
+            if rebalance_suggestions_df is None:
+                suggestions_df = (
+                    await self.get_core_portfolio_rebalance_suggestions_technical()
+                )
+                if suggestions_df is None or suggestions_df.empty:
+                    self.logger.info(
+                        "No rebalancing suggestions available - cannot analyze profit opportunities"
+                    )
+                    return []
+            else:
+                suggestions_df = rebalance_suggestions_df
+                self.logger.info(
+                    "Using provided rebalancing suggestions for profit-taking analysis"
+                )
+
+            # Get core holdings if not provided
+            if core_holdings_df is None:
+                metrics = await self.calculate_portfolio_metrics()
+                core_holdings_df = metrics.get("core_holdings_df", pd.DataFrame())
+
+                if core_holdings_df.empty:
+                    self.logger.info(
+                        "No core holdings found - cannot analyze profit opportunities"
+                    )
+                    return []
+            else:
+                self.logger.info(
+                    "Using provided core holdings for profit-taking analysis"
+                )
+
+            # Initialize profit-taking analyzer
+            analyzer = CryptoTrendAnalyzer(
+                config=self.config, binance_client=self.binance_client
+            )
+            profit_analyzer = ProfitTakingAnalyzer(self.config, analyzer)
+
+            # Use optimized analysis if we have cached data, otherwise use regular analysis
+            if cached_trend_data:
+                self.logger.info(
+                    "Using optimized profit-taking analysis with cached trend data"
+                )
+                opportunities = (
+                    await profit_analyzer.analyze_profit_opportunities_optimized(
+                        core_holdings_df, suggestions_df, cached_trend_data
+                    )
+                )
+            else:
+                opportunities = await profit_analyzer.analyze_profit_opportunities(
+                    core_holdings_df, suggestions_df
+                )
+
+            self.logger.info(
+                f"Found {len(opportunities)} profit-taking opportunities with minimum score threshold"
+            )
+
+            return opportunities
+
+        except Exception as e:
+            self.logger.error(
+                f"Error analyzing profit-taking opportunities: {e}", exc_info=True
+            )
+            return []
+
+    async def execute_profit_taking_trades(
+        self, profit_trades: List[Dict[str, Any]], is_live: bool = False
+    ) -> TradeResult:
+        """
+        Execute selected profit-taking trades.
+
+        Args:
+            profit_trades: List of profit-taking trade dictionaries
+                          [{"symbol": str, "usd_amount": float, "coin_quantity": float, "take_percentage": float}]
+            is_live: Whether to execute live trades
+
+        Returns:
+            TradeResult with execution results
+        """
+        result = TradeResult(success=True)
+        batch_id = str(uuid.uuid4())
+        mode = (
+            "TESTNET"
+            if self.config_manager.is_testnet_mode
+            else ("LIVE" if is_live else "SIM")
+        )
+
+        if not profit_trades:
+            result.messages.append("No profit-taking trades selected for execution")
+            result.success = False
+            return result
+
+        self.logger.info(f"Executing {len(profit_trades)} profit-taking trades")
+
+        trades_executed_count = 0
+
+        for trade in profit_trades:
+            symbol = trade["symbol"]
+            coin_quantity = trade["coin_quantity"]
+            usd_amount = trade["usd_amount"]
+            take_percentage = trade.get("take_percentage", 0)
+
+            trade_ticker = f"{symbol}USDT"
+
+            self.logger.info(
+                f"Executing profit-taking SELL for {symbol}: {coin_quantity:.8f} coins (~${usd_amount:,.2f})"
+            )
+
+            try:
+                # Adjust quantity to exchange lot size rules
+                adjusted_quantity = self._adjust_quantity_to_lot_size(
+                    trade_ticker, coin_quantity
+                )
+
+                if adjusted_quantity is None or adjusted_quantity <= 0:
+                    result.messages.append(
+                        f"⚠️ SKIPPING profit-taking for {symbol}: Adjusted quantity is zero or invalid after applying lot size rules."
+                    )
+                    continue
+
+                # Check if redemption from Earn is needed
+                redemption_success, redemption_messages = (
+                    self._redeem_from_earn_if_needed(
+                        asset=symbol,
+                        required_amount=adjusted_quantity,
+                        is_live=is_live,
+                    )
+                )
+                result.messages.extend(redemption_messages)
+
+                if not redemption_success:
+                    result.messages.append(
+                        f"⚠️ SKIPPING profit-taking for {symbol} due to redemption check failure."
+                    )
+                    continue
+
+                result.messages.append(
+                    f"\n💰 Executing profit-taking SELL for {adjusted_quantity:.8f} {symbol} ({take_percentage:.0f}% of gains)..."
+                )
+
+                if is_live:
+                    order = self.binance_client.order_market_sell(
+                        symbol=trade_ticker, quantity=f"{adjusted_quantity:.8f}"
+                    )
+                    result.messages.append(
+                        f"✅ LIVE profit-taking SELL ORDER PLACED: {order}"
+                    )
+                    self.logger.info(f"LIVE profit-taking SELL ORDER PLACED: {order}")
+                    trades_executed_count += 1
+
+                    # Record trade
+                    current_price = self._get_current_prices([symbol]).get(symbol, 0)
+                    self._record_trade_transaction(
+                        symbol=symbol,
+                        side="SELL",
+                        quantity=adjusted_quantity,
+                        price_usd=current_price or 0.0,
+                        source="PROFIT_TAKING",
+                        mode=mode,
+                        batch_id=batch_id,
+                        order=order,
+                    )
+                else:
+                    result.messages.append(
+                        f"✅ [DRY RUN] Profit-taking SELL order for {adjusted_quantity:.8f} {symbol} was not placed."
+                    )
+                    self.logger.info(
+                        f"[DRY RUN] Profit-taking SELL order for {adjusted_quantity:.8f} {symbol} was not placed."
+                    )
+                    trades_executed_count += 1
+
+                    # Record simulated trade
+                    current_price = self._get_current_prices([symbol]).get(symbol, 0)
+                    self._record_trade_transaction(
+                        symbol=symbol,
+                        side="SELL",
+                        quantity=adjusted_quantity,
+                        price_usd=current_price or 0.0,
+                        source="PROFIT_TAKING",
+                        mode=mode,
+                        batch_id=batch_id,
+                        order=None,
+                    )
+
+            except BinanceAPIException as e:
+                result.messages.append(
+                    f"❌ LIVE profit-taking SELL FAILED for {symbol}: {e}"
+                )
+                self.logger.error(f"LIVE profit-taking SELL FAILED for {symbol}: {e}")
+                result.errors.append(f"SELL {symbol}: {e}")
+                result.success = False
+            except Exception as e:
+                result.messages.append(
+                    f"❌ Unexpected error during profit-taking for {symbol}: {e}"
+                )
+                self.logger.error(
+                    f"Unexpected error during profit-taking for {symbol}: {e}",
+                    exc_info=True,
+                )
+                result.errors.append(f"{symbol}: {e}")
+                result.success = False
+
+        result.messages.append("\n" + "=" * 80)
+        result.messages.append(
+            f"✅ {trades_executed_count} profit-taking trade(s) executed successfully!"
+        )
+        result.data["trades_executed"] = trades_executed_count
+        result.data["batch_id"] = batch_id
+        result.success = trades_executed_count > 0 and result.success
+
+        return result
+
     def _make_tx_hash(
         self,
         source: str,
@@ -1364,9 +1596,9 @@ class CryptoPortfolioTracker:
                 holdings_df["earn_quantity"] = holdings_df.get("earn_quantity", 0.0)
                 holdings_df["current_price"] = 0.0
                 holdings_df["value_usd"] = 0.0
-                holdings_df["cost_basis_total"] = (
-                    holdings_df["total_quantity"] * holdings_df.get("average_cost_basis", 0.0)
-                )
+                holdings_df["cost_basis_total"] = holdings_df[
+                    "total_quantity"
+                ] * holdings_df.get("average_cost_basis", 0.0)
                 holdings_df["unrealized_pl_usd"] = 0.0
                 holdings_df["unrealized_pl_percent"] = 0.0
                 target_symbols = list(self.config.get("target_allocation", {}).keys())
@@ -1393,7 +1625,9 @@ class CryptoPortfolioTracker:
                 "spot_earn_value_usd": 0.0,
                 "futures_value_usd": 0.0,
                 "funding_value_usd": 0.0,
-                "total_cost_basis_usd": holdings_df.get("cost_basis_total", pd.Series(dtype=float)).sum()
+                "total_cost_basis_usd": holdings_df.get(
+                    "cost_basis_total", pd.Series(dtype=float)
+                ).sum()
                 if not holdings_df.empty
                 else 0.0,
                 "unrealized_pl_usd": 0.0,

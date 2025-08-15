@@ -9,6 +9,7 @@ from crypto_portfolio_tracker.dashboard.components.transfer_widget import (
 )
 
 from crypto_portfolio_tracker.portfolio_tracker import ExecutionMode
+from crypto_portfolio_tracker.profit_taking_logic import ProfitTakingAnalyzer
 
 
 def render_rebalancing_page(dashboard):
@@ -253,8 +254,75 @@ def render_rebalancing_page(dashboard):
             selected_count = len(st.session_state.accepted_trades)
             st.metric("Selected for Execution", selected_count)
 
+        # Check if portfolio is balanced and profit-taking is enabled
+        # Try to get config from tracker first, fallback to config_manager
+        if (
+            hasattr(dashboard, "tracker")
+            and dashboard.tracker
+            and hasattr(dashboard.tracker, "config")
+        ):
+            profit_config = dashboard.tracker.config.get("profit_taking", {})
+        elif hasattr(dashboard, "config_manager") and dashboard.config_manager:
+            profit_config = dashboard.config_manager.config.get("profit_taking", {})
+        else:
+            profit_config = {}
+
+        profit_enabled = profit_config.get("enabled", False)
+
+        if actionable_trades.empty and profit_enabled:
+            # Portfolio is balanced, check for profit-taking opportunities
+            st.markdown("#### ✅ Portfolio Balanced - Checking Profit Opportunities")
+
+            if "profit_opportunities" not in st.session_state:
+                st.session_state.profit_opportunities = None
+                st.session_state.profit_opportunities_loading = False
+
+            if not st.session_state.profit_opportunities_loading:
+                if st.button(
+                    "🔍 Analyze Profit-Taking Opportunities",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    st.session_state.profit_opportunities_loading = True
+                    st.rerun()
+
+            if st.session_state.profit_opportunities_loading:
+                with st.spinner("🔄 Analyzing profit-taking opportunities..."):
+                    tracker = dashboard.initialize_tracker()
+
+                    # Get current portfolio metrics for optimized analysis
+                    metrics = asyncio.run(tracker.calculate_portfolio_metrics())
+                    core_holdings_df = metrics.get("core_holdings_df", pd.DataFrame())
+
+                    # Use optimized profit-taking analysis by passing already computed data
+                    opportunities = asyncio.run(
+                        tracker.get_profit_taking_opportunities(
+                            core_holdings_df=core_holdings_df,
+                            rebalance_suggestions_df=suggestions_df,
+                        )
+                    )
+                    st.session_state.profit_opportunities = opportunities
+                    st.session_state.profit_opportunities_loading = False
+                    st.rerun()
+
+            # Display profit opportunities if available
+            if st.session_state.profit_opportunities:
+                opportunities = st.session_state.profit_opportunities
+                if isinstance(opportunities, list) and len(opportunities) > 0:
+                    st.markdown("#### 💰 Profit-Taking Opportunities Found!")
+                    st.success(
+                        f"Found {len(opportunities)} assets with profit-taking potential"
+                    )
+
+                    # Add profit opportunities section here (we'll implement this next)
+                    _render_profit_opportunities_section(dashboard, opportunities)
+                else:
+                    st.info(
+                        "✅ No profit-taking opportunities found at current thresholds"
+                    )
+
         # Show actionable trades with enhanced selection interface
-        if not actionable_trades.empty:
+        elif not actionable_trades.empty:
             st.markdown("#### 🎯 Actionable Trades")
             st.markdown(
                 "*Select the trades you want to execute by checking the boxes below:*"
@@ -612,3 +680,265 @@ Executed {result.data.get("trades_executed", 0)} trade(s)
         else:
             st.info("ℹ️ **Execution Information**")
             st.code(results, language="text")
+
+
+def _render_profit_opportunities_section(dashboard, opportunities):
+    """
+    Renders the profit-taking opportunities section in the Web UI.
+    """
+    # Initialize session state for profit taking
+    if "selected_profit_trades" not in st.session_state:
+        st.session_state.selected_profit_trades = set()
+    if "profit_executing" not in st.session_state:
+        st.session_state.profit_executing = False
+    if "profit_results" not in st.session_state:
+        st.session_state.profit_results = None
+
+    tracker = dashboard.initialize_tracker()
+    from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
+
+    analyzer = CryptoTrendAnalyzer(
+        config=tracker.config, binance_client=tracker.binance_client
+    )
+    profit_analyzer = ProfitTakingAnalyzer(tracker.config, analyzer)
+
+    # Get default take percentage
+    default_take_percentage = tracker.config.get("profit_taking", {}).get(
+        "default_take_percentage", 30
+    )
+
+    # Calculate profit amounts for each opportunity
+    opportunities_with_trades = []
+    total_profit_value = 0
+
+    for opportunity in opportunities:
+        profit_amount_usd, quantity_to_sell = (
+            profit_analyzer.calculate_profit_take_amount(
+                opportunity, default_take_percentage
+            )
+        )
+        total_profit_value += profit_amount_usd
+
+        opportunities_with_trades.append(
+            {
+                "opportunity": opportunity,
+                "profit_amount_usd": profit_amount_usd,
+                "quantity_to_sell": quantity_to_sell,
+            }
+        )
+
+    # Display summary
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Opportunities", len(opportunities))
+    with col2:
+        st.metric("Total Profit Available", f"${total_profit_value:,.2f}")
+    with col3:
+        selected_profit_count = len(st.session_state.selected_profit_trades)
+        st.metric("Selected for Execution", selected_profit_count)
+
+    # Control buttons
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
+    with col1:
+        if st.button(
+            "✅ Select All Profits", key="select_all_profits", use_container_width=True
+        ):
+            for i in range(len(opportunities)):
+                st.session_state.selected_profit_trades.add(str(i))
+            st.rerun()
+
+    with col2:
+        if st.button(
+            "❌ Deselect All Profits",
+            key="deselect_all_profits",
+            use_container_width=True,
+        ):
+            st.session_state.selected_profit_trades.clear()
+            st.rerun()
+
+    st.markdown("---")
+
+    # Display each profit opportunity
+    for i, opp_data in enumerate(opportunities_with_trades):
+        opportunity = opp_data["opportunity"]
+        profit_amount_usd = opp_data["profit_amount_usd"]
+        quantity_to_sell = opp_data["quantity_to_sell"]
+
+        with st.container():
+            # Profit opportunity card with green border
+            st.markdown(
+                """
+                <div style="border-left: 4px solid #28a745; padding-left: 15px; margin: 10px 0;">
+                """,
+                unsafe_allow_html=True,
+            )
+
+            col1, col2, col3, col4 = st.columns([1, 4, 2, 1])
+
+            with col1:
+                selected = st.checkbox(
+                    "Take Profit",
+                    key=f"profit_{i}",
+                    value=str(i) in st.session_state.selected_profit_trades,
+                    help=f"Check to include this profit-taking trade for {opportunity.symbol}",
+                )
+                if selected:
+                    st.session_state.selected_profit_trades.add(str(i))
+                else:
+                    st.session_state.selected_profit_trades.discard(str(i))
+
+            with col2:
+                st.markdown(f"**{opportunity.symbol}**")
+                st.markdown(
+                    f"**Unrealized Gain:** ${opportunity.unrealized_gain_usd:,.2f} (+{opportunity.unrealized_gain_pct:.1f}%)"
+                )
+                st.markdown(
+                    f"**Opportunity Score:** {opportunity.opportunity_score:.0f}/100"
+                )
+                st.markdown(f"**Reasons:** {', '.join(opportunity.reasons[:2])}")
+
+            with col3:
+                st.markdown("**Profit to Take**")
+                st.markdown(f"💰 **${profit_amount_usd:,.2f} USDT**")
+                st.markdown(f"📈 **{quantity_to_sell:.8g} {opportunity.symbol}**")
+                st.markdown(f"📊 **{default_take_percentage}% of gains**")
+
+            with col4:
+                st.markdown(
+                    """
+                    <div style="background: #d4edda; color: #155724; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold;">
+                        💰 PROFIT
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Execution summary
+    selected_count = len(st.session_state.selected_profit_trades)
+    if selected_count > 0:
+        selected_opportunities = [
+            opportunities_with_trades[int(i)]
+            for i in st.session_state.selected_profit_trades
+        ]
+        selected_profit_value = sum(
+            opp["profit_amount_usd"] for opp in selected_opportunities
+        )
+
+        st.success(f"✅ **{selected_count} profit-taking trade(s) selected**")
+        st.markdown(f"**Total Selected Profit Value: ${selected_profit_value:,.2f}**")
+
+        # Execute button
+        if not st.session_state.profit_executing:
+            if st.button(
+                f"🚀 Execute {selected_count} Profit-Taking Trade(s)",
+                key="execute_profit_btn",
+                type="primary",
+                use_container_width=True,
+            ):
+                st.session_state.profit_executing = True
+                st.rerun()
+        else:
+            st.info("⏳ Executing profit-taking trades... Please wait.")
+    else:
+        st.info("ℹ️ Select profit opportunities above to enable execution.")
+
+    # Handle profit execution
+    if st.session_state.profit_executing:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        try:
+            status_text.text("🔄 Preparing profit-taking execution...")
+            progress_bar.progress(30)
+
+            # Prepare selected trades for execution
+            selected_opportunities = [
+                opportunities_with_trades[int(i)]
+                for i in st.session_state.selected_profit_trades
+            ]
+
+            selected_trades = []
+            for opp_data in selected_opportunities:
+                selected_trades.append(
+                    {
+                        "symbol": opp_data["opportunity"].symbol,
+                        "usd_amount": opp_data["profit_amount_usd"],
+                        "coin_quantity": opp_data["quantity_to_sell"],
+                    }
+                )
+
+            progress_bar.progress(70)
+            status_text.text("🚀 Executing profit-taking trades...")
+
+            # Execute the trades
+            is_live = dashboard.config_manager.is_live
+            result = asyncio.run(
+                tracker.execute_profit_taking_trades(selected_trades, is_live)
+            )
+
+            progress_bar.progress(100)
+            status_text.text(
+                "✅ Profit-taking completed!"
+                if result.success
+                else "❌ Profit-taking failed!"
+            )
+
+            # Store results
+            output = "\n".join(result.messages)
+            errors_output = "\n".join(result.errors) if result.errors else ""
+
+            if result.success:
+                st.session_state.profit_results = (
+                    f"=== PROFIT-TAKING EXECUTION COMPLETED ===\n"
+                    f"Executed {result.data.get('trades_executed', 0)} profit-taking trade(s)\n"
+                    f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"{output}\n"
+                    f"=== END EXECUTION LOG ==="
+                )
+            else:
+                st.session_state.profit_results = (
+                    f"=== PROFIT-TAKING EXECUTION FAILED ===\n"
+                    f"Executed {result.data.get('trades_executed', 0)} profit-taking trade(s)\n"
+                    f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"{output}\n"
+                    f"{errors_output if errors_output else ''}\n"
+                    f"=== END EXECUTION LOG ==="
+                )
+
+        except Exception as e:
+            progress_bar.progress(100)
+            status_text.text("❌ Execution failed!")
+            st.session_state.profit_results = f"❌ **Execution Error**: {str(e)}"
+
+        finally:
+            st.session_state.profit_executing = False
+            st.rerun()
+
+    # Show execution results
+    if st.session_state.profit_results:
+        st.markdown("#### 📋 Profit-Taking Execution Results")
+        results = st.session_state.profit_results
+
+        if "COMPLETED" in results:
+            st.success("✅ **Profit-Taking Execution Successful!**")
+        elif "FAILED" in results:
+            st.error("❌ **Profit-Taking Execution Failed**")
+        else:
+            st.warning("⚠️ **Profit-Taking Execution Issues**")
+
+        with st.expander("📊 View Detailed Execution Log", expanded=True):
+            st.code(results, language="text")
+
+        # Clear results button
+        if st.button(
+            "🔄 Clear Profit Results", type="secondary", key="clear_profit_results"
+        ):
+            st.session_state.selected_profit_trades.clear()
+            st.session_state.profit_results = None
+            st.session_state.profit_opportunities = None
+            st.success("✅ Profit-taking results cleared.")
+            st.rerun()

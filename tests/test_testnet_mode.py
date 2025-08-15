@@ -11,10 +11,12 @@ class DummyFetcher:
     def fetch_binance_balances(self) -> pd.DataFrame:
         self.calls.append("spot")
         # Provide BTC and USDT balances
-        return pd.DataFrame([
-            {"symbol": "BTC", "quantity": 0.01},
-            {"symbol": "USDT", "quantity": 50.0},
-        ])
+        return pd.DataFrame(
+            [
+                {"symbol": "BTC", "quantity": 0.01},
+                {"symbol": "USDT", "quantity": 50.0},
+            ]
+        )
 
     def fetch_simple_earn_balances(self, *_args, **_kwargs):
         self.calls.append("earn")

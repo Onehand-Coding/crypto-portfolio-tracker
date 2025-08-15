@@ -94,17 +94,18 @@ def print_main_menu(offline_mode=False):
     print("2. 💰 Quick Portfolio Summary")
     print("3. 📈 View Trends")
     print("4. ⚖️  Rebalance")
-    print("5. 💸 Dollar Cost Averaging (DCA)")
-    print("6. 🔀 Trade")
-    print("7. 🧪 Backtest")
-    print("8. 📋 Reports")
-    print("9. 📊 Charts")
-    print("10. 🗄️  Database")
-    print("11. 🧹 Data Cleanup")
-    print("12. ⚙️  View Configuration")
-    print("13. 🔧 Test Connections")
-    print("14. 💸 Transfer Funds")
-    print("15. ❌ Exit")
+    print("5. 💰 Take Profits")
+    print("6. 💸 Dollar Cost Averaging (DCA)")
+    print("7. 🔀 Trade")
+    print("8. 🧪 Backtest")
+    print("9. 📋 Reports")
+    print("10. 📊 Charts")
+    print("11. 🗄️  Database")
+    print("12. 🧹 Data Cleanup")
+    print("13. ⚙️  View Configuration")
+    print("14. 🔧 Test Connections")
+    print("15. 💸 Transfer Funds")
+    print("16. ❌ Exit")
     print("=" * 50)
 
 
@@ -679,7 +680,8 @@ async def run_manual_trade_session(tracker: CryptoPortfolioTracker):
 async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
     """
     Orchestrates the process of getting rebalancing suggestions and allows users
-    to execute them all at once or one-by-one.
+    to execute them all at once or one-by-one. After rebalancing, if portfolio
+    is balanced and profit-taking is enabled, offers profit-taking opportunities.
     """
     logger.info("Starting automated rebalancing process...")
 
@@ -740,6 +742,55 @@ async def run_rebalance_and_execute(tracker: CryptoPortfolioTracker):
     actionable_trades = suggestions_df[suggestions_df["Signal"].isin(["BUY", "SELL"])]
     if actionable_trades.empty:
         print("\n✅ Your portfolio is balanced. No rebalancing needed at this time.")
+
+        # Check if profit-taking is enabled and offer it as next step
+        profit_config = tracker.config.get("profit_taking", {})
+        profit_enabled = profit_config.get("enabled", False)
+
+        if profit_enabled:
+            print(
+                "\n💡 Since your portfolio is balanced, checking for profit-taking opportunities..."
+            )
+
+            # Get portfolio metrics which might have cached data we can reuse
+            metrics = await tracker.calculate_portfolio_metrics()
+            core_holdings_df = metrics.get("core_holdings_df", pd.DataFrame())
+
+            # Analyze profit-taking opportunities with optimization
+            # Pass the rebalancing suggestions and core holdings to avoid recalculation
+            opportunities_list = await tracker.get_profit_taking_opportunities(
+                core_holdings_df=core_holdings_df,
+                rebalance_suggestions_df=suggestions_df,
+            )
+
+            if isinstance(opportunities_list, list) and len(opportunities_list) > 0:
+                print(
+                    f"\n💰 Found {len(opportunities_list)} profit-taking opportunities!"
+                )
+
+                # Ask if user wants to see and execute profit-taking
+                user_response = await loop.run_in_executor(
+                    None,
+                    input,
+                    "\nWould you like to review profit-taking opportunities? (y/n): ",
+                )
+                user_response = user_response.strip().lower()
+
+                if user_response in ["y", "yes"]:
+                    await _run_integrated_profit_taking(
+                        tracker, opportunities_list, is_live
+                    )
+                else:
+                    print("Profit-taking opportunities skipped.")
+            else:
+                print(
+                    "\n✅ No profit-taking opportunities found at current thresholds."
+                )
+        else:
+            print(
+                "\n💡 Consider enabling profit-taking in your config to maximize gains when balanced."
+            )
+
         return
 
     # 5. Add interactive execution choice
@@ -1651,6 +1702,333 @@ async def run_trading_menu(tracker: CryptoPortfolioTracker):
             return
 
 
+async def _run_integrated_profit_taking(
+    tracker: CryptoPortfolioTracker, opportunities_list: List, is_live: bool
+):
+    """
+    Helper function to run profit-taking when called from rebalancing workflow.
+    """
+    loop = asyncio.get_event_loop()
+
+    try:
+        # Display opportunities
+        print(f"\n💡 Found {len(opportunities_list)} profit-taking opportunities:")
+        print("=" * 80)
+
+        # We need to calculate profit amounts and quantities for each opportunity
+        from .profit_taking_logic import ProfitTakingAnalyzer
+
+        analyzer = CryptoTrendAnalyzer(
+            config=tracker.config, binance_client=tracker.binance_client
+        )
+        profit_analyzer = ProfitTakingAnalyzer(tracker.config, analyzer)
+
+        # Use default 30% take percentage for display
+        default_take_percentage = tracker.config.get("profit_taking", {}).get(
+            "default_take_percentage", 30
+        )
+
+        total_profit_value = 0
+        opportunities_with_trades = []
+
+        for i, opportunity in enumerate(opportunities_list, 1):
+            symbol = opportunity.symbol
+            unrealized_gain = opportunity.unrealized_gain_usd
+            current_price = opportunity.current_price
+
+            # Calculate profit-taking amounts
+            profit_amount_usd, quantity_to_sell = (
+                profit_analyzer.calculate_profit_take_amount(
+                    opportunity, default_take_percentage
+                )
+            )
+
+            total_profit_value += profit_amount_usd
+
+            # Store the trade info for later execution
+            opportunities_with_trades.append(
+                {
+                    "opportunity": opportunity,
+                    "profit_amount_usd": profit_amount_usd,
+                    "quantity_to_sell": quantity_to_sell,
+                    "symbol": symbol,
+                }
+            )
+
+            print(f"{i}. {symbol}")
+            print(f"   Unrealized Gain: ${unrealized_gain:,.2f}")
+            print(
+                f"   Profit to Take: ${profit_amount_usd:,.2f} ({quantity_to_sell:.8g} {symbol})"
+            )
+            print(f"   Current Price: ${current_price:,.2f}")
+            print(f"   Opportunity Score: {opportunity.opportunity_score:.0f}/100")
+            print(f"   Reasons: {', '.join(opportunity.reasons)}")
+            if i < len(opportunities_list):
+                print("-" * 40)
+
+        print("=" * 80)
+        print(f"💰 Total Profit Value Available: ${total_profit_value:,.2f}")
+
+        # Ask if user wants to execute profit-taking
+        confirmation = await loop.run_in_executor(
+            None, input, "\nExecute ALL profit-taking trades? (y/n): "
+        )
+        confirmation = confirmation.strip().lower()
+
+        if confirmation in ["y", "yes"]:
+            # Convert to format expected by execute_profit_taking_trades
+            selected_trades = []
+            for opp in opportunities_with_trades:
+                selected_trades.append(
+                    {
+                        "symbol": opp["symbol"],
+                        "usd_amount": opp["profit_amount_usd"],
+                        "coin_quantity": opp["quantity_to_sell"],
+                    }
+                )
+
+            print("\n🔄 Executing profit-taking trades...")
+            result = await tracker.execute_profit_taking_trades(
+                selected_trades, is_live
+            )
+
+            # Display results
+            print("\n📋 Profit-Taking Execution Results:")
+            for msg in result.messages:
+                print(f"   {msg}")
+
+            if result.success:
+                print("✅ Profit-taking executed successfully!")
+            else:
+                print("❌ Profit-taking failed:")
+                for err in result.errors:
+                    print("   -", err)
+        else:
+            print("Profit-taking skipped.")
+
+    except Exception as e:
+        print(f"❌ Error in integrated profit-taking: {e}")
+
+
+async def run_profit_taking_menu(tracker: CryptoPortfolioTracker):
+    """Runs an interactive session for profit-taking."""
+    print("\n--- 💰 Take Profits ---")
+
+    # Check trading status
+    is_live = tracker.config_manager.is_live
+    is_testnet = tracker.config_manager.is_testnet_mode
+
+    if not is_live:
+        print(
+            "🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run)."
+        )
+    else:
+        print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
+
+    if is_testnet:
+        print("🧪 TESTNET MODE: Using testnet for all operations.")
+    else:
+        print("🌐 MAINNET MODE: Using mainnet for all operations.")
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        # 1. Get profit-taking opportunities
+        print("\n🔄 Analyzing portfolio for profit-taking opportunities...")
+
+        opportunities_list = await tracker.get_profit_taking_opportunities()
+
+        # Check if it's an error result (should be a list, not dict with error)
+        if isinstance(opportunities_list, dict) and "error" in opportunities_list:
+            print(f"❌ {opportunities_list['error']}")
+            return
+
+        # Ensure it's a list
+        if not isinstance(opportunities_list, list):
+            print("❌ Unexpected return type from profit-taking analysis")
+            return
+
+        if not opportunities_list:
+            print("\n✅ No profit-taking opportunities found at this time.")
+            print("   This could mean:")
+            print("   - Your portfolio is not balanced")
+            print("   - No positions have reached your profit-taking thresholds")
+            print("   - Holdings are too small to meet minimum trade sizes")
+            return
+
+        # 2. Display opportunities
+        print(f"\n💡 Found {len(opportunities_list)} profit-taking opportunities:")
+        print("=" * 80)
+
+        # We need to calculate profit amounts and quantities for each opportunity
+        from .profit_taking_logic import ProfitTakingAnalyzer
+
+        analyzer = CryptoTrendAnalyzer(
+            config=tracker.config, binance_client=tracker.binance_client
+        )
+        profit_analyzer = ProfitTakingAnalyzer(tracker.config, analyzer)
+
+        # Use default 30% take percentage for display
+        default_take_percentage = tracker.config.get("profit_taking", {}).get(
+            "default_take_percentage", 30
+        )
+
+        total_profit_value = 0
+        opportunities_with_trades = []
+
+        for i, opportunity in enumerate(opportunities_list, 1):
+            symbol = opportunity.symbol
+            unrealized_gain = opportunity.unrealized_gain_usd
+            current_price = opportunity.current_price
+
+            # Calculate profit-taking amounts
+            profit_amount_usd, quantity_to_sell = (
+                profit_analyzer.calculate_profit_take_amount(
+                    opportunity, default_take_percentage
+                )
+            )
+
+            total_profit_value += profit_amount_usd
+
+            # Store the trade info for later execution
+            opportunities_with_trades.append(
+                {
+                    "opportunity": opportunity,
+                    "profit_amount_usd": profit_amount_usd,
+                    "quantity_to_sell": quantity_to_sell,
+                    "symbol": symbol,
+                }
+            )
+
+            print(f"{i}. {symbol}")
+            print(f"   Unrealized Gain: ${unrealized_gain:,.2f}")
+            print(
+                f"   Profit to Take: ${profit_amount_usd:,.2f} ({quantity_to_sell:.8g} {symbol})"
+            )
+            print(f"   Current Price: ${current_price:,.2f}")
+            print(f"   Reason: {', '.join(opportunity.reasons)}")
+            if i < len(opportunities_list):
+                print("-" * 40)
+
+        print("=" * 80)
+        print(f"💰 Total Profit Value Available: ${total_profit_value:,.2f}")
+
+        # 3. Selection menu
+        print("\nOptions:")
+        print("1. Execute ALL profit-taking trades")
+        print("2. Select specific trades to execute")
+
+        while True:
+            selection = await loop.run_in_executor(
+                None, input, "Select option (1-2) or Enter to return: "
+            )
+            selection = selection.strip()
+
+            if not selection:
+                print("Returning to main menu...")
+                return
+
+            if selection == "1":
+                # Execute all trades
+                selected_opportunities = opportunities_with_trades
+                break
+            elif selection == "2":
+                # Let user select specific trades
+                selected_opportunities = []
+                print(
+                    "\nSelect trades to execute (enter numbers separated by commas, e.g., '1,3,5'):"
+                )
+
+                while True:
+                    trade_selection = await loop.run_in_executor(
+                        None, input, "Trade numbers: "
+                    )
+                    trade_selection = trade_selection.strip()
+
+                    if not trade_selection:
+                        print("Returning to main menu...")
+                        return
+
+                    try:
+                        # Parse comma-separated numbers
+                        selected_indices = [
+                            int(x.strip()) - 1 for x in trade_selection.split(",")
+                        ]
+
+                        # Validate indices
+                        if all(
+                            0 <= idx < len(opportunities_with_trades)
+                            for idx in selected_indices
+                        ):
+                            selected_opportunities = [
+                                opportunities_with_trades[idx]
+                                for idx in selected_indices
+                            ]
+                            break
+                        else:
+                            print(
+                                f"❌ Invalid selection. Please enter numbers between 1 and {len(opportunities_with_trades)}."
+                            )
+                    except ValueError:
+                        print(
+                            "❌ Invalid format. Please enter numbers separated by commas."
+                        )
+
+                break
+            else:
+                print("❌ Invalid option. Please select 1 or 2.")
+
+        # 4. Confirmation
+        selected_profit_value = sum(
+            opp.get("profit_amount_usd", 0) for opp in selected_opportunities
+        )
+
+        print("\n" + "=" * 60)
+        print(" PLEASE CONFIRM PROFIT-TAKING EXECUTION ")
+        print(f"   Selected Trades: {len(selected_opportunities)}")
+        print(f"   Total Profit:    ${selected_profit_value:,.2f}")
+        print(f"   Live Mode:       {'YES' if is_live else 'NO'}")
+        print("=" * 60)
+
+        for opp in selected_opportunities:
+            symbol = opp.get("symbol", "N/A")
+            profit_amount = opp.get("profit_amount_usd", 0)
+            quantity = opp.get("quantity_to_sell", 0)
+            print(f"   SELL {quantity:.8g} {symbol} for ${profit_amount:,.2f}")
+        print("=" * 60)
+
+        confirm = await loop.run_in_executor(
+            None, input, "Type 'EXECUTE' to confirm profit-taking: "
+        )
+        confirm = confirm.strip()
+
+        if confirm == "EXECUTE":
+            # Execute profit-taking trades
+            print("\n🔄 Executing profit-taking trades...")
+            result = await tracker.execute_profit_taking_trades(selected_opportunities)
+
+            # Display results
+            print("\n📋 Profit-Taking Execution Results:")
+            for msg in result.messages:
+                print(f"   {msg}")
+
+            if result.success:
+                print("✅ Profit-taking executed successfully!")
+            else:
+                print("❌ Profit-taking failed:")
+                for err in result.errors:
+                    print("   -", err)
+        else:
+            print("🛑 Profit-taking cancelled by user.")
+
+    except (KeyboardInterrupt, EOFError):
+        print("\nReturning to main menu...")
+        return
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        return
+
+
 async def run_dca_menu(tracker: CryptoPortfolioTracker):
     """Runs an interactive session for Dollar Cost Averaging (DCA)."""
     print("\n--- 💸 Dollar Cost Averaging (DCA) ---")
@@ -1866,7 +2244,9 @@ async def run_transfer_menu(tracker: CryptoPortfolioTracker):
 
     if is_testnet:
         print("🧪 TESTNET MODE: Using testnet for all operations.")
-        print("⚠️ Transfer from Funding to Spot is not supported on Testnet. Returning to menu.")
+        print(
+            "⚠️ Transfer from Funding to Spot is not supported on Testnet. Returning to menu."
+        )
         return
     else:
         print("🌐 MAINNET MODE: Using mainnet for all operations.")
@@ -2005,7 +2385,19 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
     """Runs the main interactive menu loop."""
     loop = asyncio.get_event_loop()
     offline_mode = getattr(tracker, "offline_mode", False)
-    unavailable_offline = {1, 2, 3, 4, 5, 6, 8, 9, 13, 14}  # Added 14
+    unavailable_offline = {
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        14,
+        15,
+    }  # Updated with new menu structure
     try:
         while True:
             print_main_menu(offline_mode)
@@ -2013,7 +2405,7 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
                 choice_str = await loop.run_in_executor(
                     None,
                     input,
-                    "Select option (1-15): ",  # Updated to 15
+                    "Select option (1-16): ",  # Updated to 16
                 )
                 choice = int(choice_str) if choice_str.isdigit() else -1
 
@@ -2041,26 +2433,28 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
                     case 4:
                         await run_rebalance_and_execute(tracker)
                     case 5:
-                        await run_dca_menu(tracker)
+                        await run_profit_taking_menu(tracker)
                     case 6:
-                        await run_trading_menu(tracker)
+                        await run_dca_menu(tracker)
                     case 7:
-                        await run_backtesting_menu(tracker)
+                        await run_trading_menu(tracker)
                     case 8:
-                        await export_reports_menu(tracker)
+                        await run_backtesting_menu(tracker)
                     case 9:
-                        await run_chart_selection_menu(tracker)
+                        await export_reports_menu(tracker)
                     case 10:
-                        await run_backup_and_restore_menu(tracker)
+                        await run_chart_selection_menu(tracker)
                     case 11:
-                        await run_data_cleanup_menu(tracker)
+                        await run_backup_and_restore_menu(tracker)
                     case 12:
-                        print_configuration(tracker)
+                        await run_data_cleanup_menu(tracker)
                     case 13:
-                        await test_connections(tracker)
+                        print_configuration(tracker)
                     case 14:
-                        await run_transfer_menu(tracker)
+                        await test_connections(tracker)
                     case 15:
+                        await run_transfer_menu(tracker)
+                    case 16:
                         print("👋 Exiting. Goodbye!")
                         break
                     case _:
