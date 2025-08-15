@@ -104,6 +104,76 @@ def render_settings_page(dashboard):
                         help="🧪 Switch between Binance mainnet and testnet.",
                     )
 
+                    profit_taking_config = config.get("profit_taking", {}).get(
+                        "enabled", False
+                    )
+                    new_profit_taking = st.toggle(
+                        "💰 Enable Profit Taking",
+                        value=profit_taking_config,
+                        help="💰 Enable automated profit-taking when portfolio is balanced.",
+                    )
+
+                with st.expander("💰 Profit Taking Configuration", expanded=False):
+                    profit_config = config.get("profit_taking", {})
+                    
+                    # Min opportunity score
+                    min_opportunity_score = profit_config.get("min_opportunity_score", 60)
+                    new_min_opportunity_score = st.number_input(
+                        "⭐ Minimum Opportunity Score",
+                        min_value=0,
+                        max_value=100,
+                        value=int(min_opportunity_score),
+                        step=1,
+                        help="⭐ Minimum opportunity score (0-100) required to trigger profit-taking.",
+                    )
+                    
+                    # Min unrealized gain percentage
+                    min_unrealized_gain_pct = profit_config.get("min_unrealized_gain_pct", 15.0)
+                    new_min_unrealized_gain_pct = st.number_input(
+                        "📈 Minimum Unrealized Gain (%)",
+                        min_value=0.0,
+                        max_value=500.0,
+                        value=float(min_unrealized_gain_pct),
+                        step=0.5,
+                        help="📈 Minimum unrealized gain percentage required for profit-taking.",
+                    )
+                    
+                    # Min unrealized gain USD
+                    min_unrealized_gain_usd = profit_config.get("min_unrealized_gain_usd", 10.0)
+                    new_min_unrealized_gain_usd = st.number_input(
+                        "💵 Minimum Unrealized Gain (USD)",
+                        min_value=0.0,
+                        max_value=10000.0,
+                        value=float(min_unrealized_gain_usd),
+                        step=1.0,
+                        help="💵 Minimum unrealized gain in USD required for profit-taking.",
+                    )
+                    
+                    col_max_take, col_default_take = st.columns(2)
+                    with col_max_take:
+                        # Max gain take percentage
+                        max_gain_take_pct = profit_config.get("max_gain_take_pct", 50)
+                        new_max_gain_take_pct = st.number_input(
+                            "📊 Max Gain Take (%)",
+                            min_value=1,
+                            max_value=100,
+                            value=int(max_gain_take_pct),
+                            step=1,
+                            help="📊 Maximum percentage of gains that can be taken in one profit-taking action.",
+                        )
+                    
+                    with col_default_take:
+                        # Default take percentage
+                        default_take_percentage = profit_config.get("default_take_percentage", 30)
+                        new_default_take_percentage = st.number_input(
+                            "🎯 Default Take (%)",
+                            min_value=1,
+                            max_value=100,
+                            value=int(default_take_percentage),
+                            step=1,
+                            help="🎯 Default percentage of gains to take when profit-taking is triggered.",
+                        )
+
                 with st.expander("💱 Currency Settings", expanded=False):
                     p2p_fiat = config.get("portfolio", {}).get(
                         "p2p_fiat_currency", "USD"
@@ -156,6 +226,19 @@ def render_settings_page(dashboard):
                             for s in new_stablecoins.split(",")
                             if s.strip()
                         ]
+                        
+                        # Initialize profit_taking config if it doesn't exist
+                        if "profit_taking" not in config:
+                            config["profit_taking"] = {}
+                        
+                        # Update profit taking settings
+                        config["profit_taking"]["enabled"] = new_profit_taking
+                        config["profit_taking"]["min_opportunity_score"] = new_min_opportunity_score
+                        config["profit_taking"]["min_unrealized_gain_pct"] = new_min_unrealized_gain_pct
+                        config["profit_taking"]["min_unrealized_gain_usd"] = new_min_unrealized_gain_usd
+                        config["profit_taking"]["max_gain_take_pct"] = new_max_gain_take_pct
+                        config["profit_taking"]["default_take_percentage"] = new_default_take_percentage
+                        
                         # Save and Reload
                         dashboard.config_manager.save_config()
                         dashboard.reload()
