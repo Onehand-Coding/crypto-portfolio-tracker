@@ -4,9 +4,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 from crypto_portfolio_tracker.dashboard import utils as ui_utils
-from crypto_portfolio_tracker.dashboard.components.transfer_widget import (
-    render_transfer_widget,
-)
+from crypto_portfolio_tracker.dashboard.components import render_transfer_widget, render_trading_status_banner
 
 from crypto_portfolio_tracker.portfolio_tracker import ExecutionMode
 from crypto_portfolio_tracker.profit_taking_logic import ProfitTakingAnalyzer
@@ -46,25 +44,12 @@ def render_rebalancing_page(dashboard):
             f"Next Check ({rb_freq.title()})", ui_utils.format_datetime_local(next_rb)
         )
 
-    # --- Trading Status Banner ---
+    # Check trading status
     is_live = dashboard.config_manager.is_live
     is_testnet = dashboard.config_manager.is_testnet_mode
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if is_live:
-            st.error("🔴 LIVE TRADING ENABLED")
-        else:
-            st.warning("🟡 LIVE TRADING DISABLED")
-    with col2:
-        if is_testnet:
-            st.info("🧪 TESTNET CONNECTION")
-        else:
-            st.info("🌐 MAINNET CONNECTION")
-    with col3:
-        if is_live:
-            st.error("⚠️ ORDERS WILL BE PLACED")
-        else:
-            st.success("✅ SIMULATION MODE")
+
+    # Trading Status Banner
+    render_trading_status_banner(is_live, is_testnet)
 
     # Initialize session state
     if "rebalance_metrics" not in st.session_state:

@@ -5,10 +5,8 @@ from datetime import datetime
 import streamlit as st
 
 from crypto_portfolio_tracker import trading_strategies
-from crypto_portfolio_tracker.dashboard.components.transfer_widget import (
-    render_transfer_widget,
-)
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
+from crypto_portfolio_tracker.dashboard.components import render_transfer_widget, render_trading_status_banner
 
 
 def render_trading_page(dashboard):
@@ -32,29 +30,12 @@ def render_trading_page(dashboard):
     if "strategy_signals" not in st.session_state:
         st.session_state.strategy_signals = None
 
-    # Check live trading status
-    is_live = dashboard.config_manager.config.get("portfolio", {}).get(
-        "live_trading_enabled", False
-    )
+    # Check trading status
+    is_live = dashboard.config_manager.is_live
     is_testnet = dashboard.config_manager.is_testnet_mode
 
     # Trading Status Banner
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if is_live:
-            st.error(" LIVE TRADING ENABLED")
-        else:
-            st.warning("🟡 LIVE TRADING DISABLED")
-    with col2:
-        if is_testnet:
-            st.info(" TESTNET CONNECTION")
-        else:
-            st.info(" MAINNET CONNECTION")
-    with col3:
-        if is_live:
-            st.error("⚠️ REAL ORDERS WILL BE PLACED")
-        else:
-            st.success("✅ SIMULATION MODE")
+    render_trading_status_banner(is_live, is_testnet)
 
     # Trading Mode Selection with Radio
     st.markdown("### 🎯 Select Trading Mode")
