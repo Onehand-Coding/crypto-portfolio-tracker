@@ -254,7 +254,7 @@ class ProfitTakingAnalyzer:
             )
             return False
 
-        logger.info("✅ Portfolio is balanced - profit-taking analysis can proceed")
+        logger.info("Portfolio is balanced - profit-taking analysis can proceed")
         return True
 
     async def _analyze_single_asset(

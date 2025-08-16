@@ -9,6 +9,15 @@ from crypto_portfolio_tracker.dashboard.components import render_transfer_widget
 
 def render_dca_page(dashboard):
     """Render the Dollar Cost Averaging (DCA) page using a state machine."""
+
+    # Clear previous page state if coming from another page
+    keys_to_clear = [
+        "dca_step", "dca_trades_for_confirmation",
+        "dca_execution_result_data", "dca_batch_id",
+        "current_portfolio_value"
+    ]
+    ui_utils.initialize_page_state("dca", keys_to_clear)
+
     st.markdown("## 💸 Dollar Cost Averaging (DCA)")
 
     # Offline guard: disable DCA workflows when offline

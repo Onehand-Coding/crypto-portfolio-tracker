@@ -78,10 +78,10 @@ class ConfigManager:
             db_path = self.config.get("database", {}).get(
                 "testnet_path", "data/testnet_portfolio.db"
             )
-            logging.info("TESTNET mode active. Using testnet database.")
+            logging.debug("TESTNET mode active. Using testnet database.")
         else:
             db_path = self.config.get("database", {}).get("path", "data/portfolio.db")
-            logging.info("MAINNET mode active. Using production database.")
+            logging.debug("MAINNET mode active. Using production database.")
 
         return Path(db_path)
 
@@ -135,7 +135,7 @@ class ConfigManager:
         Returns the appropriate API keys based on testnet mode and selected account.
         """
         if self.is_testnet_mode:
-            logging.info(
+            logging.debug(
                 "TESTNET mode is active. Using testnet keys for all operations."
             )
             return self.testnet_api_keys

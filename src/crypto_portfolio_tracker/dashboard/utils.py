@@ -130,3 +130,26 @@ def get_timezone_info() -> str:
     if local_tz:
         return f"Local Time ({local_tz})"
     return "Local Time"
+
+
+def initialize_page_state(page_name, keys_to_clear=None):
+    """Initialize and manage page state to ensure fresh state when navigating between pages.
+
+    Args:
+        page_name (str): The name of the current page (e.g., 'market', 'backtest')
+        keys_to_clear (list): Optional list of additional page-specific keys to clear
+    """
+    # Default keys to clear for all pages
+    default_keys = ['preview_file']
+
+    # Combine default and page-specific keys
+    all_keys_to_clear = default_keys + (keys_to_clear or [])
+
+    # Clear previous page state if coming from another page
+    if 'current_page' in st.session_state and st.session_state.current_page != page_name:
+        for key in list(st.session_state.keys()):
+            if key in all_keys_to_clear or key.startswith(f'{page_name}_'):
+                del st.session_state[key]
+
+    # Set current page
+    st.session_state.current_page = page_name

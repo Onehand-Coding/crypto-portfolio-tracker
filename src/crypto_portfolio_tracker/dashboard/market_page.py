@@ -9,10 +9,19 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 
 
 def render_market_page(dashboard):
+    """Render market page."""
+
+    # Clear previous page state if coming from another page
+    keys_to_clear = [
+        "preview_file", "current_chart_symbol", "unified_chart_coin_select"
+    ]
+    ui_utils.initialize_page_state("market", keys_to_clear)
+
     st.markdown("## 📈 Market Trends")
     export_dir = Path(
         dashboard.config_manager.config.get("exports", {}).get("path", "data/exports/")

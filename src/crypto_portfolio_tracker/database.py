@@ -270,12 +270,12 @@ class DatabaseManager:
                     changes_result = changes_cursor.fetchone()
                     rows_affected_fallback = changes_result[0] if changes_result else 0
                     self.logger.debug(
-                        f"DB: `executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes."
+                        f"`executemany` rowcount was -1. SELECT changes() reported {rows_affected_fallback} changes."
                     )
                     return rows_affected_fallback
                 else:
                     self.logger.debug(
-                        f"DB: `executemany` reported {rows_affected} rows affected (inserted or updated)."
+                        f"`executemany` reported {rows_affected} rows affected (inserted or updated)."
                     )
                 return rows_affected
         except sqlite3.Error as e:
@@ -325,24 +325,24 @@ class DatabaseManager:
                     )  # Don't create if missing for holdings
                     if asset_id:
                         self.logger.debug(
-                            f"DB: Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}"
+                            f"Preparing to update holding: Symbol={row['symbol']}, Qty={row['quantity']:.8f}, AvgCost={row['average_cost_basis']:.8f}"
                         )
                         data_to_update.append(
                             (asset_id, row["quantity"], row["average_cost_basis"], now)
                         )
                     else:
                         self.logger.warning(
-                            f"DB: Could not find asset_id for {row['symbol']} during holdings update. Skipping."
+                            f"Could not find asset_id for {row['symbol']} during holdings update. Skipping."
                         )
 
                 if data_to_update:
                     cursor.executemany(sql, data_to_update)
                     conn.commit()
                     self.logger.info(
-                        f"DB: Holdings update executed. Cursor rowcount: {cursor.rowcount}. Attempted: {len(data_to_update)} records."
+                        f"Holdings update executed. Cursor rowcount: {cursor.rowcount}. Attempted: {len(data_to_update)} records."
                     )
                 else:
-                    self.logger.info("DB: No holdings data prepared for update.")
+                    self.logger.info("No holdings data prepared for update.")
         except sqlite3.Error as e:
             self.logger.error(f"Error updating holdings: {e}")
 

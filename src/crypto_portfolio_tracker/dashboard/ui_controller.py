@@ -20,19 +20,21 @@ class Dashboard:
 
     def setup_logging(self, level_override: Optional[str] = None):
         try:
-            # Initialize config_manager if not already done (like original)
+            # Initialize config_manager if not already done
             if self.config_manager is None:
                 self.config_manager = ConfigManager()
 
             logging_config = self.config_manager.config.get("logging", {})
-            log_level_str = (
-                level_override or logging_config.get("level", "INFO")
-            ).upper()
-            log_level = getattr(logging, log_level_str, logging.INFO)
-            logging.basicConfig(
-                level=log_level,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            )
+            # Do not show logging to console if disabled in config.
+            if logging_config.get("console_config", {}).get("enabled", True):
+                log_level_str = (
+                    level_override or logging_config.get("level", "INFO")
+                ).upper()
+                log_level = getattr(logging, log_level_str, logging.INFO)
+                logging.basicConfig(
+                    level=log_level,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                )
             logging.getLogger("httpx").setLevel(logging.WARNING)
         except Exception as e:
             st.error(f"Failed to setup logging: {str(e)}")

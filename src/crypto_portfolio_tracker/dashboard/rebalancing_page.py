@@ -3,14 +3,25 @@ from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
-from crypto_portfolio_tracker.dashboard import utils as ui_utils
-from crypto_portfolio_tracker.dashboard.components import render_transfer_widget, render_trading_status_banner
 
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 from crypto_portfolio_tracker.portfolio_tracker import ExecutionMode
 from crypto_portfolio_tracker.profit_taking_logic import ProfitTakingAnalyzer
+from crypto_portfolio_tracker.dashboard.components import render_transfer_widget, render_trading_status_banner
 
 
 def render_rebalancing_page(dashboard):
+    """Render rebalanicing page."""
+
+    # Clear previous page state if coming from another page
+    keys_to_clear = [ # "rebalance_metrics", "rebalance_suggestions" - Excluded to avoid expensive calls everytime.
+        "rebalance_usdt",
+        "rebalance_actionable", "rebalance_executing", "rebalance_results",
+        "accepted_trades", "profit_opportunities", "profit_opportunities_loading",
+        "selected_profit_trades", "profit_executing", "profit_results"
+    ]
+    ui_utils.initialize_page_state("rebalancing", keys_to_clear)
+
     st.markdown("## ⚖️ Portfolio Rebalancing")
 
     # Offline guard: disable rebalancing workflows when offline
@@ -291,20 +302,18 @@ def render_rebalancing_page(dashboard):
                     st.rerun()
 
             # Display profit opportunities if available
-            if st.session_state.profit_opportunities:
+            if st.session_state.profit_opportunities is not None:
                 opportunities = st.session_state.profit_opportunities
-                if isinstance(opportunities, list) and len(opportunities) > 0:
-                    st.markdown("#### 💰 Profit-Taking Opportunities Found!")
-                    st.success(
-                        f"Found {len(opportunities)} assets with profit-taking potential"
-                    )
 
-                    # Add profit opportunities section here (we'll implement this next)
-                    _render_profit_opportunities_section(dashboard, opportunities)
+                if isinstance(opportunities, list):
+                    if len(opportunities) > 0:
+                        st.markdown("#### 💰 Profit-Taking Opportunities Found!")
+                        st.success(f"Found {len(opportunities)} assets with profit-taking potential")
+                        _render_profit_opportunities_section(dashboard, opportunities)
+                    else:
+                        st.info("✅ No profit-taking opportunities found at current thresholds")
                 else:
-                    st.info(
-                        "✅ No profit-taking opportunities found at current thresholds"
-                    )
+                    st.warning(f"Unexpected opportunities format: {type(opportunities)}")
 
         # Show actionable trades with enhanced selection interface
         elif not actionable_trades.empty:

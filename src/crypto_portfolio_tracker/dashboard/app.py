@@ -34,6 +34,10 @@ def main():
     main_dashboard.render_status_indicator()
     page = main_dashboard.render_sidebar(dashboard)
 
+    # Initialize page session state tracking.
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = None
+
     if page == "🏠 Home":
         home_page.render_home_page(dashboard)
     elif page == "📈 Market":
@@ -44,7 +48,6 @@ def main():
         dca_page.render_dca_page(dashboard)
     elif page == "💰 Trade":
         trading_page.render_trading_page(dashboard)
-    # Transfer page removed; transfer widget is now contextual in DCA/Trade/Rebalance
     elif page == "🧪 Backtest":
         backtest_page.render_backtest_page(dashboard)
     elif page == "🗄️ Database":

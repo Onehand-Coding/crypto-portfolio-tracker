@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from crypto_portfolio_tracker import trading_strategies
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 from crypto_portfolio_tracker.strategy_backtester import StrategyBacktester
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
@@ -53,13 +54,28 @@ def create_custom_config(
 
 
 def render_backtest_page(dashboard):
-    # Initialize session state
+    """Render backtesting page."""
+
+    # Clear previous page state if coming from another page
+    keys_to_clear = [
+        "show_save_confirmation", "backtest_results", "last_backtest_params",
+        "custom_allocation", "add_asset_counter", "rebalance_initial_capital",
+        "rebalance_period_dropdown", "rebalance_period_custom", "rebalance_frequency",
+        "majors_drift", "alts_drift", "majors_sell", "majors_buy", "alts_sell",
+        "alts_buy", "strategy_period_custom"
+    ]
+
+    ui_utils.initialize_page_state("backtest", keys_to_clear)
+
+     # Initialize session state (only if not already set)
     if "show_save_confirmation" not in st.session_state:
         st.session_state.show_save_confirmation = False
     if "backtest_results" not in st.session_state:
         st.session_state.backtest_results = None
     if "last_backtest_params" not in st.session_state:
         st.session_state.last_backtest_params = None
+    if "custom_allocation" not in st.session_state:
+        st.session_state.custom_allocation = dashboard.config_manager.config.get("target_allocation", {}).copy()
 
     st.markdown("## 🧪 Backtesting")
     st.markdown(
@@ -305,7 +321,7 @@ def render_backtest_page(dashboard):
                             add_asset = st.selectbox(
                                 "Select Asset",
                                 ["Select an asset..."] + available_to_add,
-                                key=f"add_asset_select_{st.session_state.get('add_asset_counter', 0)}",
+                                key=f"add_asset_select_{st.session_state.get("add_asset_counter", 0)}",
                                 label_visibility="collapsed",  # Hide the label completely
                             )
                         with col2:

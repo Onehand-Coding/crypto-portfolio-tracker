@@ -96,7 +96,7 @@ def print_main_menu(offline_mode=False):
     print("4. ⚖️  Rebalance")
     print("5. 💸 Dollar Cost Averaging (DCA)")
     print("6. 🔀 Trade")
-    print("7. 💸 Transfer Funds")
+    print("7. 💵 Transfer Funds")
     print("8. 🧪 Backtest")
     print("9. 📋 Reports")
     print("10. 📊 Charts")
@@ -579,15 +579,7 @@ async def run_rebalancing_backtest(tracker: CryptoPortfolioTracker):
 
 async def run_manual_trade_session(tracker: CryptoPortfolioTracker):
     """Runs an interactive session for placing a manual trade."""
-    print("\n--- TRADE Manual Trading ---")
-    is_live = tracker.config_manager.is_live
-    if not is_live:
-        print(
-            "🟡 NOTE: Live Trading is DISABLED. All trades will be simulated (Dry Run)."
-        )
-    else:
-        print("🔴 WARNING: Live Trading is ENABLED. Real orders will be placed.")
-
+    print("\n--- TRADE Manual Trading ---\n")
     loop = asyncio.get_event_loop()
     try:
         # 1. Get Trade Type
@@ -653,6 +645,7 @@ async def run_manual_trade_session(tracker: CryptoPortfolioTracker):
         confirm = await loop.run_in_executor(None, input, "Type 'EXECUTE' to confirm: ")
         confirm = confirm.strip()
 
+        is_live = tracker.config_manager.is_live
         if confirm == "EXECUTE":
             result = await tracker.execute_manual_trade_core(
                 trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
@@ -2002,7 +1995,7 @@ async def run_dca_menu(tracker: CryptoPortfolioTracker):
 
 async def run_transfer_menu(tracker: CryptoPortfolioTracker):
     """Runs an interactive session for transferring funds from funding to spot wallet."""
-    print("\n--- 💸 Transfer Funds (Funding → Spot) ---")
+    print("\n--- 💵 Transfer Funds (Funding → Spot) ---")
 
     # Check trading status
     is_live = tracker.config_manager.is_live

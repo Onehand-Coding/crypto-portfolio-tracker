@@ -5,12 +5,25 @@ from datetime import datetime
 import streamlit as st
 
 from crypto_portfolio_tracker import trading_strategies
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 from crypto_portfolio_tracker.dashboard.components import render_transfer_widget, render_trading_status_banner
 
 
 def render_trading_page(dashboard):
     """Render trading page"""
+
+    # Clear previous page state if coming from another page
+    keys_to_clear = [
+        'trading_mode', 'trading_results', 'trading_executing',
+        'manual_trade_data', 'strategy_signals', 'strategy_selected_coins',
+        'strategy_param_', 'strategy_trade_amount_mode', 'strategy_trade_pct',
+        'strategy_trade_amount', 'strategy_account', 'strategy_name',
+        'strategy_reset_flag'
+    ]
+
+    ui_utils.initialize_page_state("trading", keys_to_clear)
+
     st.markdown("## 💰 Trading")
 
     # Offline guard: disable trading workflows when offline
