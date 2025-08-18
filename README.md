@@ -27,6 +27,8 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
   - **Granular Control**: Use one-by-one confirmation of each trade, or  approve all suggested trades at once.
   - **Manual Trading**: A dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
   - **Directional Strategy Trading**: Run technical strategies live with safety checks
+- **Automated Profit-Taking**: Intelligently identifies opportunities to lock in gains when your portfolio is balanced. It uses a multi-factor scoring system to suggest selling a small portion of assets with significant unrealized profits, without touching your core position.
+- **Fund Transfers**: Easily transfer assets between your Funding and Spot wallets directly from the interface.
 - **Dollar Cost Averaging (DCA)**: Automated investment strategy for consistent portfolio growth:
   - **Proportional DCA**: Distribute new funds to maintain current portfolio proportions, ideal for maintaining existing allocation ratios
   - **Target-Weight DCA**: Allocate new funds to reach your target allocation percentages, perfect for gradually achieving desired portfolio balance
@@ -277,6 +279,29 @@ Configure different thresholds for major coins vs altcoins:
 }
 ```
 
+### Profit-Taking Configuration
+
+The automated profit-taking system is triggered only when your portfolio is balanced (i.e., no rebalancing actions are suggested). It uses a multi-factor score to find the best opportunities to lock in gains without selling your core position.
+
+```json
+{
+  "profit_taking": {
+    "enabled": true,
+    "min_opportunity_score": 60,
+    "min_unrealized_gain_pct": 15.0,
+    "min_unrealized_gain_usd": 10.0,
+    "max_gain_take_pct": 50,
+    "default_take_percentage": 30
+  }
+}
+```
+- `enabled`: Turns the entire feature on or off.
+- `min_opportunity_score`: The minimum score (0-100) an asset needs to be considered for profit-taking.
+- `min_unrealized_gain_pct`: The minimum unrealized gain percentage required.
+- `min_unrealized_gain_usd`: The minimum unrealized gain in USD required.
+- `max_gain_take_pct`: The maximum percentage of the *gains* that can be sold in a single action.
+- `default_take_percentage`: The default percentage of gains to sell when an opportunity is executed.
+
 ### Technical Analysis Settings
 
 Configure multi-timeframe analysis parameters:
@@ -359,17 +384,19 @@ python main.py
 2. 💰 Quick Portfolio Summary
 3. 📈 View Trends
 4. ⚖️  Rebalance
-5. 🔀 Trade
-6. 🧪 Backtest
-7. 📋 Reports
-8. 📊 Charts
-9. 🗄️  Database
-10. 🧹 Data Cleanup
-11. ⚙️  View Configuration
-12. 🔧 Test Connections
-13. ❌ Exit
+5. 💸 Dollar Cost Averaging (DCA)
+6. 🔀 Trade
+7. 💵 Transfer Funds
+8. 🧪 Backtest
+9. 📋 Reports
+10. 📊 Charts
+11. 🗄️  Database
+12. 🧹 Data Cleanup
+13. ⚙️  View Configuration
+14. 🔧 Test Connections
+15. ❌ Exit
 ==================================================
-Select option (1-13):  
+Select option (1-15):  
 ```
 
 **Use Cases for CLI:**
@@ -405,16 +432,17 @@ The portfolio summary provides two distinct views of your performance with enhan
 4. ⚖️  Rebalance
 5. 💸 Dollar Cost Averaging (DCA)
 6. 🔀 Trade
-7. 🧪 Backtest
-8. 📋 Reports
-9. 📊 Charts
-10. 🗄️  Database
-11. 🧹 Data Cleanup
-12. ⚙️  View Configuration
-13. 🔧 Test Connections
-14. ❌ Exit
+7. 💵 Transfer Funds
+8. 🧪 Backtest
+9. 📋 Reports
+10. 📊 Charts
+11. 🗄️  Database
+12. 🧹 Data Cleanup
+13. ⚙️  View Configuration
+14. 🔧 Test Connections
+15. ❌ Exit
 ==================================================
-Select option (1-14): 1
+Select option (1-15): 1
 
 🔄 Running full sync and analysis...
 
