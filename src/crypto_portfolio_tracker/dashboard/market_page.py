@@ -18,7 +18,7 @@ def render_market_page(dashboard):
 
     # Clear previous page state if coming from another page
     keys_to_clear = [
-        "preview_file", "current_chart_symbol", "unified_chart_coin_select"
+        "current_chart_symbol", "unified_chart_coin_select"
     ]
     ui_utils.initialize_page_state("market", keys_to_clear)
 

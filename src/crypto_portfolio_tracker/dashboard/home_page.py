@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from crypto_portfolio_tracker.visualizations import Visualizer
+from crypto_portfolio_tracker.dashboard import utils as ui_utils
 from crypto_portfolio_tracker.utils import (
     format_percent,
     format_usd,
@@ -134,6 +135,10 @@ def _display_metrics(metrics):
 
 def render_home_page(dashboard):
     tracker = dashboard.initialize_tracker()
+
+    # Initialize page state - home page doesn't need specific keys cleared
+    ui_utils.initialize_page_state('home')
+
     st.markdown("## 🏠 Home")
 
     metrics = st.session_state.get("portfolio_metrics")
