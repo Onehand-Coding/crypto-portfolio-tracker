@@ -39,15 +39,24 @@ class ProfitOpportunity:
 class ProfitTakingAnalyzer:
     """
     Analyzes portfolio holdings to identify optimal profit-taking opportunities.
-
-    Uses a multi-factor scoring system:
+    
+    This analyzer uses a multi-factor scoring system to evaluate profit-taking opportunities:
     - Unrealized P/L (40%): Primary driver - asset must be significantly in profit
     - RSI Analysis (25%): Momentum and overbought conditions
     - Resistance Proximity (25%): Technical analysis - near resistance levels
     - Market Context (10%): Broader market conditions (Bitcoin sentiment)
+    
+    The analyzer only identifies opportunities when the portfolio is balanced (all assets show HOLD signals).
     """
 
     def __init__(self, config: Dict[str, Any], analyzer: CryptoTrendAnalyzer):
+        """
+        Initialize the profit taking analyzer.
+        
+        Args:
+            config: Configuration dictionary
+            analyzer: CryptoTrendAnalyzer instance for technical analysis
+        """
         self.config = config
         self.analyzer = analyzer
         self.profit_config = config.get("profit_taking", {})

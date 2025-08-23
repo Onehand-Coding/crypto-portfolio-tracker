@@ -17,10 +17,27 @@ class ConfigManager:
     """
     Manages application configuration by loading non-sensitive settings
     from a JSON file and sensitive secrets from environment variables.
+    
+    This class handles the loading, parsing, and management of application configuration.
+    It separates sensitive data (API keys, secrets) which are loaded from environment
+    variables, from non-sensitive configuration which is loaded from a JSON file.
+    
+    The config manager also handles path resolution, directory creation, and provides
+    convenient accessors for common configuration values like database paths and API keys.
     """
 
     def __init__(self, config_path: Optional[str] = None):
-        """Initialize and load all configurations."""
+        """
+        Initialize and load all configurations.
+        
+        Args:
+            config_path: Optional path to the configuration file. If not provided,
+                        defaults to config/default_config.json in the project root.
+                        
+        Raises:
+            FileNotFoundError: If the project root cannot be found or config file is missing
+            SystemExit: If the configuration file is corrupt or missing
+        """
         current_dir = Path(__file__).parent
         while not (current_dir / "pyproject.toml").exists():
             if current_dir == current_dir.parent:

@@ -19,10 +19,21 @@ import matplotlib.patheffects as path_effects
 
 
 class Visualizer:
-    """Manages creation of portfolio visualizations with unified styling."""
+    """
+    Manages creation of portfolio visualizations with unified styling.
+    
+    This class provides methods to create various charts and graphs for portfolio analysis,
+    including allocation pie charts, performance comparisons, and value history charts.
+    It supports both static matplotlib charts and interactive plotly charts for web UI.
+    """
 
     def __init__(self, config: Dict[str, Any]):
-        """Initialize the visualizer."""
+        """
+        Initialize the visualizer.
+        
+        Args:
+            config: Configuration dictionary containing visualization settings
+        """
         self.logger = logging.getLogger(__name__)
         self.config = config.get("visualization", {})
         self.export_path = (

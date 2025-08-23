@@ -71,10 +71,29 @@ class ExecutionMode(Enum):
 
 
 class CryptoPortfolioTracker:
-    """Main class for the crypto portfolio tracker."""
+    """
+    Main class for the crypto portfolio tracker.
+    
+    This class orchestrates all portfolio tracking functionality including:
+    - Data synchronization from Binance API
+    - Portfolio metrics calculation
+    - Rebalancing suggestions
+    - Trade execution
+    - Profit taking opportunities
+    - Data export and visualization
+    
+    The class is designed to work in both live and offline modes, with comprehensive
+    error handling and logging throughout.
+    """
 
     def __init__(self, config_manager: ConfigManager, force_offline: bool = False):
-        """Initialize the tracker and its specialist components."""
+        """
+        Initialize the tracker and its specialist components.
+        
+        Args:
+            config_manager: Configuration manager instance
+            force_offline: Whether to force offline mode regardless of network status
+        """
         self.config_manager = config_manager
         self.config = self.config_manager.config
         self.logger = logging.getLogger(__name__)

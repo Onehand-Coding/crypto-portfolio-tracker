@@ -5,7 +5,12 @@ from .crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 
 
 class Strategy:
-    """A base class for all strategies, with a consistent configuration method."""
+    """
+    A base class for all trading strategies, with a consistent configuration method.
+    
+    This abstract base class defines the interface that all trading strategies must implement.
+    Each strategy should be able to generate buy/sell/hold signals based on market data.
+    """
 
     valid_intervals: List[str] = ["1d"]
     strategy_type: str = "general"
@@ -16,27 +21,60 @@ class Strategy:
         state: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
+        """
+        Initialize the strategy.
+        
+        Args:
+            analyzer: CryptoTrendAnalyzer instance for technical analysis
+            state: Optional dictionary to restore strategy state from persistence
+            **kwargs: Additional strategy-specific parameters
+        """
         self.analyzer = analyzer
         self._state = state or {}
 
     @property
     def name(self):
+        """
+        Get the strategy's name.
+        
+        Returns:
+            str: Human-readable name of the strategy
+        """
         raise NotImplementedError("Strategy must have a name.")
 
     @classmethod
     def get_user_params(cls) -> Dict[str, Any]:
-        """Class method to get user-defined parameters. Can be overridden by subclasses."""
+        """
+        Class method to get user-defined parameters. Can be overridden by subclasses.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of user-defined parameters for the strategy
+        """
         return {}
 
     def get_state(self) -> Dict[str, Any]:
-        """Returns the current state of the strategy for persistence."""
+        """
+        Returns the current state of the strategy for persistence.
+        
+        Returns:
+            Dict[str, Any]: Current state of the strategy
+        """
         return self._state
 
     async def generate_signal(
         self, data: pd.DataFrame
     ) -> Tuple[Optional[str], float, Optional[str]]:
         """
-        Returns a signal, a trade size (as a fraction of capital), and a reason.
+        Generate a trading signal based on the provided data.
+        
+        Args:
+            data: DataFrame containing market data with OHLCV columns
+            
+        Returns:
+            Tuple containing:
+                - Signal: "BUY", "SELL", or "HOLD" (or None)
+                - Size: Trade size as a fraction of capital (0.0 to 1.0)
+                - Reason: Human-readable explanation for the signal
         """
         raise NotImplementedError
 

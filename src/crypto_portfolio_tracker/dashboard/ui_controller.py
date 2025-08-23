@@ -10,9 +10,25 @@ from crypto_portfolio_tracker.exceptions import NetworkUnavailableError
 
 
 class Dashboard:
-    """Main stateful controller for the UI."""
+    """
+    Main stateful controller for the Streamlit UI.
+    
+    This class manages the state and initialization of the dashboard application,
+    including the portfolio tracker, configuration, and session state. It handles
+    the initialization of the tracker in both online and offline modes, and provides
+    methods for common dashboard operations like syncing and snapshot management.
+    
+    The controller uses Streamlit's session state to persist data across user interactions
+    and page navigations.
+    """
 
     def __init__(self):
+        """
+        Initialize the dashboard controller.
+        
+        Sets up initial state variables and calls initialize_session_state() to
+        set up default session state values.
+        """
         self.config_manager = None  # Initialize as None, like the original
         self.tracker = None
         self.offline_mode = False

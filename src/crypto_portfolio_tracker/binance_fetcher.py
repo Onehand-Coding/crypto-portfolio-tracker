@@ -14,7 +14,20 @@ from .exceptions import NetworkOperationError
 
 
 class BinanceFetcher:
-    """A class dedicated to fetching all types of raw data from the Binance API."""
+    """
+    A class dedicated to fetching all types of raw data from the Binance API.
+    
+    This class handles fetching various types of data from Binance including:
+    - Account balances (spot, futures, funding)
+    - Transaction history (trades, deposits, withdrawals)
+    - Earn product balances and history
+    - Dividend history
+    - Staking history
+    - P2P buy history
+    - Spot convert history
+    
+    It also provides functionality for transferring funds between wallets.
+    """
 
     def __init__(
         self,
@@ -22,6 +35,17 @@ class BinanceFetcher:
         symbol_mapper: SymbolMapper,
         config: Dict[str, Any],
     ):
+        """
+        Initialize the Binance fetcher.
+        
+        Args:
+            client: Initialized Binance client
+            symbol_mapper: SymbolMapper instance for asset symbol normalization
+            config: Configuration dictionary
+            
+        Raises:
+            ValueError: If client is not provided
+        """
         if not client:
             raise ValueError("BinanceFetcher requires an initialized Binance client.")
         self.logger = logging.getLogger(__name__)

@@ -20,11 +20,28 @@ from .exceptions import NetworkOperationError
 
 
 class PriceEnricher:
-    """Takes raw transactions and enriches them with historical USD prices."""
+    """
+    Takes raw transactions and enriches them with historical USD prices.
+    
+    This class is responsible for fetching historical prices for crypto assets and
+    fiat exchange rates to convert transaction values to USD. It uses CoinGecko for
+    crypto prices and yfinance for fiat exchange rates, with caching to minimize API calls.
+    
+    The enricher handles various transaction types including trades, deposits, withdrawals,
+    and P2P buys, ensuring all transactions have accurate USD pricing for portfolio analysis.
+    """
 
     def __init__(
         self, symbol_mapper: SymbolMapper, config: Dict[str, Any], disk_cache: Cache
     ):
+        """
+        Initialize the price enricher.
+        
+        Args:
+            symbol_mapper: SymbolMapper instance for asset symbol normalization
+            config: Configuration dictionary
+            disk_cache: DiskCache instance for persistent caching of prices
+        """
         self.logger = logging.getLogger(__name__)
         self.symbol_mappings = symbol_mapper
         self.config = config

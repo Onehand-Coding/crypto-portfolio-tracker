@@ -68,7 +68,26 @@ def get_market_regime(long_term_report: Dict[str, Any]) -> bool:
 
 
 class CryptoTrendAnalyzer:
+    """
+    Analyzes cryptocurrency market trends using technical indicators.
+    
+    This class provides comprehensive technical analysis of cryptocurrency markets
+    using various indicators including moving averages, RSI, MACD, and support/resistance levels.
+    It can generate reports for different timeframes (long-term, swing, day) and is used
+    by both the main application for live analysis and by backtesting engines.
+    
+    The analyzer supports data fetching from both yfinance and Binance as fallback,
+    with caching to minimize API calls and improve performance.
+    """
+    
     def __init__(self, config: Dict[str, Any], binance_client: Optional[Client] = None):
+        """
+        Initialize the crypto trend analyzer.
+        
+        Args:
+            config: Configuration dictionary containing analyzer settings
+            binance_client: Optional Binance client for fallback data fetching
+        """
         self.config = config
         self.analyzer_config = config.get("trend_analyzer", {})
         self.logger = logging.getLogger(__name__)

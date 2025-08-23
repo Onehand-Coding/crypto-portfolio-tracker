@@ -14,7 +14,16 @@ from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
 
 
 def render_market_page(dashboard):
-    """Render market page."""
+    """
+    Render the market trends page.
+    
+    This page displays cryptocurrency market analysis including trend reports,
+    technical indicators, and price charts. It allows users to view market data
+    across different timeframes and export analysis reports in various formats.
+    
+    Args:
+        dashboard (Dashboard): The main dashboard controller instance
+    """
 
     # Clear previous page state if coming from another page
     keys_to_clear = [

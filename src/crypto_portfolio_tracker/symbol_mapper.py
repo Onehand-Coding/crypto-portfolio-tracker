@@ -18,7 +18,25 @@ from .exceptions import NetworkOperationError
 
 
 class SymbolMapper:
+    """
+    Maps cryptocurrency symbols to CoinGecko IDs for price fetching.
+    
+    This class handles the mapping between exchange-specific cryptocurrency symbols
+    and their corresponding CoinGecko IDs, which are needed for fetching historical
+    and current prices. It includes functionality for automatic discovery of mappings
+    for unknown symbols and caching to minimize API calls.
+    
+    The symbol mapper also handles symbol normalization to ensure consistency
+    across different data sources and exchanges.
+    """
+    
     def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize the symbol mapper.
+        
+        Args:
+            config: Configuration dictionary containing symbol mappings and API settings
+        """
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.mappings_file_path = (

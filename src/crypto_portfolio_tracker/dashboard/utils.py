@@ -5,7 +5,13 @@ import streamlit as st
 
 
 def inject_custom_css():
-    """Inject the CSS styles used across the UI."""
+    """
+    Inject the CSS styles used across the UI.
+    
+    This function adds custom CSS styling to the Streamlit application to
+    improve the visual appearance and user experience. It includes styles
+    for headers, metric cards, buttons, and other UI elements.
+    """
     st.markdown(
         """
 <style>

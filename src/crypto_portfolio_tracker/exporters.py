@@ -15,9 +15,21 @@ from crypto_portfolio_tracker.utils import clean_export_df
 
 
 class Exporter:
-    """Base class for data exporters."""
+    """
+    Base class for data exporters.
+    
+    This abstract base class defines the interface for exporting portfolio data
+    to various formats including Excel, CSV, and HTML. It handles common functionality
+    such as file path generation and timestamp handling.
+    """
 
     def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize the exporter.
+        
+        Args:
+            config: Configuration dictionary containing export settings
+        """
         self.config = config
         self.logger = logging.getLogger(__name__)
         export_config = self.config.get("exports", {})
@@ -25,7 +37,16 @@ class Exporter:
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_filepath(self, name_prefix: str, extension: str) -> Path:
-        """Generate a timestamped filepath for exports."""
+        """
+        Generate a timestamped filepath for exports.
+        
+        Args:
+            name_prefix: Prefix for the filename
+            extension: File extension (e.g., "xlsx", "csv", "html")
+            
+        Returns:
+            Path: Full path to the export file
+        """
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{name_prefix}_{timestamp}.{extension}"
         return self.export_dir / filename
@@ -34,6 +55,12 @@ class Exporter:
         """
         Prepare DataFrame for export with proper timestamp handling.
         This incorporates the Web UI's robust timestamp handling logic.
+        
+        Args:
+            df: DataFrame to prepare for export
+            
+        Returns:
+            pd.DataFrame: Prepared DataFrame with timezone-naive timestamps
         """
         if df is None or df.empty:
             return df
@@ -48,7 +75,16 @@ class Exporter:
         return export_df
 
     def export(self, data: Any, **kwargs):
-        """Base export method to be overridden by subclasses."""
+        """
+        Base export method to be overridden by subclasses.
+        
+        Args:
+            data: Data to export
+            **kwargs: Additional export parameters
+            
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
         raise NotImplementedError
 
 

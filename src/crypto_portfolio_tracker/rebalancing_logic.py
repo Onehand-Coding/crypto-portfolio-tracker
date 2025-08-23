@@ -14,7 +14,20 @@ from .crypto_trend_analyzer import (
 async def get_live_rebalance_suggestions(
     analyzer: CryptoTrendAnalyzer, portfolio_df: pd.DataFrame, config: Dict[str, Any]
 ) -> pd.DataFrame:
-    """Orchestrates the entire rebalancing suggestion process using LIVE data."""
+    """
+    Orchestrates the entire rebalancing suggestion process using LIVE data.
+    
+    This function generates rebalancing suggestions by analyzing the current portfolio
+    against target allocations using live market data and technical analysis.
+    
+    Args:
+        analyzer: CryptoTrendAnalyzer instance for technical analysis
+        portfolio_df: DataFrame containing current portfolio holdings
+        config: Configuration dictionary with target allocations and strategy settings
+        
+    Returns:
+        pd.DataFrame: DataFrame containing rebalancing suggestions with signals and actions
+    """
     print("🔄 Gathering live trend reports for rebalancing...")
     swing_report_task = analyzer.generate_report("swing")
     long_term_report_task = analyzer.generate_report("long_term")

@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
 Crypto Portfolio Tracker - Main Entry Point
+
+This module serves as the main entry point for the CLI application. It provides
+an interactive menu-driven interface for users to manage their cryptocurrency
+portfolio, including syncing data, analyzing trends, rebalancing, trading, and
+backtesting strategies.
+
+The application supports both online and offline modes, with comprehensive
+error handling and logging throughout.
 """
 
 import re
@@ -36,6 +44,12 @@ logger = logging.getLogger(__name__)
 def setup_logging(level_override: Optional[str] = None):
     """
     Sets up application logging with color-coded console output.
+    
+    Configures both console and file logging handlers with appropriate
+    formatting and log levels based on configuration and CLI arguments.
+    
+    Args:
+        level_override: Optional log level override from CLI arguments
     """
     config_manager = ConfigManager()
     logging_config = config_manager.config.get("logging", {})
@@ -84,7 +98,15 @@ def setup_logging(level_override: Optional[str] = None):
 
 
 def print_main_menu(offline_mode=False):
-    """Prints the main menu options."""
+    """
+    Prints the main menu options.
+    
+    Displays the main interactive menu with all available options. In offline mode,
+    certain network-dependent options are marked as unavailable.
+    
+    Args:
+        offline_mode: Whether the application is running in offline mode
+    """
     print("\n" + "=" * 50)
     print(f"🪙 Crypto Portfolio Tracker v{__version__}")
     if offline_mode:
@@ -146,7 +168,17 @@ def _print_wallet_summary(
 
 
 def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, Any]):
-    """Prints a consolidated summary of the portfolio, including a breakdown of all wallet values."""
+    """
+    Prints a consolidated summary of the portfolio, including a breakdown of all wallet values.
+    
+    This function displays comprehensive portfolio information including total value,
+    wallet breakdowns, performance metrics, and detailed holdings tables for all,
+    core, and other assets. It also shows futures and funding wallet balances.
+    
+    Args:
+        tracker: The CryptoPortfolioTracker instance
+        metrics: Dictionary containing portfolio metrics from calculate_portfolio_metrics()
+    """
     LINE_WIDTH = 115
     print("\n" + "=" * LINE_WIDTH)
     print("📊 PORTFOLIO SUMMARY".center(LINE_WIDTH))
@@ -301,7 +333,15 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
 
 
 def print_trend_report(report: Dict[str, Any]):
-    """Prints a formatted trend analysis report to the console."""
+    """
+    Prints a formatted trend analysis report to the console.
+    
+    Displays market trend analysis including market summary, benchmark analysis,
+    and detailed coin-by-coin analysis with technical indicators and conditions.
+    
+    Args:
+        report: Dictionary containing trend analysis data from CryptoTrendAnalyzer
+    """
     if not report:
         print("\n--- No Trend Report Data ---")
         return
@@ -356,7 +396,18 @@ def print_rebalance_suggestions(
     suggestions_df: Optional[pd.DataFrame],
     available_usdt: Optional[float] = None,
 ):
-    """Prints the rebalancing suggestions in a formatted way."""
+    """
+    Prints the rebalancing suggestions in a formatted way.
+    
+    Displays rebalancing recommendations with color-coded signals (BUY, SELL, HOLD),
+    detailed asset information, technical analysis data, and suggested actions.
+    Sorts suggestions by signal type and drift magnitude for easy review.
+    
+    Args:
+        tracker: The CryptoPortfolioTracker instance
+        suggestions_df: DataFrame containing rebalancing suggestions
+        available_usdt: Optional available USDT balance for context
+    """
     if suggestions_df is None or suggestions_df.empty:
         print("No rebalancing suggestions available.")
         return
@@ -2248,7 +2299,20 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
 
 
 async def amain():
-    """The main asynchronous entry point for the application."""
+    """
+    The main asynchronous entry point for the application.
+    
+    This function handles the initialization of the application including:
+    - Parsing command line arguments
+    - Setting up logging
+    - Initializing the configuration manager
+    - Creating the portfolio tracker instance
+    - Handling network availability and offline mode
+    - Starting the main interactive menu loop
+    
+    It includes comprehensive error handling for network issues, user interrupts,
+    and other unexpected exceptions.
+    """
     parser = argparse.ArgumentParser(description="Crypto Portfolio Tracker")
     parser.add_argument(
         "-v",
@@ -2303,7 +2367,16 @@ async def amain():
 
 
 def main():
-    """Synchronous entry point that starts the asyncio event loop."""
+    """
+    Synchronous entry point that starts the asyncio event loop.
+    
+    This function serves as the main entry point for the CLI application.
+    It parses command line arguments, sets up logging, initializes the
+    portfolio tracker, and starts the main interactive menu loop.
+    
+    The function handles keyboard interrupts and other exceptions gracefully,
+    providing user-friendly error messages and clean exit behavior.
+    """
     try:
         asyncio.run(amain())
     except KeyboardInterrupt:

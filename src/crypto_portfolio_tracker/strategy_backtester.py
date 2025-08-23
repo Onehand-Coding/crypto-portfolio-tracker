@@ -8,10 +8,22 @@ from .crypto_trend_analyzer import CryptoTrendAnalyzer
 class StrategyBacktester:
     """
     A modular engine for backtesting directional trading strategies.
-    It now relies on an injected TrendAnalyzer instance for all data fetching.
+    
+    This backtester simulates trading strategies over historical data to evaluate their performance.
+    It relies on an injected TrendAnalyzer instance for all data fetching and technical analysis.
+    
+    The backtester tracks portfolio value over time, executes trades based on strategy signals,
+    and generates performance reports including total returns, Sharpe ratio, and maximum drawdown.
     """
 
     def __init__(self, config: Dict[str, Any], analyzer):
+        """
+        Initialize the strategy backtester.
+        
+        Args:
+            config: Configuration dictionary
+            analyzer: CryptoTrendAnalyzer instance for data fetching and analysis
+        """
         self.config = config
         self.analyzer = analyzer
         self.logger = logging.getLogger(__name__)

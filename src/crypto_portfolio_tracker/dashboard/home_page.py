@@ -21,6 +21,12 @@ from crypto_portfolio_tracker.utils import (
 def _display_metrics(metrics):
     """
     Displays key portfolio metrics in a professional grid layout using st.metric.
+    
+    This function renders various portfolio metrics including wallet values, holdings,
+    and balance summaries in a structured layout using Streamlit components.
+    
+    Args:
+        metrics (dict): Dictionary containing portfolio metrics data from the tracker
     """
     if not metrics:
         st.info("No portfolio metrics available. Please sync first.")

@@ -11,7 +11,21 @@ from crypto_portfolio_tracker.dashboard.components import render_transfer_widget
 
 
 def render_rebalancing_page(dashboard):
-    """Render rebalanicing page."""
+    """
+    Render the portfolio rebalancing page.
+    
+    This page provides tools for analyzing portfolio allocation, generating rebalancing
+    suggestions based on target allocations and technical analysis, and executing
+    rebalancing trades. It also includes profit-taking functionality when the portfolio
+    is balanced.
+    
+    The page displays current portfolio status, actionable trades, and allows users
+    to select and execute specific trades. It handles both online and offline modes,
+    with appropriate guards for trading functionality.
+    
+    Args:
+        dashboard (Dashboard): The main dashboard controller instance
+    """
 
     # Clear previous page state if coming from another page
     keys_to_clear = [ # "rebalance_metrics", "rebalance_suggestions" - Excluded to avoid expensive calls everytime.

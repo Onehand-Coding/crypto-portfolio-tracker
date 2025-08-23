@@ -17,6 +17,13 @@ from crypto_portfolio_tracker.dashboard import (
 
 
 def main():
+    """
+    Main entry point for the Streamlit dashboard application.
+    
+    This function initializes the Streamlit application with appropriate page configuration,
+    sets up the dashboard controller, and routes users to the appropriate page based on
+    their sidebar selection. It handles the main application loop and page routing.
+    """
     st.set_page_config(
         page_title="Crypto Portfolio Tracker",
         page_icon="🪙",

@@ -15,10 +15,22 @@ from .crypto_trend_analyzer import CryptoTrendAnalyzer, TrendCondition
 class RebalancingBacktester:
     """
     Performs a 1:1 backtest of the live rebalancing strategy.
-    It pre-calculates all indicators for performance and then calls the central logic engine.
+    
+    This backtester simulates the rebalancing strategy over historical data to evaluate its performance.
+    It pre-calculates all technical indicators for performance optimization and then calls the central
+    rebalancing logic engine to generate trade suggestions.
+    
+    The backtester supports different rebalancing frequencies (weekly, monthly, quarterly) and
+    generates comprehensive performance reports including total returns, Sharpe ratio, and maximum drawdown.
     """
 
     def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize the rebalancing backtester.
+        
+        Args:
+            config: Configuration dictionary containing target allocations and other settings
+        """
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.analyzer = CryptoTrendAnalyzer(config=self.config)

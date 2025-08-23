@@ -208,6 +208,14 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
     Calculates current quantity and average cost basis using FIFO.
     Assumes transactions_df is for a single asset, sorted by timestamp.
     Incorporates fee_usd into the cost of BUY/DEPOSIT transactions.
+    
+    Args:
+        transactions_df: DataFrame containing transaction history for a single asset,
+                        with columns ['timestamp', 'type', 'quantity', 'price_usd', 'fee_usd']
+                        
+    Returns:
+        tuple: (current_quantity, average_cost_basis) representing the current holdings
+               and their average cost basis
     """
     buy_lots = (
         deque()

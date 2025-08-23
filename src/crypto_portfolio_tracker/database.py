@@ -10,7 +10,20 @@ from .exceptions import DatabaseOperationError
 
 
 class DatabaseManager:
-    """Manages SQLite database operations"""
+    """
+    Manages SQLite database operations for the crypto portfolio tracker.
+    
+    This class handles all database operations including:
+    - Transaction storage and retrieval
+    - Asset and holdings management
+    - Historical price storage
+    - Portfolio snapshots
+    - Data backup and restoration
+    - Data cleanup based on retention policies
+    
+    The database schema includes tables for assets, transactions, holdings, historical prices,
+    and portfolio snapshots, with appropriate indexing for performance.
+    """
 
     def __init__(
         self,
