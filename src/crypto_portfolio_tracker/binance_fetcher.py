@@ -58,6 +58,56 @@ class BinanceFetcher:
         self.target_assets_for_sync.add("USDT")
         self.logger.debug("BinanceFetcher initialized.")
 
+    def _handle_binance_api_exception(self, e: BinanceAPIException, context: str = "") -> bool:
+        """
+        Centralized error handling for Binance API exceptions.
+        
+        Args:
+            e: The BinanceAPIException that was raised
+            context: Additional context about where the error occurred
+            
+        Returns:
+            bool: True if the error is recoverable and retry might help, False otherwise
+        """
+        error_code = getattr(e, 'code', None)
+        error_msg = str(e)
+        
+        # Log the error with context
+        self.logger.error(f"Binance API Error {context}: {error_msg} (Code: {error_code})")
+        
+        # Handle specific error codes
+        if error_code == -1021:
+            # Timestamp out of recvWindow - try to resync time
+            self.logger.warning(f"Timestamp sync issue {context}. Attempting to resync...")
+            self._resync_time()
+            return True  # Indicate we can retry
+            
+        elif error_code == -2015:
+            # Invalid API key/permissions
+            self.logger.error(f"API key/permission error {context}. Check your API credentials.")
+            print("❌ Binance API error: Invalid API-key, IP, or permissions for action. Please check your API credentials and permissions.")
+            return False  # Don't retry
+            
+        elif error_code == -1121:
+            # Invalid symbol
+            self.logger.debug(f"Invalid symbol {context}. This might be a temporary issue.")
+            return False  # Don't retry
+            
+        elif error_code in [-6001, -11001]:
+            # Invalid asset for Simple Earn
+            self.logger.debug(f"Asset not supported for Simple Earn {context}.")
+            return False  # Don't retry
+            
+        elif "not supported" in error_msg.lower() or "invalid asset" in error_msg.lower():
+            # Handle string-based error messages for unsupported assets
+            self.logger.debug(f"Asset not supported {context}: {error_msg}")
+            return False  # Don't retry
+            
+        else:
+            # Unknown error - log and don't retry by default
+            self.logger.error(f"Unhandled Binance API error {context}: {error_msg} (Code: {error_code})")
+            return False  # Don't retry by default
+
     def _get_start_end_timestamps(
         self,
         source_name: str,
@@ -146,54 +196,98 @@ class BinanceFetcher:
             )
 
         self.logger.info("Fetching current spot wallet balances...")
-        try:
-            account_info = self.binance_client.get_account()
-            balances_raw = account_info.get("balances", [])
+        
+        # Add retry logic for balance fetching
+        retries = 3
+        wait_time_seconds = 15
+        api_timeout = self.config.get("apis", {}).get("binance", {}).get("timeout", 180)
+        
+        while retries > 0:
+            try:
+                account_info = self.binance_client.get_account()
 
-            processed_balances = []
-            for b in balances_raw:
-                quantity = float(b.get("free", 0.0)) + float(b.get("locked", 0.0))
-                if quantity > 1e-8:
-                    final_symbol = self.symbol_mappings.normalize_symbol(
-                        b.get("asset", "")
+                balances_raw = account_info.get("balances", [])
+                if not balances_raw:
+                    self.logger.info("Fetched 0 balances from Binance Spot wallet.")
+                    return pd.DataFrame(columns=["symbol", "quantity"])
+
+                processed_balances = []
+                for b in balances_raw:
+                    quantity = float(b.get("free", 0.0)) + float(b.get("locked", 0.0))
+                    if quantity > 1e-8:
+                        final_symbol = self.symbol_mappings.normalize_symbol(
+                            b.get("asset", "")
+                        )
+
+                        # Skip known fiat currencies to prevent unnecessary discovery attempts
+                        if final_symbol in [
+                            "EUR",
+                            "JPY",
+                            "BRL",
+                            "ARS",
+                            "CZK",
+                            "MXN",
+                            "UAH",
+                            "ZAR",
+                            "TRY",
+                        ]:
+                            self.logger.debug(
+                                f"Skipping known fiat currency: {final_symbol}"
+                            )
+                            continue
+
+                        if final_symbol:
+                            processed_balances.append(
+                                {"symbol": final_symbol, "quantity": quantity}
+                            )
+
+                if not processed_balances:
+                    return pd.DataFrame(columns=["symbol", "quantity"])
+
+                df = pd.DataFrame(processed_balances)
+                # Consolidate any duplicate symbols (e.g. from LD-prefixed assets)
+                df = df.groupby("symbol", as_index=False)["quantity"].sum()
+
+                self.logger.debug(f"Fetched and consolidated {len(df)} non-zero balances.")
+                return df
+                
+            except BinanceAPIException as e:
+                # Use our centralized error handling
+                if self._handle_binance_api_exception(e, "fetching spot balances"):
+                    # For recoverable errors, retry
+                    retries -= 1
+                    if retries > 0:
+                        self.logger.info(f"Retrying balance fetch in {wait_time_seconds}s... ({retries} retries left)")
+                        time.sleep(wait_time_seconds)
+                    else:
+                        self.logger.error("Failed to fetch Spot balances after multiple retries.")
+                        break
+                else:
+                    # For non-recoverable errors, don't retry
+                    self.logger.error(f"Non-recoverable Binance API Error fetching Spot balances: {e}")
+                    break
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+            ) as e:
+                retries -= 1
+                self.logger.error(
+                    f"Network error fetching Binance Spot balances: {e}. Retries left: {retries}."
+                )
+                if retries > 0:
+                    self.logger.info(f"Waiting {wait_time_seconds}s before retrying...")
+                    time.sleep(wait_time_seconds)
+                else:
+                    self.logger.error(
+                        "Failed to fetch Spot balances after multiple retries due to network errors."
                     )
-
-                    # Skip known fiat currencies to prevent unnecessary discovery attempts
-                    if final_symbol in [
-                        "EUR",
-                        "JPY",
-                        "BRL",
-                        "ARS",
-                        "CZK",
-                        "MXN",
-                        "UAH",
-                        "ZAR",
-                        "TRY",
-                    ]:
-                        self.logger.debug(
-                            f"Skipping known fiat currency: {final_symbol}"
-                        )
-                        continue
-
-                    if final_symbol:
-                        processed_balances.append(
-                            {"symbol": final_symbol, "quantity": quantity}
-                        )
-
-            if not processed_balances:
-                return pd.DataFrame(columns=["symbol", "quantity"])
-
-            df = pd.DataFrame(processed_balances)
-            # Consolidate any duplicate symbols (e.g. from LD-prefixed assets)
-            df = df.groupby("symbol", as_index=False)["quantity"].sum()
-
-            self.logger.debug(f"Fetched and consolidated {len(df)} non-zero balances.")
-            return df
-        except Exception as e:
-            self.logger.error(
-                f"Unexpected error fetching Spot balances: {e}", exc_info=True
-            )
-            raise NetworkOperationError(f"Failed to fetch Binance Spot balances: {e}")
+            except Exception as e:
+                self.logger.error(
+                    f"Unexpected error fetching Spot balances: {e}", exc_info=True
+                )
+                break
+                
+        return pd.DataFrame(columns=["symbol", "quantity"])
 
     def fetch_binance_transactions(
         self,
@@ -281,16 +375,26 @@ class BinanceFetcher:
                                     }
                                 )
                         except BinanceAPIException as e:
+                            # Use our centralized error handling for trade fetching
                             if e.code == -1121:
                                 self.logger.debug(f"Invalid pair: {pair}. Skipping.")
+                                break  # Invalid pair, no point retrying
                             else:
-                                self.logger.error(
-                                    f"[{source_name}] API Error fetching trades for {pair}: {e}"
-                                )
-                            break
+                                # For other API errors, use our centralized handling
+                                if self._handle_binance_api_exception(e, f"fetching trades for {pair} in {source_name}"):
+                                    # If recoverable, we could retry, but for now just log and continue
+                                    self.logger.warning(
+                                        f"[{source_name}] Recoverable API Error for {pair}, continuing with other pairs: {e}"
+                                    )
+                                else:
+                                    # Non-recoverable error, log and break this pair
+                                    self.logger.error(
+                                        f"[{source_name}] Non-recoverable API Error fetching trades for {pair}: {e}"
+                                    )
+                                    break
                         except Exception as e:
                             self.logger.error(
-                                f"[{source_name}] Error fetching trades for {pair}: {e}"
+                                f"[{source_name}] Unexpected error fetching trades for {pair}: {e}"
                             )
                         chunk_start = chunk_end
             return raw_transactions
@@ -342,11 +446,9 @@ class BinanceFetcher:
                 )
             return raw_transactions
         except BinanceAPIException as e:
-            if getattr(e, "code", None) == -1021:
-                self.logger.warning(
-                    "BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once."
-                )
-                self._resync_time()
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, f"fetching deposit history for {source_name}"):
+                # If error is recoverable, try once more
                 try:
                     for deposit in self.binance_client.get_deposit_history(
                         startTime=start_ms, endTime=end_ms, status=1
@@ -376,29 +478,13 @@ class BinanceFetcher:
                         )
                     return raw_transactions
                 except BinanceAPIException as e2:
-                    if getattr(e2, "code", None) == -1021:
-                        self.logger.error(
-                            "Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                        print(
-                            "❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                    else:
-                        self.logger.error(
-                            f"Error fetching deposit history after retry: {e2}",
-                            exc_info=True,
-                        )
-                        print(f"❌ Binance API error: {e2}")
-            elif getattr(e, "code", None) == -2015:
-                self.logger.error(
-                    "BinanceAPIException -2015: Invalid API-key, IP, or permissions for action."
-                )
-                print(
-                    "❌ Binance API error: Invalid API-key, IP, or permissions for action. Please check your API credentials and permissions."
-                )
-            else:
-                self.logger.error(f"Error fetching deposit history: {e}", exc_info=True)
-                print(f"❌ Binance API error: {e}")
+                    self.logger.error(
+                        f"Error fetching deposit history after retry: {e2}",
+                        exc_info=True,
+                    )
+                    print(f"❌ Binance API error: {e2}")
+            # Non-recoverable error or retry failed
+            return raw_transactions
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching deposit history: {e}", exc_info=True
@@ -449,11 +535,9 @@ class BinanceFetcher:
                 )
             return raw_transactions
         except BinanceAPIException as e:
-            if getattr(e, "code", None) == -1021:
-                self.logger.warning(
-                    "BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once."
-                )
-                self._resync_time()
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, f"fetching withdrawal history for {source_name}"):
+                # If error is recoverable, try once more
                 try:
                     for withdrawal in self.binance_client.get_withdraw_history(
                         startTime=start_ms, endTime=end_ms, status=6
@@ -487,24 +571,13 @@ class BinanceFetcher:
                         )
                     return raw_transactions
                 except BinanceAPIException as e2:
-                    if getattr(e2, "code", None) == -1021:
-                        self.logger.error(
-                            "Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                        print(
-                            "❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                    else:
-                        self.logger.error(
-                            f"Error fetching withdrawal history after retry: {e2}",
-                            exc_info=True,
-                        )
-                        print(f"❌ Binance API error: {e2}")
-            else:
-                self.logger.error(
-                    f"Error fetching withdrawal history: {e}", exc_info=True
-                )
-                print(f"❌ Binance API error: {e}")
+                    self.logger.error(
+                        f"Error fetching withdrawal history after retry: {e2}",
+                        exc_info=True,
+                    )
+                    print(f"❌ Binance API error: {e2}")
+            # Non-recoverable error or retry failed
+            return raw_transactions
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching withdrawal history: {e}", exc_info=True
@@ -589,11 +662,9 @@ class BinanceFetcher:
             )
             return raw_transactions
         except BinanceAPIException as e:
-            if getattr(e, "code", None) == -1021:
-                self.logger.warning(
-                    "BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once."
-                )
-                self._resync_time()
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, f"fetching P2P USDT buys for {source_name}"):
+                # If error is recoverable, try once more
                 try:
                     current_page = 1
                     all_completed_trades = []
@@ -645,22 +716,13 @@ class BinanceFetcher:
                     )
                     return raw_transactions
                 except BinanceAPIException as e2:
-                    if getattr(e2, "code", None) == -1021:
-                        self.logger.error(
-                            "Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                        print(
-                            "❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                    else:
-                        self.logger.error(
-                            f"Error fetching P2P USDT buys after retry: {e2}",
-                            exc_info=True,
-                        )
-                        print(f"❌ Binance API error: {e2}")
-            else:
-                self.logger.error(f"Error fetching P2P USDT buys: {e}", exc_info=True)
-                print(f"❌ Binance API error: {e}")
+                    self.logger.error(
+                        f"Error fetching P2P USDT buys after retry: {e2}",
+                        exc_info=True,
+                    )
+                    print(f"❌ Binance API error: {e2}")
+            # Non-recoverable error or retry failed
+            return raw_transactions
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching P2P USDT buys: {e}", exc_info=True
@@ -718,11 +780,9 @@ class BinanceFetcher:
                     )
             return raw_transactions
         except BinanceAPIException as e:
-            if getattr(e, "code", None) == -1021:
-                self.logger.warning(
-                    "BinanceAPIException -1021: Timestamp out of recvWindow. Attempting to re-sync time and retry once."
-                )
-                self._resync_time()
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, f"fetching spot convert history for {source_name}"):
+                # If error is recoverable, try once more
                 try:
                     history = self.binance_client.get_convert_trade_history(
                         startTime=start_ms, endTime=end_ms, limit=1000
@@ -761,24 +821,13 @@ class BinanceFetcher:
                             )
                     return raw_transactions
                 except BinanceAPIException as e2:
-                    if getattr(e2, "code", None) == -1021:
-                        self.logger.error(
-                            "Failed after time re-sync: Timestamp still out of recvWindow. Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                        print(
-                            "❌ Binance API error: Your system clock may be out of sync with Binance servers. Please check your time settings."
-                        )
-                    else:
-                        self.logger.error(
-                            f"Error fetching spot convert history after retry: {e2}",
-                            exc_info=True,
-                        )
-                        print(f"❌ Binance API error: {e2}")
-            else:
-                self.logger.error(
-                    f"Error fetching spot convert history: {e}", exc_info=True
-                )
-                print(f"❌ Binance API error: {e}")
+                    self.logger.error(
+                        f"Error fetching spot convert history after retry: {e2}",
+                        exc_info=True,
+                    )
+                    print(f"❌ Binance API error: {e2}")
+            # Non-recoverable error or retry failed
+            return raw_transactions
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching spot convert history: {e}", exc_info=True
@@ -829,18 +878,13 @@ class BinanceFetcher:
                 # A small delay to be polite to the API
                 time.sleep(0.2)
             except BinanceAPIException as e:
-                if (
-                    e.code in [-6001, -11001]
-                    or "not supported" in str(e).lower()
-                    or "invalid asset" in str(e).lower()
-                ):
-                    self.logger.debug(
-                        f"No active Simple Earn product for {asset_api_name} or asset not supported."
-                    )
-                else:
+                # Use our centralized error handling
+                if not self._handle_binance_api_exception(e, f"checking Simple Earn for {asset_api_name}"):
+                    # For non-recoverable errors, just log and continue with other assets
                     self.logger.error(
-                        f"API Error checking Simple Earn for {asset_api_name}: {e}"
+                        f"Non-recoverable API Error checking Simple Earn for {asset_api_name}: {e}"
                     )
+                # Continue with other assets regardless of error type
             except Exception as e:
                 self.logger.error(
                     f"Unexpected error checking Simple Earn for {asset_api_name}: {e}"
@@ -1087,6 +1131,12 @@ class BinanceFetcher:
                         },
                     }
                 )
+        except BinanceAPIException as e:
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, f"fetching dividend history for {source_name}"):
+                # Log that we're skipping due to recoverable error and continue
+                self.logger.warning(f"Skipping dividend history for {source_name} due to recoverable API error")
+            # For both recoverable and non-recoverable errors, return what we have
         except Exception as e:
             self.logger.error(f"Error fetching dividend history: {e}")
         return raw_transactions
@@ -1163,7 +1213,19 @@ class BinanceFetcher:
             futures_account = self.binance_client.futures_account_balance()
             return futures_account
         except BinanceAPIException as e:
-            self.logger.error(f"Error fetching futures account balance: {e}")
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, "fetching futures account balance"):
+                # For recoverable errors, try once more
+                try:
+                    futures_account = self.binance_client.futures_account_balance()
+                    return futures_account
+                except BinanceAPIException as e2:
+                    self.logger.error(f"Error fetching futures account balance after retry: {e2}")
+                    return []
+            # For non-recoverable errors, return empty list
+            return []
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred fetching futures account balance: {e}")
             return []
 
     def fetch_funding_balance(self) -> List[Dict[str, Any]]:
@@ -1175,7 +1237,18 @@ class BinanceFetcher:
             )
             return funding_wallet
         except BinanceAPIException as e:
-            self.logger.error(f"Binance API error fetching funding wallet: {e}")
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, "fetching funding wallet"):
+                # For recoverable errors, try once more
+                try:
+                    funding_wallet = self.binance_client._request_margin_api(
+                        "post", "asset/get-funding-asset", signed=True, data={}
+                    )
+                    return funding_wallet
+                except BinanceAPIException as e2:
+                    self.logger.error(f"Binance API error fetching funding wallet after retry: {e2}")
+                    return []
+            # For non-recoverable errors, return empty list
             return []
         except Exception as e:
             self.logger.error(

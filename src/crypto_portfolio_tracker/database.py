@@ -61,8 +61,10 @@ class DatabaseManager:
         self.HOLDINGS_TABLE_NAME = "holdings"
         self.HISTORICAL_PRICES_TABLE_NAME = "historical_prices"
         self.PORTFOLIO_SNAPSHOTS_TABLE_NAME = "portfolio_snapshots"
+        self.SCHEMA_VERSION_TABLE_NAME = "schema_version"
 
         self._create_tables()
+        self._check_and_update_schema()
         self.logger.info(f"Database initialized at: {self.db_path}")
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -108,6 +110,11 @@ class DatabaseManager:
                 total_cost_basis_usd REAL NOT NULL, unrealized_pl_usd REAL NOT NULL,
                 unrealized_pl_percent REAL NOT NULL
             );""",
+            """
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );""",
             "CREATE INDEX IF NOT EXISTS idx_transactions_asset_timestamp ON transactions (asset_id, timestamp);",
             "CREATE INDEX IF NOT EXISTS idx_historical_prices_asset_date ON historical_prices (asset_id, date);",
         ]
@@ -121,6 +128,65 @@ class DatabaseManager:
         except sqlite3.Error as e:
             self.logger.error(f"Error creating tables: {e}")
             raise
+
+    def _check_and_update_schema(self):
+        """Check the current schema version and apply updates if necessary."""
+        current_version = self._get_schema_version()
+        target_version = 1  # Current target schema version
+        
+        if current_version < target_version:
+            self.logger.info(f"Upgrading database schema from version {current_version} to {target_version}")
+            self._apply_schema_updates(current_version, target_version)
+        elif current_version > target_version:
+            self.logger.warning(
+                f"Database schema version ({current_version}) is newer than expected ({target_version}). "
+                f"This may cause compatibility issues."
+            )
+        else:
+            self.logger.debug(f"Database schema is up to date (version {current_version})")
+
+    def _get_schema_version(self) -> int:
+        """Get the current schema version from the database."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
+                row = cursor.fetchone()
+                return row[0] if row else 0
+        except sqlite3.Error as e:
+            self.logger.debug(f"Could not get schema version (assuming 0): {e}")
+            return 0
+
+    def _apply_schema_updates(self, from_version: int, to_version: int):
+        """Apply schema updates from one version to another."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Apply updates incrementally
+                for version in range(from_version + 1, to_version + 1):
+                    if version == 1:
+                        # Version 1: Initial schema with all current tables
+                        # No actual changes needed since _create_tables already created them
+                        # Just record that we're at version 1
+                        cursor.execute(
+                            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
+                            (version,)
+                        )
+                        self.logger.info(f"Applied schema update to version {version}")
+                
+                conn.commit()
+                self.logger.info(f"Schema successfully updated from version {from_version} to {to_version}")
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Error applying schema updates: {e}")
+            raise DatabaseOperationError(f"Failed to update database schema: {e}")
+
+    def _apply_migration_v1(self, cursor):
+        """Apply changes needed for schema version 1."""
+        # For version 1, all tables are already created by _create_tables
+        # This method exists for future migrations
+        pass
 
     def get_asset_id(
         self,
@@ -155,6 +221,9 @@ class DatabaseManager:
         self, transactions: List[Dict[str, Any]]
     ) -> Optional[int]:
         """Bulk insert or update transactions using ON CONFLICT DO UPDATE."""
+        # Create a backup before bulk insert operations
+        self.backup_database("bulk_insert")
+        
         if not transactions:
             self.logger.info("No transactions provided for bulk insert.")
             return 0
@@ -324,6 +393,9 @@ class DatabaseManager:
 
     def update_holdings(self, holdings_data: pd.DataFrame):
         """Update or Insert holdings data."""
+        # Create a backup before updating holdings
+        self.backup_database("update_holdings")
+        
         sql = "INSERT OR REPLACE INTO holdings (asset_id, quantity, average_cost_basis, last_updated) VALUES (?, ?, ?, ?)"
         try:
             with self._get_connection() as conn:
@@ -624,6 +696,9 @@ class DatabaseManager:
 
     def cleanup_old_data(self):
         """Clean up old data based on configuration."""
+        # Create a backup before cleanup operations
+        self.backup_database("cleanup")
+        
         if self.cleanup_days <= 0:
             self.logger.info("Data cleanup is disabled.")
             return
@@ -663,7 +738,7 @@ class DatabaseManager:
         except sqlite3.Error as e:
             self.logger.error(f"Error cleaning up old data: {e}")
 
-    def backup_database(self) -> Optional[str]:
+    def backup_database(self, reason: str = "scheduled") -> Optional[str]:
         """
         Creates a timestamped backup of the current database file in the backup directory.
         Returns the path of the backup file on success, None on failure.
@@ -675,14 +750,33 @@ class DatabaseManager:
             return None
         try:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_filename = f"{self.db_path.name}.{timestamp}.bak"
+            reason_tag = reason.replace(" ", "_").lower()
+            backup_filename = f"{self.db_path.name}.{timestamp}.{reason_tag}.bak"
             backup_filepath = self.backup_dir / backup_filename
             shutil.copy2(self.db_path, backup_filepath)
-            self.logger.info(f"Successfully created database backup: {backup_filepath}")
+            self.logger.info(f"Successfully created database backup: {backup_filepath} (reason: {reason})")
+            
+            # Clean up old backups (keep only the most recent 10)
+            self._cleanup_old_backups()
+            
             return str(backup_filepath)
         except Exception as e:
             self.logger.error(f"Failed to create database backup: {e}", exc_info=True)
             return None
+
+    def _cleanup_old_backups(self):
+        """Keep only the most recent backups"""
+        try:
+            backup_files = list(self.backup_dir.glob("*.bak"))
+            if len(backup_files) > 10:
+                # Sort by modification time, oldest first
+                backup_files.sort(key=lambda p: p.stat().st_mtime)
+                # Remove oldest backups
+                for old_backup in backup_files[:-10]:
+                    old_backup.unlink()
+                    self.logger.info(f"Removed old backup: {old_backup}")
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup old backups: {e}")
 
     def list_backups(self) -> List[Path]:
         """

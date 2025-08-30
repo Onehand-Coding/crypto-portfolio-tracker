@@ -2002,84 +2002,8 @@ class CryptoPortfolioTracker:
         # --- Close stale connections before making a new request ---
         self.binance_client.session.close()
 
-        retries = 3
-        wait_time_seconds = 15
-        api_timeout = self.config.get("apis", {}).get("binance", {}).get("timeout", 180)
-
-        while retries > 0:
-            try:
-                self.logger.debug(
-                    f"Attempting to fetch Binance account info (Timeout: {api_timeout}s)..."
-                )
-                account_info = self.binance_client.get_account()
-
-                balances_raw = account_info.get("balances", [])
-                if not balances_raw:
-                    self.logger.info("Fetched 0 balances from Binance Spot wallet.")
-                    return pd.DataFrame(columns=["symbol", "quantity"])
-
-                processed_balances = []
-                for b in balances_raw:
-                    free = float(b.get("free", 0.0))
-                    locked = float(b.get("locked", 0.0))
-                    quantity = free + locked
-
-                    if quantity > 0.00000001:
-                        # Get the raw symbol from the API
-                        asset_symbol_api = b.get("asset", "")
-                        final_symbol = self.symbol_mappings.normalize_symbol(
-                            asset_symbol_api
-                        )
-
-                        # Only append if the final symbol is valid (not empty)
-                        if final_symbol:
-                            processed_balances.append(
-                                {"symbol": final_symbol, "quantity": quantity}
-                            )
-
-                if not processed_balances:
-                    self.logger.info(
-                        "Found raw balances, but all were zero or negligible after processing."
-                    )
-                    return pd.DataFrame(columns=["symbol", "quantity"])
-
-                df = pd.DataFrame(processed_balances)
-                df = df.groupby("symbol", as_index=False)["quantity"].sum()
-
-                self.logger.debug(
-                    f"DEBUG: Balances from SPOT after all processing in fetch_binance_balances: \n{df.to_string() if not df.empty else 'EMPTY DF'}"
-                )
-                self.logger.info(
-                    f"Fetched and consolidated {len(df)} non-zero balances from Binance Spot."
-                )
-                return df
-
-            except (
-                requests.exceptions.ReadTimeout,
-                requests.exceptions.ConnectionError,
-            ) as e:
-                retries -= 1
-                self.logger.error(
-                    f"Network error fetching Binance Spot balances: {e}. Retries left: {retries}."
-                )
-                if retries > 0:
-                    self.logger.info(f"Waiting {wait_time_seconds}s before retrying...")
-                    time.sleep(wait_time_seconds)
-                else:
-                    self.logger.error(
-                        "Failed to fetch Spot balances after multiple retries due to network errors."
-                    )
-            except BinanceAPIException as e:
-                self.logger.error(
-                    f"Binance API Error fetching Spot balances: {e}. No retries for API errors."
-                )
-                break
-            except Exception as e:
-                self.logger.error(
-                    f"Unexpected error fetching Spot balances: {e}", exc_info=True
-                )
-                break
-        return pd.DataFrame(columns=["symbol", "quantity"])
+        # Use the improved BinanceFetcher which now has better error handling
+        return self.fetcher.fetch_binance_balances()
 
     def update_holdings_from_transactions(self):
         """

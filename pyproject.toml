@@ -50,6 +50,7 @@ dev = [
     "pytest>=8.4",
     "pytest-mock>=3.14",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.2.1",
     "ruff>=0.6",        # Linting and formatting
 ]
 
@@ -57,6 +58,7 @@ dev = [
 [project.scripts]
 track-portfolio-cli = "crypto_portfolio_tracker.__main__:main"
 track-portfolio-web = "crypto_portfolio_tracker.dashboard_launcher:main"
+check-deps = "crypto_portfolio_tracker.check_deps:main"
 
 # Test configuration
 [tool.pytest.ini_options]

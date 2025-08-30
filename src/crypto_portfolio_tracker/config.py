@@ -54,6 +54,9 @@ class ConfigManager:
         load_dotenv(self.env_path)
 
         self.config: Dict[str, Any] = self._load_json_config()
+        
+        # Validate the configuration
+        self.config = self._validate_config(self.config)
 
         # --- Load the CoinGecko API key from .env ---
         if "apis" in self.config and "coingecko" in self.config["apis"]:
@@ -121,6 +124,96 @@ class ConfigManager:
                 raise SystemExit(
                     f"FATAL: Default configuration is missing or corrupt: {e}"
                 )
+
+    def _validate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validates the configuration and applies defaults where necessary.
+        
+        Args:
+            config: The configuration dictionary to validate
+            
+        Returns:
+            Dict[str, Any]: The validated configuration dictionary
+            
+        Raises:
+            ValueError: If the configuration is invalid
+        """
+        # Validate required top-level keys
+        required_keys = ["target_allocation", "portfolio"]
+        for key in required_keys:
+            if key not in config:
+                raise ValueError(f"Missing required configuration key: '{key}'")
+        
+        # Validate target allocation sums to approximately 100%
+        target_allocation = config.get("target_allocation", {})
+        if target_allocation:
+            total_allocation = sum(target_allocation.values())
+            if not 0.95 <= total_allocation <= 1.05:
+                logging.warning(
+                    f"Target allocation sums to {total_allocation:.2%}, which is outside "
+                    f"the typical range of 95-105%. This may cause unexpected behavior."
+                )
+        
+        # Validate portfolio settings
+        portfolio_config = config.get("portfolio", {})
+        if "testnet_mode" not in portfolio_config:
+            config["portfolio"]["testnet_mode"] = True  # Default to testnet for safety
+            logging.info("Setting default testnet_mode=true for safety")
+            
+        if "live_trading_enabled" not in portfolio_config:
+            config["portfolio"]["live_trading_enabled"] = False  # Default to disabled
+            logging.info("Setting default live_trading_enabled=false for safety")
+        
+        # Validate numeric values
+        numeric_validations = [
+            ("portfolio.minimum_trade_usd", 0.0),
+            ("database.connection_timeout", 1),
+            ("database.cleanup_days", 0),
+        ]
+        
+        for path, min_value in numeric_validations:
+            keys = path.split(".")
+            value = config
+            try:
+                for key in keys:
+                    value = value[key]
+                if not isinstance(value, (int, float)) or value < min_value:
+                    logging.warning(
+                        f"Configuration value '{path}' should be a number >= {min_value}. "
+                        f"Found: {value}. This may cause unexpected behavior."
+                    )
+            except (KeyError, TypeError):
+                # Key doesn't exist, which is fine as we'll use defaults
+                pass
+        
+        # Validate file paths
+        path_validations = [
+            "database.path",
+            "database.testnet_path",
+            "logging.file_config.path",
+            "exports.path",
+            "cache.path",
+        ]
+        
+        for path in path_validations:
+            keys = path.split(".")
+            value = config
+            try:
+                for key in keys:
+                    value = value[key]
+                if value:  # Only validate if a value is set
+                    # We'll resolve paths later, so just check if it's a string
+                    if not isinstance(value, str):
+                        logging.warning(
+                            f"Configuration path '{path}' should be a string. "
+                            f"Found: {value}. This may cause unexpected behavior."
+                        )
+            except (KeyError, TypeError):
+                # Key doesn't exist, which is fine as we'll use defaults
+                pass
+        
+        logging.info("Configuration validation completed successfully")
+        return config
 
     def _load_sub_accounts(self) -> List[Dict[str, Any]]:
         """Loads sub-account keys from environment variables."""
