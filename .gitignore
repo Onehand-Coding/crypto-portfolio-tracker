@@ -68,5 +68,8 @@ data/
 .env.*
 !.env.example
 
+# Config file
 /config/default_config.json
-context.txt
+
+# AI
+.qwen
