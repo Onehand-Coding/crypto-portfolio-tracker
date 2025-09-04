@@ -493,29 +493,3 @@ def render_database_page(dashboard):
             st.write(f"**Backups Available:** {len(list(backup_dir.glob('*.bak')))}")
         else:
             st.warning("Backup directory not found.")
-
-    # Add this debug section in the snapshots tab, right after loading snapshots:
-
-    # Debug section - add this after loading snapshots
-    with st.expander("🔍 Debug: Raw Database Data"):
-        try:
-            # Get raw data from database
-            with tracker.db_manager._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM portfolio_snapshots ORDER BY timestamp")
-                raw_rows = cursor.fetchall()
-
-            st.write(f"**Total snapshots in database:** {len(raw_rows)}")
-
-            if raw_rows:
-                st.write("**Raw database rows:**")
-                for i, row in enumerate(raw_rows):
-                    st.write(
-                        f"Row {i + 1}: timestamp='{row[0]}', value={row[1]}, cost={row[2]}, pl={row[3]}, pl_pct={row[4]}"
-                    )
-
-            st.write("**Pandas DataFrame after parsing:**")
-            st.dataframe(snapshots)
-
-        except Exception as e:
-            st.error(f"Debug failed: {e}")
