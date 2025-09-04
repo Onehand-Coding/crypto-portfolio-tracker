@@ -150,7 +150,7 @@ def tracker(mock_config_manager):
             mock_enricher_class.return_value = mock_enricher
 
             with patch(
-                "crypto_portfolio_tracker.portfolio_tracker.CryptoTrendAnalyzer"
+                "crypto_portfolio_tracker.crypto_trend_analyzer.CryptoTrendAnalyzer"
             ) as mock_analyzer_class:
                 mock_analyzer = Mock()
                 mock_analyzer_class.return_value = mock_analyzer
@@ -164,7 +164,7 @@ def tracker(mock_config_manager):
                 # Mock the internal attributes
                 tracker.fetcher = mock_fetcher
                 tracker.enricher = mock_enricher
-                tracker.analyzer = mock_analyzer
+                # Note: analyzer is not directly part of tracker anymore after refactoring
 
                 return tracker
 

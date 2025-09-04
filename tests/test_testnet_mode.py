@@ -70,8 +70,18 @@ async def test_testnet_skips_non_spot(monkeypatch):
     tracker.offline_mode = False
 
     # Inject dummies
-    tracker.fetcher = DummyFetcher()
-    tracker.binance_client = DummyBinanceClient()
+    dummy_fetcher = DummyFetcher()
+    dummy_binance_client = DummyBinanceClient()
+    tracker.fetcher = dummy_fetcher
+    tracker.portfolio_analyzer.fetcher = dummy_fetcher
+    tracker.binance_client = dummy_binance_client
+    
+    # Also set the config_manager and offline_mode on the portfolio analyzer
+    tracker.portfolio_analyzer.config_manager = config_manager
+    tracker.portfolio_analyzer.offline_mode = False
+    
+    # Set the binance client on the DCA manager
+    tracker.dca_manager.binance_client = dummy_binance_client
 
     # Stub price enricher to avoid network and provide prices
     async def _stub_current_prices(symbols):

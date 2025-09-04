@@ -72,4 +72,5 @@ data/
 /config/default_config.json
 
 # AI
-.qwen
+.qwen/
+.zed/

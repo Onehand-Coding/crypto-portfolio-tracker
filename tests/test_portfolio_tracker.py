@@ -4,10 +4,8 @@ import pytest
 import pandas as pd
 
 from crypto_portfolio_tracker.config import ConfigManager
-from crypto_portfolio_tracker.portfolio_tracker import (
-    CryptoPortfolioTracker,
-    calculate_fifo_cost_basis,
-)
+from crypto_portfolio_tracker.portfolio_tracker import CryptoPortfolioTracker
+from crypto_portfolio_tracker.utils import calculate_fifo_cost_basis
 
 
 def test_calculate_fifo_cost_basis():

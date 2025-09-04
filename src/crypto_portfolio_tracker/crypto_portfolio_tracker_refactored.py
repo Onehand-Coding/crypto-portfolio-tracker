@@ -74,31 +74,7 @@ class CryptoPortfolioTracker:
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_historical"))
         self.fiat_exchange_rate_cache = Cache(str(self.cache_dir / "fiat_exchange_rates"))
 
-        # Initialize strategy state
-        self.strategy_state_path = self.cache_dir.parent / "strategy_state.json"
-
-        # --- Initialize NEW specialized classes ---
-        # We need to initialize these before the Binance client because _init_binance_client delegates to data_synchronizer
-        self.data_synchronizer = DataSynchronizer(
-            config_manager=self.config_manager,
-            db_manager=self.db_manager,
-            binance_client=None,  # Will be set after initialization
-            fetcher=None,  # Will be set after initialization
-            cache_dir=self.cache_dir,
-            coingecko_price_cache=self.coingecko_price_cache,
-            yfinance_disk_cache=self.yfinance_disk_cache,
-            fiat_exchange_rate_cache=self.fiat_exchange_rate_cache,
-            symbol_mappings=self.symbol_mappings,
-            offline_mode=self.offline_mode
-        )
-
-        self.data_manager = DataManager(
-            config=self.config,
-            db_manager=self.db_manager,
-            strategy_state_path=self.strategy_state_path
-        )
-
-        # Initialize Binance client (now that data_synchronizer exists)
+        # Initialize Binance client
         if not self.offline_mode:
             try:
                 self.binance_client = self._init_binance_client()
@@ -116,11 +92,6 @@ class CryptoPortfolioTracker:
         else:
             self.fetcher = None
 
-        # Update the data_synchronizer with the initialized binance_client and fetcher
-        if not self.offline_mode:
-            self.data_synchronizer.binance_client = self.binance_client
-            self.data_synchronizer.fetcher = self.fetcher
-
         self.enricher = PriceEnricher(
             self.symbol_mappings, self.config, self.coingecko_price_cache
         )
@@ -129,15 +100,36 @@ class CryptoPortfolioTracker:
         self.csv_exporter = CsvExporter(self.config)
         self.visualizer = Visualizer(self.config)
 
+        # Initialize strategy state
+        self.strategy_state_path = self.cache_dir.parent / "strategy_state.json"
+
+        # --- Initialize NEW specialized classes ---
+        self.data_synchronizer = DataSynchronizer(
+            config_manager=self.config_manager,
+            db_manager=self.db_manager,
+            binance_client=self.binance_client,
+            fetcher=self.fetcher,
+            cache_dir=self.cache_dir,
+            coingecko_price_cache=self.coingecko_price_cache,
+            yfinance_disk_cache=self.yfinance_disk_cache,
+            fiat_exchange_rate_cache=self.fiat_exchange_rate_cache,
+            symbol_mappings=self.symbol_mappings,
+            offline_mode=self.offline_mode
+        )
+
+        self.data_manager = DataManager(
+            config=self.config,
+            db_manager=self.db_manager,
+            strategy_state_path=self.strategy_state_path
+        )
+
         self.portfolio_analyzer = PortfolioAnalyzer(
             config=self.config,
             db_manager=self.db_manager,
             binance_client=self.binance_client,
             fetcher=self.fetcher,
             enricher=self.enricher,
-            offline_mode=self.offline_mode,
-            config_manager=self.config_manager,
-            data_synchronizer=self.data_synchronizer
+            offline_mode=self.offline_mode
         )
 
         self.trade_executor = TradeExecutor(
