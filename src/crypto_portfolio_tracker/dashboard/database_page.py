@@ -32,7 +32,7 @@ def render_database_page(dashboard):
     with tab1:
         st.header("💾 Backup & Restore")
         if st.button("Create Backup"):
-            backup_path = tracker.db_manager.backup_database()
+            backup_path = tracker.db_manager.backup_database(force=True)
             if backup_path:
                 st.success(f"Backup created: {backup_path}")
             else:
@@ -456,7 +456,7 @@ def render_database_page(dashboard):
                     if st.button("✅ CONFIRM DELETION", type="primary"):
                         try:
                             # Create backup before deletion
-                            backup_path = tracker.db_manager.backup_database()
+                            backup_path = tracker.db_manager.backup_database(force=True)
                             if backup_path:
                                 st.success(f"✅ Backup created: {backup_path}")
 

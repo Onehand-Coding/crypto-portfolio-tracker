@@ -31,6 +31,9 @@ class DatabaseManager:
         backup_dir: Optional[Path] = None,
         connection_timeout: int = 30,
         cleanup_days: int = 90,
+        auto_delete_backups: bool = True,
+        auto_backup_enabled: bool = True,
+        max_backups: int = 10,
     ):
         """
         Initialize database manager with explicit database path.
@@ -40,20 +43,30 @@ class DatabaseManager:
             backup_dir: Directory for backups (defaults to db_path.parent / "db_backups")
             connection_timeout: Database connection timeout in seconds
             cleanup_days: Number of days to keep data (0 to disable cleanup)
+            auto_delete_backups: Whether to automatically delete old backups
+            auto_backup_enabled: Whether to automatically create backups
+            max_backups: Maximum number of backups to keep when auto deletion is enabled
         """
         self.logger = logging.getLogger(__name__)
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Setup backup directory
+        # Setup backup directory - separate for testnet and production
         if backup_dir is None:
-            self.backup_dir = self.db_path.parent / "db_backups"
+            # Check if this is a testnet database by checking the path
+            if "testnet" in str(self.db_path).lower():
+                self.backup_dir = self.db_path.parent / "testnet_db_backups"
+            else:
+                self.backup_dir = self.db_path.parent / "db_backups"
         else:
             self.backup_dir = Path(backup_dir)
         self.backup_dir.mkdir(exist_ok=True)
 
         self.connection_timeout = connection_timeout
         self.cleanup_days = cleanup_days
+        self.auto_delete_backups = auto_delete_backups
+        self.auto_backup_enabled = auto_backup_enabled
+        self.max_backups = max_backups
 
         # Define table names as instance attributes
         self.ASSETS_TABLE_NAME = "assets"
@@ -738,11 +751,20 @@ class DatabaseManager:
         except sqlite3.Error as e:
             self.logger.error(f"Error cleaning up old data: {e}")
 
-    def backup_database(self, reason: str = "scheduled") -> Optional[str]:
+    def backup_database(self, reason: str = "manual", force: bool = False) -> Optional[str]:
         """
         Creates a timestamped backup of the current database file in the backup directory.
         Returns the path of the backup file on success, None on failure.
+
+        Args:
+            reason: Reason for the backup (used in filename)
+            force: If True, create backup even if auto_backup_enabled is False
         """
+        # Check if auto backup is enabled (unless forced)
+        if not self.auto_backup_enabled and not force:
+            self.logger.debug("Auto backup is disabled. Skipping backup creation.")
+            return None
+
         if not self.db_path.exists():
             self.logger.error(
                 f"Database file not found at {self.db_path}. Cannot create backup."
@@ -756,8 +778,9 @@ class DatabaseManager:
             shutil.copy2(self.db_path, backup_filepath)
             self.logger.info(f"Successfully created database backup: {backup_filepath} (reason: {reason})")
             
-            # Clean up old backups (keep only the most recent 10)
-            self._cleanup_old_backups()
+            # Clean up old backups if auto deletion is enabled
+            if self.auto_delete_backups:
+                self._cleanup_old_backups()
             
             return str(backup_filepath)
         except Exception as e:
@@ -766,13 +789,18 @@ class DatabaseManager:
 
     def _cleanup_old_backups(self):
         """Keep only the most recent backups"""
+        # Check if auto deletion is enabled
+        if not self.auto_delete_backups:
+            self.logger.debug("Auto deletion of backups is disabled. Skipping cleanup.")
+            return
+
         try:
             backup_files = list(self.backup_dir.glob("*.bak"))
-            if len(backup_files) > 10:
+            if len(backup_files) > self.max_backups:
                 # Sort by modification time, oldest first
                 backup_files.sort(key=lambda p: p.stat().st_mtime)
                 # Remove oldest backups
-                for old_backup in backup_files[:-10]:
+                for old_backup in backup_files[:-self.max_backups]:
                     old_backup.unlink()
                     self.logger.info(f"Removed old backup: {old_backup}")
         except Exception as e:

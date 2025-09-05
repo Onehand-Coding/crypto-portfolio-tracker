@@ -57,12 +57,18 @@ class CryptoPortfolioTracker:
         backup_dir = self.config_manager.get_backup_dir()
         connection_timeout = self.config.get("database", {}).get("connection_timeout", 30)
         cleanup_days = self.config.get("database", {}).get("cleanup_days", 90)
+        auto_delete_backups = self.config.get("database", {}).get("auto_delete_backups", False)
+        auto_backup_enabled = self.config.get("database", {}).get("auto_backup_enabled", False)
+        max_backups = self.config.get("database", {}).get("max_backups", 10)
 
         self.db_manager = DatabaseManager(
             db_path=db_path,
             backup_dir=backup_dir,
             connection_timeout=connection_timeout,
             cleanup_days=cleanup_days,
+            auto_delete_backups=auto_delete_backups,
+            auto_backup_enabled=auto_backup_enabled,
+            max_backups=max_backups,
         )
 
         self.symbol_mappings = self.config_manager.symbol_mapper

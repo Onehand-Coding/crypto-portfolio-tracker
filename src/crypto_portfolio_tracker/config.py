@@ -108,7 +108,11 @@ class ConfigManager:
     def get_backup_dir(self) -> Path:
         """Get the backup directory path"""
         db_path = self.get_database_path()
-        return db_path.parent / "db_backups"
+        # Check if this is a testnet database by checking the path
+        if self.is_testnet_mode:
+            return db_path.parent / "testnet_db_backups"
+        else:
+            return db_path.parent / "db_backups"
 
     def _load_json_config(self) -> Dict[str, Any]:
         """Loads the base configuration from the JSON file."""

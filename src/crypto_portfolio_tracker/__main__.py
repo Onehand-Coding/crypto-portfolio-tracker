@@ -1640,7 +1640,7 @@ async def run_backup_and_restore_menu(tracker: CryptoPortfolioTracker):
 
             if choice == "1":
                 print("\n💾 Creating database backup...")
-                if tracker.db_manager.backup_database():
+                if tracker.db_manager.backup_database(force=True):
                     print("✅ Backup successful.")
                 else:
                     print("❌ Backup failed. Please check the logs.")
