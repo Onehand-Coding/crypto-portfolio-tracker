@@ -200,9 +200,10 @@ class DataManager:
             group_df_copy.dropna(subset=["timestamp"], inplace=True)
 
             # 1. Isolate real trades for cost basis calculation
+            # Exclude transfer transactions, Simple Earn activities, and Staking activities
             cost_basis_tx_df = group_df_copy[
                 ~group_df_copy["source"].str.contains(
-                    "Simple Earn|Asset Transfer|Staking", case=False, na=False
+                    "Simple Earn|Binance Transfer|Staking", case=False, na=False
                 )
             ]
             self.logger.debug(

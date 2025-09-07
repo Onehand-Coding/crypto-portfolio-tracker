@@ -16,7 +16,7 @@ from .exceptions import NetworkOperationError
 class BinanceFetcher:
     """
     A class dedicated to fetching all types of raw data from the Binance API.
-    
+
     This class handles fetching various types of data from Binance including:
     - Account balances (spot, futures, funding)
     - Transaction history (trades, deposits, withdrawals)
@@ -25,7 +25,7 @@ class BinanceFetcher:
     - Staking history
     - P2P buy history
     - Spot convert history
-    
+
     It also provides functionality for transferring funds between wallets.
     """
 
@@ -37,12 +37,12 @@ class BinanceFetcher:
     ):
         """
         Initialize the Binance fetcher.
-        
+
         Args:
             client: Initialized Binance client
             symbol_mapper: SymbolMapper instance for asset symbol normalization
             config: Configuration dictionary
-            
+
         Raises:
             ValueError: If client is not provided
         """
@@ -61,48 +61,48 @@ class BinanceFetcher:
     def _handle_binance_api_exception(self, e: BinanceAPIException, context: str = "") -> bool:
         """
         Centralized error handling for Binance API exceptions.
-        
+
         Args:
             e: The BinanceAPIException that was raised
             context: Additional context about where the error occurred
-            
+
         Returns:
             bool: True if the error is recoverable and retry might help, False otherwise
         """
         error_code = getattr(e, 'code', None)
         error_msg = str(e)
-        
+
         # Log the error with context
         self.logger.error(f"Binance API Error {context}: {error_msg} (Code: {error_code})")
-        
+
         # Handle specific error codes
         if error_code == -1021:
             # Timestamp out of recvWindow - try to resync time
             self.logger.warning(f"Timestamp sync issue {context}. Attempting to resync...")
             self._resync_time()
             return True  # Indicate we can retry
-            
+
         elif error_code == -2015:
             # Invalid API key/permissions
             self.logger.error(f"API key/permission error {context}. Check your API credentials.")
             print("❌ Binance API error: Invalid API-key, IP, or permissions for action. Please check your API credentials and permissions.")
             return False  # Don't retry
-            
+
         elif error_code == -1121:
             # Invalid symbol
             self.logger.debug(f"Invalid symbol {context}. This might be a temporary issue.")
             return False  # Don't retry
-            
+
         elif error_code in [-6001, -11001]:
             # Invalid asset for Simple Earn
             self.logger.debug(f"Asset not supported for Simple Earn {context}.")
             return False  # Don't retry
-            
+
         elif "not supported" in error_msg.lower() or "invalid asset" in error_msg.lower():
             # Handle string-based error messages for unsupported assets
             self.logger.debug(f"Asset not supported {context}: {error_msg}")
             return False  # Don't retry
-            
+
         else:
             # Unknown error - log and don't retry by default
             self.logger.error(f"Unhandled Binance API error {context}: {error_msg} (Code: {error_code})")
@@ -196,12 +196,12 @@ class BinanceFetcher:
             )
 
         self.logger.info("Fetching current spot wallet balances...")
-        
+
         # Add retry logic for balance fetching
         retries = 3
         wait_time_seconds = 15
         api_timeout = self.config.get("apis", {}).get("binance", {}).get("timeout", 180)
-        
+
         while retries > 0:
             try:
                 account_info = self.binance_client.get_account()
@@ -250,7 +250,7 @@ class BinanceFetcher:
 
                 self.logger.debug(f"Fetched and consolidated {len(df)} non-zero balances.")
                 return df
-                
+
             except BinanceAPIException as e:
                 # Use our centralized error handling
                 if self._handle_binance_api_exception(e, "fetching spot balances"):
@@ -286,7 +286,7 @@ class BinanceFetcher:
                     f"Unexpected error fetching Spot balances: {e}", exc_info=True
                 )
                 break
-                
+
         return pd.DataFrame(columns=["symbol", "quantity"])
 
     def fetch_binance_transactions(
@@ -1255,6 +1255,153 @@ class BinanceFetcher:
                 f"An unexpected error occurred fetching funding wallet: {e}"
             )
             return []
+
+    def fetch_transfer_history(
+        self,
+        source_name: str,
+        days_back: int = 90,
+        latest_known_ts: Optional[datetime.datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetches asset transfer history from Binance using the correct API endpoint.
+        This covers transfers between Spot, Futures, Funding, etc.
+        """
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        start_dt = now_utc - datetime.timedelta(days=days_back)
+        if latest_known_ts:
+            # If we have a recent timestamp, start fetching from there to be efficient
+            start_dt = max(start_dt, latest_known_ts - datetime.timedelta(minutes=60)) # 1hr buffer
+
+        if start_dt >= now_utc:
+            self.logger.debug(f"[{source_name}] History is up-to-date. Skipping fetch.")
+            return []
+
+        self.logger.info(f"Fetching {source_name} history from {start_dt.strftime('%Y-%m-%d')} to now...")
+
+        all_transfers = []
+        processed_tran_ids = set()
+
+        # Define transfer types that involve the main Spot wallet (only the valid ones)
+        spot_wallet_transfer_out_types = {"MAIN_UMFUTURE", "MAIN_FUNDING", "MAIN_CMFUTURE", "MAIN_MARGIN"}
+        spot_wallet_transfer_in_types = {"UMFUTURE_MAIN", "FUNDING_MAIN", "CMFUTURE_MAIN", "MARGIN_MAIN"}
+
+        # Define transfer types that involve futures and funding wallets
+        futures_funding_transfer_types = {"UMFUTURE_FUNDING", "FUNDING_UMFUTURE", "CMFUTURE_MARGIN", "MARGIN_CMFUTURE"}
+
+        # Convert start and end times to milliseconds
+        start_ms = int(start_dt.timestamp() * 1000)
+        end_ms = int(now_utc.timestamp() * 1000)
+
+        # Fetch transfers for each type separately using the correct endpoint
+        transfer_types_to_check = list(spot_wallet_transfer_out_types | spot_wallet_transfer_in_types | futures_funding_transfer_types)
+
+        self.logger.debug(f"Checking {len(transfer_types_to_check)} transfer types: {transfer_types_to_check}")
+
+        for transfer_type in transfer_types_to_check:
+            try:
+                self.logger.debug(f"Fetching transfers of type: {transfer_type}")
+
+                # Fetch transfers using the correct endpoint
+                # We'll fetch in batches of 100 until we get all transfers or reach the time limit
+                current_page = 1
+                PAGE_SIZE = 100
+
+                while True:
+                    transfer_history = self.binance_client._request_margin_api(
+                        "get", "asset/transfer", signed=True,
+                        data={
+                            "type": transfer_type,
+                            "startTime": start_ms,
+                            "endTime": end_ms,
+                            "current": current_page,
+                            "size": PAGE_SIZE
+                        }
+                    )
+
+                    transfers = transfer_history.get("rows", [])
+                    self.logger.debug(f"  -> Page {current_page}: Found {len(transfers)} transfers")
+
+                    if not transfers:
+                        break
+
+                    for transfer in transfers:
+                        tran_id = transfer.get('tranId')
+                        if tran_id in processed_tran_ids:
+                            continue
+                        processed_tran_ids.add(tran_id)
+
+                        # Check if this transfer is within our time range
+                        timestamp_ms = transfer.get("timestamp")
+                        timestamp = pd.to_datetime(timestamp_ms, unit="ms", utc=True)
+
+                        # Stop if we find a transaction we've already processed
+                        if latest_known_ts and timestamp <= latest_known_ts:
+                            self.logger.debug(f"Reached last known transaction timestamp ({latest_known_ts}). Stopping fetch for {transfer_type}.")
+                            break
+
+                        # Skip if timestamp is outside our range
+                        if timestamp < start_dt or timestamp > now_utc:
+                            continue
+
+                        asset = transfer.get("asset")
+                        amount = transfer.get("amount", 0)
+                        status = transfer.get("status", "")
+
+                        # Skip unconfirmed transfers
+                        if status != "CONFIRMED":
+                            self.logger.debug(f"  -> Skipping unconfirmed transfer {tran_id} with status: {status}")
+                            continue
+
+                        # Determine transaction type
+                        tx_type = None
+                        if transfer_type in spot_wallet_transfer_out_types:
+                            tx_type = "TRANSFER_OUT"
+                            self.logger.debug(f"  -> Identified as SPOT OUT transfer")
+                        elif transfer_type in spot_wallet_transfer_in_types:
+                            tx_type = "TRANSFER_IN"
+                            self.logger.debug(f"  -> Identified as SPOT IN transfer")
+
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(asset.upper())
+                        self.logger.debug(f"  -> Normalized symbol: {normalized_symbol}")
+
+                        if normalized_symbol not in self.target_assets_for_sync:
+                            self.logger.debug(f"  -> Skipping transfer of {normalized_symbol} - not in target assets: {self.target_assets_for_sync}")
+                            continue
+
+                        self.logger.debug(f"  -> Adding transfer: {tx_type} {normalized_symbol} {amount}")
+
+                        all_transfers.append({
+                            "tx_type": tx_type,
+                            "timestamp": timestamp,
+                            "source": f"Binance Transfer ({transfer_type})",
+                            "transaction_hash": f"transfer_{tran_id}",
+                            "raw_data": {
+                                "symbol": normalized_symbol,
+                                "quantity": float(amount),
+                                "notes": f"Transfer type: {transfer_type}",
+                            },
+                        })
+
+                    # Check if we have more pages
+                    if len(transfers) < PAGE_SIZE:
+                        break
+                    current_page += 1
+
+                time.sleep(0.1)  # Small delay between API calls to be polite
+
+            except BinanceAPIException as e:
+                if self._handle_binance_api_exception(e, f"fetching {transfer_type} transfers"):
+                    self.logger.warning(f"Recoverable error fetching {transfer_type}, continuing with other types.")
+                    continue
+                else:
+                    self.logger.error(f"Non-recoverable error fetching {transfer_type} transfers. Stopping.")
+                    break
+            except Exception as e:
+                self.logger.error(f"Unexpected error fetching {transfer_type} transfers: {e}", exc_info=True)
+                continue
+
+        self.logger.info(f"Transfer history fetch complete. Found {len(all_transfers)} relevant transfer transactions.")
+        return all_transfers
 
     def transfer_funding_to_spot(
         self, asset: str, amount: float, is_live: bool = False

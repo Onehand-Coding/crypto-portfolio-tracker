@@ -186,7 +186,7 @@ class PortfolioAnalyzer:
             else:
                 # Fallback to the stub method if neither data synchronizer nor enricher is available
                 prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
-        
+
         live_balances_df["value_usd"] = (
             live_balances_df["symbol"].map(prices).fillna(0.0)
             * live_balances_df["quantity"]
@@ -425,8 +425,15 @@ class PortfolioAnalyzer:
         else:
             core_holdings_df["core_allocation"] = 0
 
-        total_cost_basis = holdings_df["cost_basis_total"].sum()
-        total_pl_usd = spot_earn_value - total_cost_basis
+        # Calculate wallet-agnostic total cost basis (all holdings regardless of wallet)
+        all_holdings_cost_basis = self.db_manager.get_holdings()
+        if not all_holdings_cost_basis.empty:
+            total_cost_basis = (all_holdings_cost_basis["quantity"] * all_holdings_cost_basis["average_cost_basis"]).sum()
+        else:
+            total_cost_basis = 0.0
+
+        # Calculate unrealized P/L against total portfolio value (not just spot/earn)
+        total_pl_usd = total_portfolio_value - total_cost_basis
         total_pl_percent = (
             (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
         )

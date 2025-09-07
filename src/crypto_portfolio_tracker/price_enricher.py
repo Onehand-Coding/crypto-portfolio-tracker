@@ -509,6 +509,25 @@ class PriceEnricher:
                     }
                 )
 
+            elif tx["tx_type"] in ["TRANSFER_IN", "TRANSFER_OUT"]:
+                # For transfer transactions, we don't need price information as they don't involve buying/selling
+                # Just record the transfer with zero price
+                enriched_transactions.append(
+                    {
+                        "symbol": raw["symbol"],
+                        "timestamp": ts,
+                        "type": tx["tx_type"],
+                        "quantity": raw["quantity"],
+                        "price_usd": 0,
+                        "fee_quantity": 0,
+                        "fee_currency": None,
+                        "fee_usd": 0,
+                        "source": tx["source"],
+                        "transaction_hash": tx["transaction_hash"],
+                        "notes": raw.get("notes", ""),
+                    }
+                )
+
         self.logger.debug(
             f"Enrichment complete. Returning {len(enriched_transactions)} final transactions."
         )

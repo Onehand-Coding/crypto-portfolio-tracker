@@ -511,6 +511,10 @@ class DataSynchronizer:
                 "fetcher": self.fetcher.fetch_binance_transactions,
                 "days": lookback_config.get("trades", 90),
             },
+            "Binance Transfer": {
+                "fetcher": self.fetcher.fetch_transfer_history,
+                "days": lookback_config.get("transfers", 90),
+            },
             "Binance Deposit": {
                 "fetcher": self.fetcher.fetch_deposit_history,
                 "days": lookback_config.get("deposits", 90),

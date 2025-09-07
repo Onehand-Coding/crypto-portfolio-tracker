@@ -44,10 +44,10 @@ logger = logging.getLogger(__name__)
 def setup_logging(level_override: Optional[str] = None):
     """
     Sets up application logging with color-coded console output.
-    
+
     Configures both console and file logging handlers with appropriate
     formatting and log levels based on configuration and CLI arguments.
-    
+
     Args:
         level_override: Optional log level override from CLI arguments
     """
@@ -100,10 +100,10 @@ def setup_logging(level_override: Optional[str] = None):
 def print_main_menu(offline_mode=False):
     """
     Prints the main menu options.
-    
+
     Displays the main interactive menu with all available options. In offline mode,
     certain network-dependent options are marked as unavailable.
-    
+
     Args:
         offline_mode: Whether the application is running in offline mode
     """
@@ -170,11 +170,11 @@ def _print_wallet_summary(
 def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, Any]):
     """
     Prints a consolidated summary of the portfolio, including a breakdown of all wallet values.
-    
+
     This function displays comprehensive portfolio information including total value,
     wallet breakdowns, performance metrics, and detailed holdings tables for all,
     core, and other assets. It also shows futures and funding wallet balances.
-    
+
     Args:
         tracker: The CryptoPortfolioTracker instance
         metrics: Dictionary containing portfolio metrics from calculate_portfolio_metrics()
@@ -223,7 +223,7 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
 
     print("-" * LINE_WIDTH)
 
-    print("Performance vs. Rolling cost basis (Spot/Earn only):")
+    print("Performance vs. Rolling cost basis (All wallets):")
     print(
         f"Total Cost Basis (FIFO):     ${metrics.get('total_cost_basis_usd', 0):,.2f}"
     )
@@ -335,10 +335,10 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
 def print_trend_report(report: Dict[str, Any]):
     """
     Prints a formatted trend analysis report to the console.
-    
+
     Displays market trend analysis including market summary, benchmark analysis,
     and detailed coin-by-coin analysis with technical indicators and conditions.
-    
+
     Args:
         report: Dictionary containing trend analysis data from CryptoTrendAnalyzer
     """
@@ -398,11 +398,11 @@ def print_rebalance_suggestions(
 ):
     """
     Prints the rebalancing suggestions in a formatted way.
-    
+
     Displays rebalancing recommendations with color-coded signals (BUY, SELL, HOLD),
     detailed asset information, technical analysis data, and suggested actions.
     Sorts suggestions by signal type and drift magnitude for easy review.
-    
+
     Args:
         tracker: The CryptoPortfolioTracker instance
         suggestions_df: DataFrame containing rebalancing suggestions
@@ -2301,7 +2301,7 @@ async def run_main_menu(tracker: CryptoPortfolioTracker):
 async def amain():
     """
     The main asynchronous entry point for the application.
-    
+
     This function handles the initialization of the application including:
     - Parsing command line arguments
     - Setting up logging
@@ -2309,7 +2309,7 @@ async def amain():
     - Creating the portfolio tracker instance
     - Handling network availability and offline mode
     - Starting the main interactive menu loop
-    
+
     It includes comprehensive error handling for network issues, user interrupts,
     and other unexpected exceptions.
     """
@@ -2369,11 +2369,11 @@ async def amain():
 def main():
     """
     Synchronous entry point that starts the asyncio event loop.
-    
+
     This function serves as the main entry point for the CLI application.
     It parses command line arguments, sets up logging, initializes the
     portfolio tracker, and starts the main interactive menu loop.
-    
+
     The function handles keyboard interrupts and other exceptions gracefully,
     providing user-friendly error messages and clean exit behavior.
     """

@@ -156,6 +156,11 @@ def calculate_fifo_realized_gains(transactions_df: pd.DataFrame) -> pd.DataFrame
         buy_lots = deque()
         for idx, row in group.iterrows():
             tx_type = row["type"]
+
+            # Skip transfer transactions - they should never affect realized gains
+            if tx_type in ["TRANSFER_IN", "TRANSFER_OUT"]:
+                continue
+
             quantity = float(row["quantity"])
             price = float(row["price_usd"])
             fee_usd = (
@@ -208,11 +213,11 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
     Calculates current quantity and average cost basis using FIFO.
     Assumes transactions_df is for a single asset, sorted by timestamp.
     Incorporates fee_usd into the cost of BUY/DEPOSIT transactions.
-    
+
     Args:
         transactions_df: DataFrame containing transaction history for a single asset,
                         with columns ['timestamp', 'type', 'quantity', 'price_usd', 'fee_usd']
-                        
+
     Returns:
         tuple: (current_quantity, average_cost_basis) representing the current holdings
                and their average cost basis
@@ -254,6 +259,13 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
 
     for _, row in transactions_df.iterrows():
         tx_type = row.get("type")
+
+        # Skip transfer transactions - they should never affect FIFO cost basis
+        if tx_type in ["TRANSFER_IN", "TRANSFER_OUT"]:
+            logger.debug(
+                f"Skipping transfer transaction {tx_type}: {row.get('transaction_hash')} - transfers don't affect cost basis"
+            )
+            continue
 
         try:
             quantity = float(row.get("quantity", 0.0))
@@ -335,6 +347,12 @@ def calculate_fifo_cost_basis(transactions_df: pd.DataFrame):
                 logger.warning(
                     f"{tx_type} of {sell_qty} {row.get('symbol', 'N/A')} more than available from history. Cost basis may be affected."
                 )
+
+        else:
+            # Log unhandled transaction types for debugging
+            logger.warning(
+                f"Unhandled transaction type '{tx_type}' for {row.get('symbol', 'N/A')} (ID: {row.get('transaction_hash', 'N/A')}). Skipping."
+            )
 
         total_cost_basis = max(0, total_cost_basis)
 

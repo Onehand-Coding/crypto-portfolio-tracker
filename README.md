@@ -794,6 +794,7 @@ This software is for **educational and informational purposes only** and does **
 - **Inaccurate P/L**: Portfolio performance metrics may be skewed without complete transaction history
 - **Rebalancing Impact**: Incomplete data may affect rebalancing suggestions and backtesting results
 - **Tax Implications**: Incomplete transaction history could lead to inaccurate tax reporting
+- **Futures Trading Limitations**: Detailed futures trading history and profit/loss calculations are not fully tracked, which may affect cost basis accuracy when funds are transferred between spot and futures wallets
 
 ### Recommendations for Data Completeness
 1. **Export Current Data**: Use the export feature to backup your current transaction data

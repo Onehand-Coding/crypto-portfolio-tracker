@@ -7,12 +7,13 @@ from typing import Dict, Any, List, Optional
 
 import pandas as pd
 from .exceptions import DatabaseOperationError
+from .models import TransactionType
 
 
 class DatabaseManager:
     """
     Manages SQLite database operations for the crypto portfolio tracker.
-    
+
     This class handles all database operations including:
     - Transaction storage and retrieval
     - Asset and holdings management
@@ -20,7 +21,7 @@ class DatabaseManager:
     - Portfolio snapshots
     - Data backup and restoration
     - Data cleanup based on retention policies
-    
+
     The database schema includes tables for assets, transactions, holdings, historical prices,
     and portfolio snapshots, with appropriate indexing for performance.
     """
@@ -93,16 +94,20 @@ class DatabaseManager:
 
     def _create_tables(self):
         """Create necessary tables if they don't exist"""
+
+        # Dynamically create the CHECK constraint from the TransactionType enum
+        valid_tx_types = ", ".join([f"'{t.value}'" for t in TransactionType])
+
         commands = [
             """
             CREATE TABLE IF NOT EXISTS assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT UNIQUE NOT NULL, name TEXT, coingecko_id TEXT UNIQUE
             );""",
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL,
-                timestamp DATETIME NOT NULL, type TEXT NOT NULL CHECK (type IN ('BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL', 'TRANSFER')),
+                timestamp DATETIME NOT NULL, type TEXT NOT NULL CHECK (type IN ({valid_tx_types})),
                 quantity REAL NOT NULL, price_usd REAL, fee_quantity REAL, fee_currency TEXT, fee_usd REAL, source TEXT, notes TEXT,
                 transaction_hash TEXT UNIQUE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (asset_id) REFERENCES assets (id)
@@ -145,8 +150,8 @@ class DatabaseManager:
     def _check_and_update_schema(self):
         """Check the current schema version and apply updates if necessary."""
         current_version = self._get_schema_version()
-        target_version = 1  # Current target schema version
-        
+        target_version = 2  # <-- New target schema version
+
         if current_version < target_version:
             self.logger.info(f"Upgrading database schema from version {current_version} to {target_version}")
             self._apply_schema_updates(current_version, target_version)
@@ -166,40 +171,96 @@ class DatabaseManager:
                 cursor.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
                 row = cursor.fetchone()
                 return row[0] if row else 0
-        except sqlite3.Error as e:
-            self.logger.debug(f"Could not get schema version (assuming 0): {e}")
-            return 0
+        except sqlite3.Error:
+            # This can happen if the schema_version table doesn't exist yet (pre-v1)
+            # or if the transactions table exists but schema_version doesn't.
+            # We'll check for the existence of the transactions table to decide if this is v0 or v1.
+            try:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT 1 FROM transactions LIMIT 1;")
+                    # If transactions table exists, but schema_version doesn't, it's a pre-versioning schema
+                    self.logger.info("Transactions table exists, but schema_version table not found. Assuming schema version 1.")
+                    return 1
+            except sqlite3.Error:
+                # If transactions table also doesn't exist, it's a fresh database.
+                self.logger.info("No schema_version or transactions table found. Assuming fresh database (version 0).")
+                return 0
 
     def _apply_schema_updates(self, from_version: int, to_version: int):
         """Apply schema updates from one version to another."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 # Apply updates incrementally
-                for version in range(from_version + 1, to_version + 1):
-                    if version == 1:
-                        # Version 1: Initial schema with all current tables
-                        # No actual changes needed since _create_tables already created them
-                        # Just record that we're at version 1
-                        cursor.execute(
-                            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
-                            (version,)
-                        )
-                        self.logger.info(f"Applied schema update to version {version}")
-                
+                if from_version < 1:
+                    self._apply_migration_v1(cursor)
+                if from_version < 2:
+                    self._apply_migration_v2(cursor)
+
+                # After all migrations, update to the final target version
+                cursor.execute(
+                    "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
+                    (to_version,)
+                )
                 conn.commit()
                 self.logger.info(f"Schema successfully updated from version {from_version} to {to_version}")
-                
+
         except sqlite3.Error as e:
             self.logger.error(f"Error applying schema updates: {e}")
             raise DatabaseOperationError(f"Failed to update database schema: {e}")
 
     def _apply_migration_v1(self, cursor):
-        """Apply changes needed for schema version 1."""
-        # For version 1, all tables are already created by _create_tables
-        # This method exists for future migrations
-        pass
+        """Migration to version 1: Ensure schema_version table exists and is set to 1."""
+        self.logger.info("Applying migration to v1...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("INSERT OR REPLACE INTO schema_version (version) VALUES (1);")
+        self.logger.info("Schema v1 applied: Ensured schema_version table exists.")
+
+    def _apply_migration_v2(self, cursor):
+        """Migration to version 2: Update CHECK constraint on transactions table."""
+        self.logger.info("Applying migration to v2...")
+
+        # 1. Rename the old table
+        cursor.execute("ALTER TABLE transactions RENAME TO transactions_old;")
+        self.logger.info("Renamed transactions table to transactions_old.")
+
+        # 2. Create the new table with the updated schema
+        # This re-runs the creation logic which now pulls from the updated Enum
+        valid_tx_types = ", ".join([f"'{t.value}'" for t in TransactionType])
+        create_new_table_sql = f"""
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER NOT NULL,
+                timestamp DATETIME NOT NULL, type TEXT NOT NULL CHECK (type IN ({valid_tx_types})),
+                quantity REAL NOT NULL, price_usd REAL, fee_quantity REAL, fee_currency TEXT, fee_usd REAL, source TEXT, notes TEXT,
+                transaction_hash TEXT UNIQUE, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (asset_id) REFERENCES assets (id)
+            );"""
+        cursor.execute(create_new_table_sql)
+        self.logger.info("Created new transactions table with updated CHECK constraint.")
+
+        # 3. Copy data from the old table to the new table
+        cursor.execute("""
+            INSERT INTO transactions (id, asset_id, timestamp, type, quantity, price_usd, fee_quantity, fee_currency, fee_usd, source, notes, transaction_hash, created_at)
+            SELECT id, asset_id, timestamp, type, quantity, price_usd, fee_quantity, fee_currency, fee_usd, source, notes, transaction_hash, created_at
+            FROM transactions_old;
+        """)
+        self.logger.info("Copied data from old table to new table.")
+
+        # 4. Drop the old table
+        cursor.execute("DROP TABLE transactions_old;")
+        self.logger.info("Dropped old transactions table.")
+
+        # 5. Recreate indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_asset_timestamp ON transactions (asset_id, timestamp);")
+        self.logger.info("Recreated index on new transactions table.")
+        self.logger.info("Schema v2 applied successfully.")
 
     def get_asset_id(
         self,
@@ -236,7 +297,7 @@ class DatabaseManager:
         """Bulk insert or update transactions using ON CONFLICT DO UPDATE."""
         # Create a backup before bulk insert operations
         self.backup_database("bulk_insert")
-        
+
         if not transactions:
             self.logger.info("No transactions provided for bulk insert.")
             return 0
@@ -408,7 +469,7 @@ class DatabaseManager:
         """Update or Insert holdings data."""
         # Create a backup before updating holdings
         self.backup_database("update_holdings")
-        
+
         sql = "INSERT OR REPLACE INTO holdings (asset_id, quantity, average_cost_basis, last_updated) VALUES (?, ?, ?, ?)"
         try:
             with self._get_connection() as conn:
@@ -711,7 +772,7 @@ class DatabaseManager:
         """Clean up old data based on configuration."""
         # Create a backup before cleanup operations
         self.backup_database("cleanup")
-        
+
         if self.cleanup_days <= 0:
             self.logger.info("Data cleanup is disabled.")
             return
@@ -777,11 +838,11 @@ class DatabaseManager:
             backup_filepath = self.backup_dir / backup_filename
             shutil.copy2(self.db_path, backup_filepath)
             self.logger.info(f"Successfully created database backup: {backup_filepath} (reason: {reason})")
-            
+
             # Clean up old backups if auto deletion is enabled
             if self.auto_delete_backups:
                 self._cleanup_old_backups()
-            
+
             return str(backup_filepath)
         except Exception as e:
             self.logger.error(f"Failed to create database backup: {e}", exc_info=True)
