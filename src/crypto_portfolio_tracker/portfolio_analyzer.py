@@ -217,14 +217,6 @@ class PortfolioAnalyzer:
 
         return suggestions_df
 
-    def _get_current_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
-        """
-        Legacy method for backward compatibility. New code should use the enricher directly.
-        """
-        self.logger.warning("_get_current_prices called on PortfolioAnalyzer - should use enricher directly")
-        # Return zeros as fallback to avoid breaking existing code that might call this
-        return {symbol: 0.0 for symbol in symbols}
-
     async def calculate_portfolio_metrics(self) -> Dict[str, Any]:
         """
         Calculates key portfolio metrics using a consolidated view of holdings,
@@ -425,6 +417,13 @@ class PortfolioAnalyzer:
         else:
             core_holdings_df["core_allocation"] = 0
 
+        # Get stablecoin symbols from configuration
+        stablecoin_symbols = self.config.get("portfolio", {}).get("stablecoin_symbols", [])
+        
+        # Calculate crypto-only value (excluding stablecoins) for more intuitive P/L calculation
+        crypto_holdings_df = holdings_df[~holdings_df["symbol"].isin(stablecoin_symbols)]
+        crypto_only_value = crypto_holdings_df["value_usd"].sum() if not crypto_holdings_df.empty else 0.0
+
         # Calculate wallet-agnostic total cost basis (all holdings regardless of wallet)
         all_holdings_cost_basis = self.db_manager.get_holdings()
         if not all_holdings_cost_basis.empty:
@@ -432,10 +431,16 @@ class PortfolioAnalyzer:
         else:
             total_cost_basis = 0.0
 
-        # Calculate unrealized P/L against total portfolio value (not just spot/earn)
+        # Calculate traditional unrealized P/L against total portfolio value
         total_pl_usd = total_portfolio_value - total_cost_basis
         total_pl_percent = (
             (total_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
+        )
+        
+        # Calculate crypto-only unrealized P/L (excluding stablecoins) for more intuitive performance metric
+        crypto_only_pl_usd = crypto_only_value - total_cost_basis
+        crypto_only_pl_percent = (
+            (crypto_only_pl_usd / total_cost_basis * 100) if total_cost_basis > 0 else 0.0
         )
         total_invested = self.db_manager.calculate_total_invested_capital()
 
@@ -452,6 +457,8 @@ class PortfolioAnalyzer:
             "total_cost_basis_usd": total_cost_basis,
             "unrealized_pl_usd": total_pl_usd,
             "unrealized_pl_percent": total_pl_percent,
+            "crypto_only_unrealized_pl_usd": crypto_only_pl_usd,
+            "crypto_only_unrealized_pl_percent": crypto_only_pl_percent,
             "total_invested_capital": total_invested,
             "overall_pl_usd": overall_pl_usd,
             "overall_pl_percent": overall_pl_percent,

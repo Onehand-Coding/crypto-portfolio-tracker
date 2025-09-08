@@ -174,7 +174,7 @@ class CryptoPortfolioTracker:
             csv_exporter=self.csv_exporter
         )
 
-        self.logger.info("Refactored tracker and all components initialized.")
+        self.logger.info("Tracker and all components initialized.")
 
     def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
         """Initialize and return Binance client - delegates to DataSynchronizer."""
@@ -284,10 +284,7 @@ class CryptoPortfolioTracker:
 
     def fetch_binance_balances(self):
         """Fetch Binance balances - delegates to original fetcher for compatibility."""
-        if self.fetcher:
-            return self.fetcher.fetch_binance_balances()
-        else:
-            return self.data_synchronizer.fetch_binance_balances()
+        return self.fetcher.fetch_binance_balances()
 
     def update_holdings_from_transactions(self):
         """Update holdings from transactions - delegates to DataManager."""
@@ -361,9 +358,9 @@ class CryptoPortfolioTracker:
         """Save portfolio snapshot - delegates to DataManager."""
         return self.data_manager.save_snapshot(metrics)
 
-    async def transfer_funding_to_spot(self, amount: float, asset: str = "USDT") -> bool:
+    async def transfer_funding_to_spot(self, amount: float, asset: str = "USDT", is_live: bool = False) -> "TradeResult":
         """Transfer funding to spot - delegates to DataSynchronizer."""
-        return await self.data_synchronizer.transfer_funding_to_spot(amount, asset)
+        return await self.data_synchronizer.transfer_funding_to_spot(asset, amount, is_live)
 
     # Strategy state management methods - delegates to DataManager
     def get_strategy_state(self, strategy_name: str) -> Dict[str, Any]:

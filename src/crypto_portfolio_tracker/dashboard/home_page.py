@@ -159,7 +159,7 @@ def render_home_page(dashboard):
         return
 
     # --- Row 1: Top-Level Metrics ---
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.metric(
@@ -170,19 +170,12 @@ def render_home_page(dashboard):
 
     with col2:
         st.metric(
-            label="Total Cost Basis",
-            value=format_usd(metrics.get("total_cost_basis_usd", 0)),
-            help="The total amount of USD you have put into the portfolio from FIFO.",
-        )
-
-    with col3:
-        st.metric(
             label="Total Portfolio Value",
             value=format_usd(metrics.get("total_value_usd", 0)),
             help="Current portfolio total value.",
         )
 
-    with col4:
+    with col3:
         st.metric(
             label="Overall P/L",
             value=format_usd(metrics.get("overall_pl_usd", 0)),
@@ -190,13 +183,12 @@ def render_home_page(dashboard):
             help="Profit/Loss based on Total Invested Capital.",
         )
 
-    with col5:
-        st.metric(
-            label="Unrealized P/L (FIFO)",
-            value=format_usd(metrics.get("unrealized_pl_usd", 0)),
-            delta=format_percent(metrics.get("unrealized_pl_percent", 0)),
-            help="Profit/Loss based on FIFO Cost Basis.",
-        )
+    # with col4:
+    #     st.metric(
+    #         label="Current ROI",
+    #         value=format_percent(metrics.get("overall_pl_percent", 0)),
+    #         help="Return on Investment based on Total Invested Capital.",
+    #     )
 
     # --- Load data required for the home page ---
     holdings_df = (
@@ -348,6 +340,27 @@ def render_home_page(dashboard):
     # --- 3. Activities Tab ---
     with tab_acts:
         st.header("📖 Activities")
+
+        # --- FIFO Metrics for Tax Reporting ---
+        st.markdown("#### 📊 FIFO Accounting Metrics (Tax Reporting)")
+        st.caption("These metrics are based on First-In, First-Out (FIFO) cost basis and are relevant for tax purposes.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                label="Total Cost Basis (FIFO)",
+                value=format_usd(metrics.get("total_cost_basis_usd", 0)),
+                help="Total cost basis of current holdings calculated using FIFO method."
+            )
+        with col2:
+            st.metric(
+                label="Unrealized P/L (FIFO)",
+                value=format_usd(metrics.get("crypto_only_unrealized_pl_usd", 0)),
+                delta=format_percent(metrics.get("crypto_only_unrealized_pl_percent", 0)),
+                help="Unrealized profit/loss based on FIFO cost basis (excludes stablecoins)."
+            )
+
+        st.markdown("---")
         st.markdown("#### 📝 Tax Report")
         db_manager = tracker.db_manager
         try:

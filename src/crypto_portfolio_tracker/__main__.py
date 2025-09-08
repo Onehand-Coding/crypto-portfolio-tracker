@@ -228,12 +228,13 @@ def print_portfolio_summary(tracker: CryptoPortfolioTracker, metrics: Dict[str, 
         f"Total Cost Basis (FIFO):     ${metrics.get('total_cost_basis_usd', 0):,.2f}"
     )
 
-    pl_usd = metrics.get("unrealized_pl_usd", 0)
-    pl_pct = metrics.get("unrealized_pl_percent", 0)
-    color_unrealized = "\033[92m" if pl_usd >= 0 else "\033[91m"
-
+    # Crypto-only Unrealized P/L (FIFO) excluding stablecoins for more intuitive performance
+    crypto_pl_usd = metrics.get("crypto_only_unrealized_pl_usd", 0)
+    crypto_pl_pct = metrics.get("crypto_only_unrealized_pl_percent", 0)
+    color_crypto_unrealized = "\033[92m" if crypto_pl_usd >= 0 else "\033[91m"
+    
     print(
-        f"Unrealized P/L (FIFO):     {color_unrealized}${pl_usd:,.2f} ({pl_pct:.2f}%){color_end}"
+        f"Unrealized P/L (FIFO):     {color_crypto_unrealized}${crypto_pl_usd:,.2f} ({crypto_pl_pct:.2f}%){color_end} (excludes stablecoins)"
     )
 
     # Print All Holdings Table
@@ -2173,7 +2174,7 @@ async def run_transfer_menu(tracker: CryptoPortfolioTracker):
             # Execute transfer
             print("\n🔄 Executing transfer...")
             result = await tracker.transfer_funding_to_spot(
-                asset="USDT", amount=transfer_amount, is_live=is_live
+                amount=transfer_amount, asset="USDT", is_live=is_live
             )
 
             # Display results

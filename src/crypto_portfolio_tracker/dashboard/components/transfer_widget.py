@@ -83,7 +83,7 @@ def render_transfer_widget(
                 with st.spinner(" Executing transfer..."):
                     result = asyncio.run(
                         tracker.transfer_funding_to_spot(
-                            asset="USDT", amount=float(amount), is_live=is_live
+                            amount=float(amount), asset="USDT", is_live=is_live
                         )
                     )
 
