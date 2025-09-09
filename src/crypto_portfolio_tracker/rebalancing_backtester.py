@@ -321,10 +321,10 @@ class RebalancingBacktester:
 
     def generate_report(self):
         """
-        Generates and prints the final performance report.
+        Generates the final performance report and stores statistics in self.summary_stats.
         """
         if not self.portfolio_value_history or len(self.portfolio_value_history) < 2:
-            print("\n--- Not enough backtest data to generate a report ---")
+            self.summary_stats = {"error": "Not enough backtest data to generate a report"}
             return
 
         results_df = (
@@ -333,9 +333,9 @@ class RebalancingBacktester:
             .dropna(subset=["value"])
         )
         if results_df.empty:
-            print(
-                "\n--- Portfolio value calculation resulted in no valid data. Cannot generate report. ---"
-            )
+            self.summary_stats = {
+                "error": "Portfolio value calculation resulted in no valid data. Cannot generate report."
+            }
             return
 
         final_value = results_df["value"].iloc[-1]
@@ -363,7 +363,7 @@ class RebalancingBacktester:
             else 0
         )
 
-        # Store statistics for Streamlit UI
+        # Store statistics for UIs to access
         self.summary_stats = {
             "Initial Capital": self.initial_capital,
             "Final Portfolio Value": final_value,
@@ -374,27 +374,6 @@ class RebalancingBacktester:
             "Annualized Volatility": strategy_volatility,
             "Sharpe Ratio": sharpe_ratio,
             "Total Trades Executed": len(self.trade_log),
+            # Also store trade log for UIs that want to display it
+            "Trade Log": self.trade_log,
         }
-
-        # Print the report (existing code)
-        print("\n" + "=" * 80)
-        print("DYNAMIC REBALANCING STRATEGY - BACKTEST REPORT")
-        print("=" * 80)
-        print(f"Initial Capital:         ${self.initial_capital:,.2f}")
-        print(f"Final Portfolio Value:   ${final_value:,.2f}")
-        print("----------------------------------------")
-        print(f"Strategy Total Return:   {strategy_return:,.2%}")
-        print(f"Buy & Hold Return:       {buy_hold_return:,.2%}")
-        print(f"Strategy Outperformance: {strategy_return - buy_hold_return:+.2%}")
-        print(f"Maximum Drawdown:        {-self.max_drawdown:,.2%}")
-        print(f"Annualized Volatility:   {strategy_volatility:,.2%}")
-        print(f"Sharpe Ratio:            {sharpe_ratio:.2f}")
-        print("----------------------------------------")
-        print(f"Total Trades Executed:   {len(self.trade_log)}")
-        print("=" * 80)
-        print("\n--- Recent Trade Log (Last 15) ---")
-        for log_entry in self.trade_log[-15:]:
-            print(log_entry)
-        if len(self.trade_log) > 15:
-            print(f"... (showing last 15 of {len(self.trade_log)} total trades)")
-        print("=" * 80)

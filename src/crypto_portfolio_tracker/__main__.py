@@ -621,6 +621,43 @@ async def run_rebalancing_backtest(tracker: CryptoPortfolioTracker):
         backtester.run(
             initial_capital=initial_capital, period=period, frequency=frequency
         )
+        
+        # Format and print the report using the stored statistics
+        summary_stats = getattr(backtester, 'summary_stats', {})
+        if not summary_stats:
+            print("\n--- No report data available ---")
+            return
+            
+        if "error" in summary_stats:
+            print(f"\n--- {summary_stats['error']} ---")
+            return
+
+        # Print the report using the stored statistics
+        print("\n" + "=" * 80)
+        print("DYNAMIC REBALANCING STRATEGY - BACKTEST REPORT")
+        print("=" * 80)
+        print(f"Initial Capital:         ${summary_stats['Initial Capital']:,.2f}")
+        print(f"Final Portfolio Value:   ${summary_stats['Final Portfolio Value']:,.2f}")
+        print("-" * 40)
+        print(f"Strategy Total Return:   {summary_stats['Strategy Total Return']:,.2%}")
+        print(f"Buy & Hold Return:       {summary_stats['Buy & Hold Return']:,.2%}")
+        print(f"Strategy Outperformance: {summary_stats['Strategy Outperformance']:+.2%}")
+        print(f"Maximum Drawdown:        {summary_stats['Maximum Drawdown']:,.2%}")
+        print(f"Annualized Volatility:   {summary_stats['Annualized Volatility']:,.2%}")
+        print(f"Sharpe Ratio:            {summary_stats['Sharpe Ratio']:.2f}")
+        print("-" * 40)
+        print(f"Total Trades Executed:   {summary_stats['Total Trades Executed']}")
+        print("=" * 80)
+        
+        # Print trade log
+        trade_log = summary_stats.get('Trade Log', [])
+        if trade_log:
+            print("\n--- Recent Trade Log (Last 15) ---")
+            for log_entry in trade_log[-15:]:
+                print(log_entry)
+            if len(trade_log) > 15:
+                print(f"... (showing last 15 of {len(trade_log)} total trades)")
+        print("=" * 80)
 
     except Exception as e:
         logger.error(
