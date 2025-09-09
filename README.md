@@ -67,7 +67,7 @@ The project follows a standard `src` layout for clean, maintainable, and distrib
 ```
 crypto-portfolio-tracker/
 ├── config/
-│   └── default_config.json
+│   └── .gitkeep
 ├── data/
 │   ├── cache/
 │   │   ├── backtest_data/
@@ -101,6 +101,10 @@ crypto-portfolio-tracker/
 │       │   ├── __init__.py
 │       │   ├── app.py
 │       │   ├── backtest_page.py
+│       │   ├── components/
+│       │   │   ├── __init__.py
+│       │   │   ├── trading_status_banner.py
+│       │   │   └── transfer_widget.py
 │       │   ├── database_page.py
 │       │   ├── dca_page.py
 │       │   ├── home_page.py
@@ -109,7 +113,6 @@ crypto-portfolio-tracker/
 │       │   ├── rebalancing_page.py
 │       │   ├── settings_page.py
 │       │   ├── trading_page.py
-│       │   ├── transfer_page.py
 │       │   ├── ui_controller.py
 │       │   └── utils.py
 │       ├── templates/
@@ -119,12 +122,13 @@ crypto-portfolio-tracker/
 │       ├── __init__.py
 │       ├── __main__.py
 │       ├── binance_fetcher.py
+│       ├── check_deps.py
 │       ├── config.py
 │       ├── crypto_trend_analyzer.py
 │       ├── dashboard_launcher.py
-│       ├── database.py
 │       ├── data_manager.py
 │       ├── data_synchronizer.py
+│       ├── database.py
 │       ├── dca_manager.py
 │       ├── exceptions.py
 │       ├── exporters.py
@@ -132,6 +136,7 @@ crypto-portfolio-tracker/
 │       ├── portfolio_analyzer.py
 │       ├── portfolio_tracker.py
 │       ├── price_enricher.py
+│       ├── profit_taking_logic.py
 │       ├── rebalancing_backtester.py
 │       ├── rebalancing_logic.py
 │       ├── report_generator.py
