@@ -53,31 +53,60 @@ class TestDatabaseManager:
         all_transactions = db_manager.get_all_transactions()
         assert len(all_transactions) >= 2
 
-    def test_calculate_total_invested_capital(self, db_manager):
-        """Test total invested capital calculation."""
+    def test_get_invested_capital_transactions(self, db_manager):
+        """Test fetching invested capital transactions."""
         # Insert test asset and transactions
         asset_id = db_manager.get_asset_id("BTC", "Bitcoin", "bitcoin")
 
-        # Use the correct transaction format that the method expects
+        # Insert different types of transactions
         transactions = [
             {
                 "symbol": "BTC",
                 "timestamp": datetime.now(timezone.utc),
                 "type": "BUY",
-                "source": "Binance P2P Buy",  # Add the required source
+                "source": "Binance P2P Buy",  # This should be included
                 "quantity": 0.1,
                 "price_usd": 50000.0,
                 "fee_usd": 5.0,
                 "transaction_hash": "hash1",
+            },
+            {
+                "symbol": "ETH",
+                "timestamp": datetime.now(timezone.utc),
+                "type": "WITHDRAWAL",  # This should be included
+                "quantity": 1.0,
+                "price_usd": 3000.0,
+                "transaction_hash": "hash2",
+            },
+            {
+                "symbol": "BNB",
+                "timestamp": datetime.now(timezone.utc),
+                "type": "BUY",  # This should NOT be included (no source = 'Binance P2P Buy')
+                "quantity": 2.0,
+                "price_usd": 300.0,
+                "transaction_hash": "hash3",
             }
         ]
         # ACTUALLY INSERT THE TRANSACTIONS
         db_manager.bulk_insert_transactions(transactions)
 
-        # Calculate total invested
-        total = db_manager.calculate_total_invested_capital()
+        # Fetch invested capital transactions
+        df = db_manager.get_invested_capital_transactions()
 
-        assert total == 5000.0  # 0.1 * 50000 (fee is not included in this calculation)
+        # Should only have 2 transactions (BTC P2P buy and ETH withdrawal)
+        assert len(df) == 2
+        
+        # Check that we have the P2P buy transaction
+        p2p_transaction = df[df['source'] == 'Binance P2P Buy']
+        assert len(p2p_transaction) == 1
+        assert p2p_transaction.iloc[0]['quantity'] == 0.1
+        assert p2p_transaction.iloc[0]['price_usd'] == 50000.0
+        
+        # Check that we have the withdrawal transaction
+        withdrawal_transaction = df[df['type'] == 'WITHDRAWAL']
+        assert len(withdrawal_transaction) == 1
+        assert withdrawal_transaction.iloc[0]['quantity'] == 1.0
+        assert withdrawal_transaction.iloc[0]['price_usd'] == 3000.0
 
     def test_get_holdings(self, db_manager):
         """Test holdings retrieval."""

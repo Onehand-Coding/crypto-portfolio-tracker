@@ -667,38 +667,26 @@ class DatabaseManager:
             if conn:
                 conn.close()
 
-    def calculate_total_invested_capital(self) -> float:
+    def get_invested_capital_transactions(self) -> pd.DataFrame:
         """
-        Calculates the NET invested capital by summing capital inflows (P2P Buys)
-        and subtracting capital outflows (Withdrawals).
+        Fetches raw transaction data needed for invested capital calculation.
+        Returns transactions that are either Binance P2P Buys or Withdrawals.
         """
-        # FIX: Use conditional aggregation to calculate Inflows - Outflows.
         query = """
-            SELECT SUM(
-                CASE
-                    WHEN source = 'Binance P2P Buy' THEN quantity * price_usd
-                    WHEN type = 'WITHDRAWAL' THEN -1 * quantity * price_usd
-                    ELSE 0
-                END
-            ) as net_invested
+            SELECT source, type, quantity, price_usd
             FROM transactions
             WHERE source = 'Binance P2P Buy' OR type = 'WITHDRAWAL';
         """
         try:
             with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(query)
-                result = cursor.fetchone()
-                net_invested = result[0] if result and result[0] is not None else 0.0
-                self.logger.info(
-                    f"Calculated NET invested capital: ${net_invested:,.2f}"
-                )
-                return float(net_invested)
+                df = pd.read_sql_query(query, conn)
+                self.logger.debug(f"Fetched {len(df)} invested capital transactions")
+                return df
         except Exception as e:
             self.logger.error(
-                f"Error calculating net invested capital: {e}", exc_info=True
+                f"Error fetching invested capital transactions: {e}", exc_info=True
             )
-            return 0.0
+            return pd.DataFrame()
 
     def get_cleanup_statistics(self) -> Dict[str, Any]:
         """Get statistics about what would be cleaned up."""
