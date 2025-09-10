@@ -239,7 +239,7 @@ def render_rebalancing_page(dashboard):
                         required_usdt = None
 
                 render_transfer_widget(
-                    dashboard, context="rebalancing", required_usdt=required_usdt
+                    dashboard, context="rebalancing", required_amount=required_usdt
                 )
 
     # --- Display Interactive Rebalancing Suggestions ---

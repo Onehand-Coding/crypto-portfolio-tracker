@@ -3,32 +3,29 @@ Data Synchronizer - Handles all external data source interactions
 Moved from CryptoPortfolioTracker to separate concerns.
 """
 
-import os
-import re
-import json
-import time
-import socket
 import asyncio
-import logging
 import datetime
+import logging
+import socket
+import time
+from datetime import timedelta
 from pathlib import Path
-from diskcache import Cache
-from urllib3.util.retry import Retry
-from datetime import timezone, timedelta
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Dict, List, Optional
 
 import requests
-import pandas as pd
 import yfinance as yf
 from binance.client import Client
-from requests.adapters import HTTPAdapter
 from binance.exceptions import BinanceAPIException
+from diskcache import Cache
+from requests.adapters import HTTPAdapter
 from requests.exceptions import ConnectionError
+from urllib3.util.retry import Retry
 
+from .binance_fetcher import BinanceFetcher
 from .config import ConfigManager
 from .database import DatabaseManager
-from .binance_fetcher import BinanceFetcher
 from .exceptions import NetworkOperationError, NetworkUnavailableError
+from .models import TradeResult
 
 
 class DataSynchronizer:
@@ -42,11 +39,19 @@ class DataSynchronizer:
     - Full portfolio data synchronization
     """
 
-    def __init__(self, config_manager: ConfigManager, db_manager: DatabaseManager,
-                 binance_client: Optional[Client] = None, fetcher: Optional[BinanceFetcher] = None,
-                 cache_dir: Path = None, coingecko_price_cache: Cache = None,
-                 yfinance_disk_cache: Cache = None, fiat_exchange_rate_cache: Cache = None,
-                 symbol_mappings: Dict = None, offline_mode: bool = False):
+    def __init__(
+        self,
+        config_manager: ConfigManager,
+        db_manager: DatabaseManager,
+        binance_client: Optional[Client] = None,
+        fetcher: Optional[BinanceFetcher] = None,
+        cache_dir: Path = None,
+        coingecko_price_cache: Cache = None,
+        yfinance_disk_cache: Cache = None,
+        fiat_exchange_rate_cache: Cache = None,
+        symbol_mappings: Dict = None,
+        offline_mode: bool = False,
+    ):
         """
         Initialize DataSynchronizer with necessary dependencies.
 
@@ -72,7 +77,9 @@ class DataSynchronizer:
         self.offline_mode = offline_mode
 
         # Cache setup
-        self.cache_dir = cache_dir or Path(self.config.get("cache", {}).get("path", "data/cache"))
+        self.cache_dir = cache_dir or Path(
+            self.config.get("cache", {}).get("path", "data/cache")
+        )
         self.coingecko_price_cache = coingecko_price_cache
         self.yfinance_disk_cache = yfinance_disk_cache
         self.fiat_exchange_rate_cache = fiat_exchange_rate_cache
@@ -135,7 +142,7 @@ class DataSynchronizer:
             raise NetworkUnavailableError(
                 "Network unavailable, entering offline mode."
             ) from e
-        except Exception as e:
+        except Exception:
             # Other errors (bad API key, etc.) should not trigger offline mode
             raise
 
@@ -374,7 +381,10 @@ class DataSynchronizer:
         return None
 
     def _get_historical_fiat_exchange_rate(
-        self, target_date: datetime.date, from_currency: str = "USD", to_currency: str = "CAD"
+        self,
+        target_date: datetime.date,
+        from_currency: str = "USD",
+        to_currency: str = "CAD",
     ) -> Optional[float]:
         """
         Get historical fiat exchange rate using Exchange Rates API with disk caching.
@@ -392,7 +402,9 @@ class DataSynchronizer:
 
         # Get exchange rates API config
         exchange_config = self.config.get("apis", {}).get("exchange_rates", {})
-        base_url = exchange_config.get("base_url", "https://api.exchangerate-api.com/v4")
+        base_url = exchange_config.get(
+            "base_url", "https://api.exchangerate-api.com/v4"
+        )
         timeout = exchange_config.get("timeout", 10)
 
         target_date_str = target_date.strftime("%Y-%m-%d")
@@ -672,7 +684,125 @@ class DataSynchronizer:
         Returns:
             TradeResult with success status, messages, and any errors
         """
+        return await self._execute_wallet_transfer(
+            "FUNDING_MAIN", asset, amount, is_live, "funding", "spot"
+        )
+
+    async def transfer_spot_to_funding(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> "TradeResult":
+        """
+        Transfer funds from spot wallet to funding wallet using Binance API.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
+        return await self._execute_wallet_transfer(
+            "MAIN_FUNDING", asset, amount, is_live, "spot", "funding"
+        )
+
+    async def transfer_spot_to_futures(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> "TradeResult":
+        """
+        Transfer funds from spot wallet to futures wallet using Binance API.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
+        return await self._execute_wallet_transfer(
+            "MAIN_UMFUTURE", asset, amount, is_live, "spot", "futures"
+        )
+
+    async def transfer_futures_to_spot(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> "TradeResult":
+        """
+        Transfer funds from futures wallet to spot wallet using Binance API.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
+        return await self._execute_wallet_transfer(
+            "UMFUTURE_MAIN", asset, amount, is_live, "futures", "spot"
+        )
+
+    async def transfer_funding_to_futures(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> "TradeResult":
+        """
+        Transfer funds from funding wallet to futures wallet using Binance API.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
+        return await self._execute_wallet_transfer(
+            "FUNDING_UMFUTURE", asset, amount, is_live, "funding", "futures"
+        )
+
+    async def transfer_futures_to_funding(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> "TradeResult":
+        """
+        Transfer funds from futures wallet to funding wallet using Binance API.
+
+        Args:
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
+        return await self._execute_wallet_transfer(
+            "UMFUTURE_FUNDING", asset, amount, is_live, "futures", "funding"
+        )
+
+    async def _execute_wallet_transfer(
+        self,
+        transfer_type: str,
+        asset: str,
+        amount: float,
+        is_live: bool,
+        source_wallet: str,
+        dest_wallet: str,
+    ) -> "TradeResult":
+        """
+        Internal method to execute wallet transfers using Binance API.
+
+        Args:
+            transfer_type: Binance transfer type (e.g., "FUNDING_MAIN")
+            asset: Asset to transfer (e.g., 'USDT')
+            amount: Amount to transfer
+            is_live: Whether to execute the transfer (False for dry run)
+            source_wallet: Source wallet name for display
+            dest_wallet: Destination wallet name for display
+
+        Returns:
+            TradeResult with success status, messages, and any errors
+        """
         from .models import TradeResult
+
         result = TradeResult(success=False)
 
         try:
@@ -681,36 +811,47 @@ class DataSynchronizer:
                 result.errors.append("Invalid asset or amount")
                 return result
 
-            # Check funding balance first
-            funding_balances = self.fetcher.fetch_funding_balance()
-            funding_balance = 0.0
+            # Check source wallet balance first
+            source_balance = 0.0
+            if source_wallet == "funding":
+                balances = self.fetcher.fetch_funding_balance()
+                for balance in balances:
+                    if balance.get("asset") == asset:
+                        source_balance = float(balance.get("free", 0.0))
+                        break
+            elif source_wallet == "spot":
+                balances = self.fetcher.fetch_binance_balances()
+                for _, row in balances.iterrows():
+                    if row["symbol"] == asset:
+                        source_balance = float(row["quantity"])
+                        break
+            elif source_wallet == "futures":
+                balances = self.fetcher.fetch_futures_balance()
+                for balance in balances:
+                    if balance.get("asset") == asset:
+                        source_balance = float(balance.get("balance", 0.0))
+                        break
 
-            for balance in funding_balances:
-                if balance.get("asset") == asset:
-                    funding_balance = float(balance.get("free", 0.0))
-                    break
-
-            if funding_balance < amount:
+            if source_balance < amount:
                 result.errors.append(
-                    f"Insufficient {asset} in funding wallet. Available: {funding_balance:.8f}, Required: {amount:.8f}"
+                    f"Insufficient {asset} in {source_wallet} wallet. Available: {source_balance:.8f}, Required: {amount:.8f}"
                 )
                 return result
 
             result.messages.append(
-                f"✅ Funding wallet has sufficient {asset} balance: {funding_balance:.8f}"
+                f"✅ {source_wallet.capitalize()} wallet has sufficient {asset} balance: {source_balance:.8f}"
             )
 
             if not is_live:
                 result.messages.append(
-                    f"(Dry Run) Would transfer {amount:.8f} {asset} from funding to spot wallet"
+                    f"(Dry Run) Would transfer {amount:.8f} {asset} from {source_wallet} to {dest_wallet} wallet"
                 )
                 result.success = True
                 return result
 
             # Execute the transfer using Binance Asset Transfer API
-            # The correct type for funding to spot is "FUNDING_MAIN" (from funding to main)
             transfer_params = {
-                "type": "FUNDING_MAIN",  # This transfers FROM funding TO main (spot)
+                "type": transfer_type,
                 "asset": asset,
                 "amount": f"{amount:.8f}",
             }
@@ -727,7 +868,7 @@ class DataSynchronizer:
             if transfer_result and transfer_result.get("tranId"):
                 result.data["transfer_id"] = transfer_result["tranId"]
                 result.messages.append(
-                    f"✅ Successfully transferred {amount:.8f} {asset} from funding to spot wallet"
+                    f"✅ Successfully transferred {amount:.8f} {asset} from {source_wallet} to {dest_wallet} wallet"
                 )
                 result.messages.append(f"Transfer ID: {transfer_result['tranId']}")
                 result.success = True

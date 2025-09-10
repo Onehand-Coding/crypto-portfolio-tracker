@@ -175,6 +175,11 @@ class DCAManager:
 
         total_balance = spot_earn_balance + funding_balance
 
+        # Apply consistent rounding to prevent precision issues
+        spot_earn_balance = round(spot_earn_balance, 8)
+        funding_balance = round(funding_balance, 8)
+        total_balance = round(total_balance, 8)
+
         self.logger.info(
             f"USDT Balances - Spot+Earn: ${spot_earn_balance:,.2f}, Funding: ${funding_balance:,.2f}, Total: ${total_balance:,.2f}"
         )

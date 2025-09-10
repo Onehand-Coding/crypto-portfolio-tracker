@@ -3,31 +3,30 @@ Refactored Crypto Portfolio Tracker - Facade Pattern Implementation
 This class maintains the original public API while delegating work to specialized classes.
 """
 
-import os
-import logging
 import datetime
+import logging
 from pathlib import Path
-from diskcache import Cache
-from typing import Dict, Any, Optional, List, Callable, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from binance.client import Client
+from diskcache import Cache
 
-from .config import ConfigManager
-from .database import DatabaseManager
-from .visualizations import Visualizer
-from .price_enricher import PriceEnricher
 from .binance_fetcher import BinanceFetcher
-from .exporters import ExcelExporter, HtmlExporter, CsvExporter
-from .exceptions import NetworkOperationError, NetworkUnavailableError
+from .config import ConfigManager
+from .data_manager import DataManager
 
 # Import the new specialized classes
 from .data_synchronizer import DataSynchronizer
-from .portfolio_analyzer import PortfolioAnalyzer
-from .trade_executor import TradeExecutor
+from .database import DatabaseManager
 from .dca_manager import DCAManager
+from .exceptions import NetworkUnavailableError
+from .exporters import CsvExporter, ExcelExporter, HtmlExporter
+from .models import ExecutionMode, TradeResult
+from .portfolio_analyzer import PortfolioAnalyzer
+from .price_enricher import PriceEnricher
 from .report_generator import ReportGenerator
-from .data_manager import DataManager
-from .models import TradeResult, ExecutionMode
+from .trade_executor import TradeExecutor
+from .visualizations import Visualizer
 
 
 class CryptoPortfolioTracker:
@@ -55,10 +54,16 @@ class CryptoPortfolioTracker:
         # Initialize database with explicit path
         db_path = self.config_manager.get_database_path()
         backup_dir = self.config_manager.get_backup_dir()
-        connection_timeout = self.config.get("database", {}).get("connection_timeout", 30)
+        connection_timeout = self.config.get("database", {}).get(
+            "connection_timeout", 30
+        )
         cleanup_days = self.config.get("database", {}).get("cleanup_days", 90)
-        auto_delete_backups = self.config.get("database", {}).get("auto_delete_backups", False)
-        auto_backup_enabled = self.config.get("database", {}).get("auto_backup_enabled", False)
+        auto_delete_backups = self.config.get("database", {}).get(
+            "auto_delete_backups", False
+        )
+        auto_backup_enabled = self.config.get("database", {}).get(
+            "auto_backup_enabled", False
+        )
         max_backups = self.config.get("database", {}).get("max_backups", 10)
 
         self.db_manager = DatabaseManager(
@@ -78,7 +83,9 @@ class CryptoPortfolioTracker:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.coingecko_price_cache = Cache(str(self.cache_dir / "coingecko_historical"))
         self.yfinance_disk_cache = Cache(str(self.cache_dir / "yfinance_historical"))
-        self.fiat_exchange_rate_cache = Cache(str(self.cache_dir / "fiat_exchange_rates"))
+        self.fiat_exchange_rate_cache = Cache(
+            str(self.cache_dir / "fiat_exchange_rates")
+        )
 
         # Initialize strategy state
         self.strategy_state_path = self.cache_dir.parent / "strategy_state.json"
@@ -95,13 +102,13 @@ class CryptoPortfolioTracker:
             yfinance_disk_cache=self.yfinance_disk_cache,
             fiat_exchange_rate_cache=self.fiat_exchange_rate_cache,
             symbol_mappings=self.symbol_mappings,
-            offline_mode=self.offline_mode
+            offline_mode=self.offline_mode,
         )
 
         self.data_manager = DataManager(
             config=self.config,
             db_manager=self.db_manager,
-            strategy_state_path=self.strategy_state_path
+            strategy_state_path=self.strategy_state_path,
         )
 
         # Initialize Binance client (now that data_synchronizer exists)
@@ -143,7 +150,7 @@ class CryptoPortfolioTracker:
             enricher=self.enricher,
             offline_mode=self.offline_mode,
             config_manager=self.config_manager,
-            data_synchronizer=self.data_synchronizer
+            data_synchronizer=self.data_synchronizer,
         )
 
         self.trade_executor = TradeExecutor(
@@ -152,7 +159,7 @@ class CryptoPortfolioTracker:
             config_manager=self.config_manager,
             yfinance_disk_cache=self.yfinance_disk_cache,
             data_synchronizer=self.data_synchronizer,
-            data_manager=self.data_manager
+            data_manager=self.data_manager,
         )
 
         self.dca_manager = DCAManager(
@@ -162,7 +169,7 @@ class CryptoPortfolioTracker:
             fetcher=self.fetcher,
             trade_executor=self.trade_executor,
             portfolio_analyzer=self.portfolio_analyzer,
-            data_manager=self.data_manager
+            data_manager=self.data_manager,
         )
 
         self.report_generator = ReportGenerator(
@@ -171,12 +178,14 @@ class CryptoPortfolioTracker:
             visualizer=self.visualizer,
             excel_exporter=self.excel_exporter,
             html_exporter=self.html_exporter,
-            csv_exporter=self.csv_exporter
+            csv_exporter=self.csv_exporter,
         )
 
         self.logger.info("Tracker and all components initialized.")
 
-    def _init_binance_client(self, api_key: Optional[str] = None, api_secret: Optional[str] = None) -> Optional[Client]:
+    def _init_binance_client(
+        self, api_key: Optional[str] = None, api_secret: Optional[str] = None
+    ) -> Optional[Client]:
         """Initialize and return Binance client - delegates to DataSynchronizer."""
         return self.data_synchronizer._init_binance_client(api_key, api_secret)
 
@@ -188,15 +197,28 @@ class CryptoPortfolioTracker:
         """Get current prices - delegates to DataSynchronizer."""
         return self.data_synchronizer._get_current_prices(symbols)
 
-    def _get_coingecko_historical_price(self, symbol: str, target_date: datetime.date,
-                                       coin_id: Optional[str] = None, fallback_to_nearest: bool = True) -> Optional[float]:
+    def _get_coingecko_historical_price(
+        self,
+        symbol: str,
+        target_date: datetime.date,
+        coin_id: Optional[str] = None,
+        fallback_to_nearest: bool = True,
+    ) -> Optional[float]:
         """Get historical price - delegates to DataSynchronizer."""
-        return self.data_synchronizer._get_coingecko_historical_price(symbol, target_date, coin_id, fallback_to_nearest)
+        return self.data_synchronizer._get_coingecko_historical_price(
+            symbol, target_date, coin_id, fallback_to_nearest
+        )
 
-    def _get_historical_fiat_exchange_rate(self, target_date: datetime.date,
-                                         from_currency: str = "USD", to_currency: str = "CAD") -> Optional[float]:
+    def _get_historical_fiat_exchange_rate(
+        self,
+        target_date: datetime.date,
+        from_currency: str = "USD",
+        to_currency: str = "CAD",
+    ) -> Optional[float]:
         """Get historical exchange rate - delegates to DataSynchronizer."""
-        return self.data_synchronizer._get_historical_fiat_exchange_rate(target_date, from_currency, to_currency)
+        return self.data_synchronizer._get_historical_fiat_exchange_rate(
+            target_date, from_currency, to_currency
+        )
 
     def _get_yfinance_ticker(self, symbol: str):
         """Get yFinance ticker - delegates to DataSynchronizer."""
@@ -214,52 +236,98 @@ class CryptoPortfolioTracker:
         """Get symbol filters - delegates to TradeExecutor."""
         return self.trade_executor._get_symbol_filters(symbol)
 
-    def _adjust_quantity_to_lot_size(self, symbol: str, quantity: float) -> Optional[float]:
+    def _adjust_quantity_to_lot_size(
+        self, symbol: str, quantity: float
+    ) -> Optional[float]:
         """Adjust quantity to lot size - delegates to TradeExecutor."""
         return self.trade_executor._adjust_quantity_to_lot_size(symbol, quantity)
 
-    def _redeem_from_earn_if_needed(self, asset: str, required_amount: float, is_live: bool = False) -> Tuple[bool, List[str]]:
-        """Check/redeem from earn - delegates to TradeExecutor."""
-        return self.trade_executor._redeem_from_earn_if_needed(asset, required_amount, is_live)
+    def redeem_from_earn(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> "TradeResult":
+        """Redeem assets directly from earn - delegates to TradeExecutor."""
+        return self.trade_executor.redeem_from_earn(asset, amount, is_live)
 
-    def _execute_directional_trade(self, trade: Dict[str, Any], client: Client) -> TradeResult:
+    def _execute_directional_trade(
+        self, trade: Dict[str, Any], client: Client
+    ) -> TradeResult:
         """Execute directional trade - delegates to TradeExecutor."""
         return self.trade_executor._execute_directional_trade(trade, client)
 
-    async def get_profit_taking_opportunities(self, core_holdings_df: Optional = None,
-                                            rebalance_suggestions_df: Optional = None,
-                                            cached_trend_data: Optional[Dict[str, Any]] = None):
+    async def get_profit_taking_opportunities(
+        self,
+        core_holdings_df: Optional = None,
+        rebalance_suggestions_df: Optional = None,
+        cached_trend_data: Optional[Dict[str, Any]] = None,
+    ):
         """Get profit taking opportunities - delegates to PortfolioAnalyzer."""
         return await self.portfolio_analyzer.get_profit_taking_opportunities(
             core_holdings_df, rebalance_suggestions_df, cached_trend_data
         )
 
-    async def execute_profit_taking_trades(self, profit_trades: List[Dict[str, Any]], is_live: bool = False) -> TradeResult:
+    async def execute_profit_taking_trades(
+        self, profit_trades: List[Dict[str, Any]], is_live: bool = False
+    ) -> TradeResult:
         """Execute profit taking trades - delegates to TradeExecutor."""
-        return await self.trade_executor.execute_profit_taking_trades(profit_trades, is_live)
-
-    def _make_tx_hash(self, source: str, batch_id: str, symbol: str, side: str,
-                     ts: datetime.datetime, order: Optional[dict] = None) -> str:
-        """Make transaction hash - delegates to DataManager."""
-        return self.data_manager._make_tx_hash(source, batch_id, symbol, side, ts, order)
-
-    def _record_trade_transaction(self, *, symbol: str, side: str, quantity: float, price_usd: float,
-                                 source: str, mode: str, batch_id: str, order: Optional[dict] = None,
-                                 error: Optional[str] = None) -> None:
-        """Record trade transaction - delegates to DataManager."""
-        return self.data_manager._record_trade_transaction(
-            symbol=symbol, side=side, quantity=quantity, price_usd=price_usd,
-            source=source, mode=mode, batch_id=batch_id, order=order, error=error
+        return await self.trade_executor.execute_profit_taking_trades(
+            profit_trades, is_live
         )
 
-    async def execute_rebalancing_trades_core(self, suggestions_df, earn_balances,
-                                            confirmation_callback=None, execution_mode=ExecutionMode.CONFIRM):
+    def _make_tx_hash(
+        self,
+        source: str,
+        batch_id: str,
+        symbol: str,
+        side: str,
+        ts: datetime.datetime,
+        order: Optional[dict] = None,
+    ) -> str:
+        """Make transaction hash - delegates to DataManager."""
+        return self.data_manager._make_tx_hash(
+            source, batch_id, symbol, side, ts, order
+        )
+
+    def _record_trade_transaction(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price_usd: float,
+        source: str,
+        mode: str,
+        batch_id: str,
+        order: Optional[dict] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Record trade transaction - delegates to DataManager."""
+        return self.data_manager._record_trade_transaction(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price_usd=price_usd,
+            source=source,
+            mode=mode,
+            batch_id=batch_id,
+            order=order,
+            error=error,
+        )
+
+    async def execute_rebalancing_trades_core(
+        self,
+        suggestions_df,
+        earn_balances,
+        confirmation_callback=None,
+        execution_mode=ExecutionMode.CONFIRM,
+    ):
         """Execute rebalancing trades - delegates to TradeExecutor."""
         return await self.trade_executor.execute_rebalancing_trades_core(
             suggestions_df, earn_balances, confirmation_callback, execution_mode
         )
 
-    async def execute_manual_trade_core(self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live):
+    async def execute_manual_trade_core(
+        self, trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
+    ):
         """Execute manual trade - delegates to TradeExecutor."""
         return await self.trade_executor.execute_manual_trade_core(
             trade_type, symbol, trade_ticker, amount, is_quote_qty, is_live
@@ -314,11 +382,17 @@ class CryptoPortfolioTracker:
         """Export all data backups - delegates to ReportGenerator."""
         return self.report_generator.export_all_data_backups()
 
-    def export_trend_report(self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML") -> Optional[Path]:
+    def export_trend_report(
+        self, report: Dict[str, Any], timeframe: str, export_format: str = "HTML"
+    ) -> Optional[Path]:
         """Export trend report - delegates to ReportGenerator."""
-        return self.report_generator.export_trend_report(report, timeframe, export_format)
+        return self.report_generator.export_trend_report(
+            report, timeframe, export_format
+        )
 
-    def export_trend_report_all_formats(self, report: Dict[str, Any], timeframe: str) -> Dict[str, Optional[Path]]:
+    def export_trend_report_all_formats(
+        self, report: Dict[str, Any], timeframe: str
+    ) -> Dict[str, Optional[Path]]:
         """Export trend report in all formats - delegates to ReportGenerator."""
         return self.report_generator.export_trend_report_all_formats(report, timeframe)
 
@@ -326,13 +400,19 @@ class CryptoPortfolioTracker:
         """Cleanup old data - delegates to DataManager."""
         return self.data_manager.cleanup_old_data()
 
-    def calculate_proportional_dca(self, new_funds: float, target_allocation: Dict[str, float]) -> Dict[str, float]:
+    def calculate_proportional_dca(
+        self, new_funds: float, target_allocation: Dict[str, float]
+    ) -> Dict[str, float]:
         """Calculate proportional DCA - delegates to DCAManager."""
         return self.dca_manager.calculate_proportional_dca(new_funds, target_allocation)
 
-    def calculate_target_weight_dca(self, new_funds: float, current_portfolio, target_allocation: Dict[str, float]) -> Dict[str, float]:
+    def calculate_target_weight_dca(
+        self, new_funds: float, current_portfolio, target_allocation: Dict[str, float]
+    ) -> Dict[str, float]:
         """Calculate target weight DCA - delegates to DCAManager."""
-        return self.dca_manager.calculate_target_weight_dca(new_funds, current_portfolio, target_allocation)
+        return self.dca_manager.calculate_target_weight_dca(
+            new_funds, current_portfolio, target_allocation
+        )
 
     def get_available_usdt_balance(self) -> Dict[str, float]:
         """Get available USDT balance - delegates to DCAManager."""
@@ -342,15 +422,23 @@ class CryptoPortfolioTracker:
         """Validate DCA amount - delegates to DCAManager."""
         return self.dca_manager.validate_dca_amount(amount)
 
-    async def get_dca_suggestions(self, new_funds: float, method: str = "both") -> Dict[str, Any]:
+    async def get_dca_suggestions(
+        self, new_funds: float, method: str = "both"
+    ) -> Dict[str, Any]:
         """Get DCA suggestions - delegates to DCAManager."""
         return await self.dca_manager.get_dca_suggestions(new_funds, method)
 
-    async def execute_dca_trades(self, selected_trades: List[Dict[str, Any]], method: str, is_live: bool = False) -> TradeResult:
+    async def execute_dca_trades(
+        self, selected_trades: List[Dict[str, Any]], method: str, is_live: bool = False
+    ) -> TradeResult:
         """Execute DCA trades - delegates to DCAManager."""
-        return await self.dca_manager.execute_dca_trades(selected_trades, method, is_live)
+        return await self.dca_manager.execute_dca_trades(
+            selected_trades, method, is_live
+        )
 
-    def validate_dca_execution(self, selected_trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def validate_dca_execution(
+        self, selected_trades: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Validate DCA execution - delegates to DCAManager."""
         return self.dca_manager.validate_dca_execution(selected_trades)
 
@@ -358,9 +446,53 @@ class CryptoPortfolioTracker:
         """Save portfolio snapshot - delegates to DataManager."""
         return self.data_manager.save_snapshot(metrics)
 
-    async def transfer_funding_to_spot(self, amount: float, asset: str = "USDT", is_live: bool = False) -> "TradeResult":
+    async def transfer_funding_to_spot(
+        self, amount: float, asset: str = "USDT", is_live: bool = False
+    ) -> "TradeResult":
         """Transfer funding to spot - delegates to DataSynchronizer."""
-        return await self.data_synchronizer.transfer_funding_to_spot(asset, amount, is_live)
+        return await self.data_synchronizer.transfer_funding_to_spot(
+            asset, amount, is_live
+        )
+
+    async def transfer_spot_to_funding(
+        self, amount: float, asset: str = "USDT", is_live: bool = False
+    ) -> "TradeResult":
+        """Transfer spot to funding - delegates to DataSynchronizer."""
+        return await self.data_synchronizer.transfer_spot_to_funding(
+            asset, amount, is_live
+        )
+
+    async def transfer_spot_to_futures(
+        self, amount: float, asset: str = "USDT", is_live: bool = False
+    ) -> "TradeResult":
+        """Transfer spot to futures - delegates to DataSynchronizer."""
+        return await self.data_synchronizer.transfer_spot_to_futures(
+            asset, amount, is_live
+        )
+
+    async def transfer_futures_to_spot(
+        self, amount: float, asset: str = "USDT", is_live: bool = False
+    ) -> "TradeResult":
+        """Transfer futures to spot - delegates to DataSynchronizer."""
+        return await self.data_synchronizer.transfer_futures_to_spot(
+            asset, amount, is_live
+        )
+
+    async def transfer_funding_to_futures(
+        self, amount: float, asset: str = "USDT", is_live: bool = False
+    ) -> "TradeResult":
+        """Transfer funding to futures - delegates to DataSynchronizer."""
+        return await self.data_synchronizer.transfer_funding_to_futures(
+            asset, amount, is_live
+        )
+
+    async def transfer_futures_to_funding(
+        self, amount: float, asset: str = "USDT", is_live: bool = False
+    ) -> "TradeResult":
+        """Transfer futures to funding - delegates to DataSynchronizer."""
+        return await self.data_synchronizer.transfer_futures_to_funding(
+            asset, amount, is_live
+        )
 
     # Strategy state management methods - delegates to DataManager
     def get_strategy_state(self, strategy_name: str) -> Dict[str, Any]:

@@ -13,6 +13,7 @@ from crypto_portfolio_tracker.dashboard import (
     backtest_page,
     database_page,
     settings_page,
+    wallets_page,
 )
 
 
@@ -47,6 +48,8 @@ def main():
 
     if page == "🏠 Home":
         home_page.render_home_page(dashboard)
+    elif page == "💳 Wallets":
+        wallets_page.render_wallets_page(dashboard)
     elif page == "📈 Market":
         market_page.render_market_page(dashboard)
     elif page == "⚖️ Rebalance":

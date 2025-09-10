@@ -49,6 +49,7 @@ def render_sidebar(dashboard):
         "Navigation",
         [
             "🏠 Home",
+            "💳 Wallets",
             "📈 Market",
             "⚖️ Rebalance",
             "💸 DCA",

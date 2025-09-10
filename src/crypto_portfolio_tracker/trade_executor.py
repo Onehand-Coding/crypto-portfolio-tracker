@@ -3,16 +3,15 @@ Trade Executor - Handles all trade execution operations
 Moved from CryptoPortfolioTracker to separate concerns.
 """
 
-import uuid
 import logging
-from typing import Dict, Any, Optional, List, Tuple, Callable
-from diskcache import Cache
+import uuid
+from typing import Any, Callable, Dict, List, Optional
 
-import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
+from diskcache import Cache
 
-from .models import TradeResult, ExecutionMode
+from .models import ExecutionMode, TradeResult
 
 
 class TradeExecutor:
@@ -27,9 +26,15 @@ class TradeExecutor:
     - Manual trade execution
     """
 
-    def __init__(self, config: Dict[str, Any], binance_client: Optional[Client] = None,
-                 config_manager=None, yfinance_disk_cache: Optional[Cache] = None,
-                 data_synchronizer=None, data_manager=None):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        binance_client: Optional[Client] = None,
+        config_manager=None,
+        yfinance_disk_cache: Optional[Cache] = None,
+        data_synchronizer=None,
+        data_manager=None,
+    ):
         """
         Initialize TradeExecutor with necessary dependencies.
 
@@ -105,97 +110,97 @@ class TradeExecutor:
         )
         return adjusted_quantity
 
-    def _redeem_from_earn_if_needed(
-        self, asset: str, required_amount: float, is_live: bool = False
-    ) -> Tuple[bool, List[str]]:
+    def redeem_from_earn(
+        self, asset: str, amount: float, is_live: bool = False
+    ) -> TradeResult:
         """
-        Checks if there's sufficient balance in the spot wallet for the trade.
-        If not, attempts to redeem from Simple Earn to cover the difference.
+        Directly redeems a specified amount of an asset from Binance Simple Earn Flexible products.
+
+        This method allows users to directly redeem assets from their Earn positions without
+        first checking spot wallet balances.
 
         Args:
-            asset: The asset symbol to check/redeem
-            required_amount: The amount needed in the spot wallet
-            is_live: Whether to actually execute the redemption
+            asset: The asset symbol to redeem (e.g., 'BTC', 'ETH')
+            amount: The amount to redeem
+            is_live: Whether to actually execute the redemption (True) or simulate it (False)
 
         Returns:
-            Tuple of (success: bool, messages: List[str])
+            TradeResult with success status, messages, and any errors
         """
-        messages = []
+        result = TradeResult(success=False)
 
         if not self.binance_client:
-            messages.append("⚠️ No Binance client available for earn redemption check")
-            return False, messages
+            result.messages.append("⚠️ No Binance client available for earn redemption")
+            result.errors.append("No Binance client available")
+            return result
+
+        if self.config_manager and self.config_manager.is_testnet_mode:
+            result.messages.append(
+                "⚠️ TESTNET MODE: Simple Earn operations not supported."
+            )
+            result.messages.append(
+                f"✅ [DRY RUN] Would redeem {amount:.8f} {asset} from Simple Earn"
+            )
+            result.success = True
+            return result
 
         try:
-            # Get current spot balance
-            spot_balance = float(
-                self.binance_client.get_asset_balance(asset=asset).get("free", 0.0)
+            # First, we need to find the product ID for this asset
+            # Get all flexible products
+            products = self.binance_client.get_simple_earn_flexible_product_list(
+                asset=asset
             )
 
-            if spot_balance >= required_amount:
-                messages.append(
-                    f"✅ Sufficient {asset} balance in spot wallet ({spot_balance:.8f} >= {required_amount:.8f})"
+            # Find the product ID for the requested asset
+            product_id = None
+            for product in products.get("rows", []):
+                if product.get("asset") == asset:
+                    product_id = product.get("productId")
+                    break
+
+            if not product_id:
+                result.messages.append(
+                    f"❌ Could not find Simple Earn product for {asset}"
                 )
-                return True, messages
+                result.errors.append(f"No Simple Earn product found for {asset}")
+                return result
 
-            # Need to redeem from earn
-            deficit = required_amount - spot_balance
-            messages.append(
-                f"⚠️ Insufficient {asset} in spot wallet. Need to redeem {deficit:.8f} from Simple Earn."
-            )
-
-            if self.config_manager and self.config_manager.is_testnet_mode:
-                messages.append(
-                    "⚠️ TESTNET MODE: Simple Earn operations not supported. Assuming sufficient balance."
-                )
-                return True, messages
-
-            # Get Simple Earn balance
-            try:
-                earn_products = self.binance_client.get_simple_earn_flexible_product_list()
-                earn_balance = 0.0
-
-                for product in earn_products:
-                    if product.get("asset") == asset:
-                        earn_balance += float(product.get("totalAmount", 0.0))
-
-                if earn_balance < deficit:
-                    messages.append(
-                        f"❌ Insufficient {asset} in Simple Earn ({earn_balance:.8f} < {deficit:.8f})"
+            if is_live:
+                # Execute actual redemption
+                redemption_result = (
+                    self.binance_client.redeem_simple_earn_flexible_product(
+                        productId=product_id, amount=str(amount)
                     )
-                    return False, messages
-
-                messages.append(
-                    f"📤 Attempting to redeem {deficit:.8f} {asset} from Simple Earn..."
                 )
 
-                if is_live:
-                    # Execute the redemption
-                    redemption = self.binance_client.redeem_simple_earn_flexible_product(
-                        productId=product.get("productId"),
-                        amount=f"{deficit:.8f}"
+                if redemption_result.get("success", False):
+                    result.success = True
+                    result.messages.append(
+                        f"✅ Successfully redeemed {amount:.8f} {asset} from Simple Earn"
                     )
-                    messages.append(f"✅ LIVE redemption executed: {redemption}")
-                    self.logger.info(f"LIVE Simple Earn redemption: {redemption}")
+                    result.messages.append(
+                        f"Redemption ID: {redemption_result.get('redeemId')}"
+                    )
                 else:
-                    messages.append(
-                        f"✅ [DRY RUN] Would redeem {deficit:.8f} {asset} from Simple Earn"
+                    result.messages.append(
+                        f"❌ Failed to redeem {amount:.8f} {asset} from Simple Earn"
                     )
-                    self.logger.info(
-                        f"[DRY RUN] Would redeem {deficit:.8f} {asset} from Simple Earn"
-                    )
-
-                return True, messages
-
-            except Exception as e:
-                messages.append(f"❌ Error checking/redeeming from Simple Earn: {e}")
-                self.logger.error(f"Error with Simple Earn redemption: {e}")
-                return False, messages
+                    result.errors.append(f"Redemption failed: {redemption_result}")
+            else:
+                # Dry run - just show what would happen
+                result.success = True
+                result.messages.append(
+                    f"✅ [DRY RUN] Would redeem {amount:.8f} {asset} from Simple Earn product {product_id}"
+                )
 
         except Exception as e:
-            messages.append(f"❌ Error checking spot balance for {asset}: {e}")
-            self.logger.error(f"Error checking spot balance for {asset}: {e}")
-            return False, messages
+            result.messages.append(f"❌ Error during redemption: {str(e)}")
+            result.errors.append(str(e))
+            self.logger.error(
+                f"Error during earn redemption for {asset}: {e}", exc_info=True
+            )
+
+        return result
 
     def _execute_directional_trade(
         self, trade: Dict[str, Any], client: Client
@@ -357,21 +362,8 @@ class TradeExecutor:
                     )
                     continue
 
-                # Check if redemption from Earn is needed
-                redemption_success, redemption_messages = (
-                    self._redeem_from_earn_if_needed(
-                        asset=symbol,
-                        required_amount=adjusted_quantity,
-                        is_live=is_live,
-                    )
-                )
-                result.messages.extend(redemption_messages)
-
-                if not redemption_success:
-                    result.messages.append(
-                        f"⚠️ SKIPPING profit-taking for {symbol} due to redemption check failure."
-                    )
-                    continue
+                # No automatic redemption from Earn - let the trade fail naturally if insufficient balance
+                # Users can manually redeem using the direct redemption functionality if needed
 
                 result.messages.append(
                     f"\n💰 Executing profit-taking SELL for {adjusted_quantity:.8f} {symbol} ({take_percentage:.0f}% of gains)..."
@@ -389,7 +381,9 @@ class TradeExecutor:
 
                     # Record trade using data manager
                     if self.data_synchronizer:
-                        current_price = self.data_synchronizer._get_current_prices([symbol]).get(symbol, 0)
+                        current_price = self.data_synchronizer._get_current_prices(
+                            [symbol]
+                        ).get(symbol, 0)
                     else:
                         current_price = 0
 
@@ -415,7 +409,9 @@ class TradeExecutor:
 
                     # Record simulated trade
                     if self.data_synchronizer:
-                        current_price = self.data_synchronizer._get_current_prices([symbol]).get(symbol, 0)
+                        current_price = self.data_synchronizer._get_current_prices(
+                            [symbol]
+                        ).get(symbol, 0)
                     else:
                         current_price = 0
 
@@ -511,7 +507,9 @@ class TradeExecutor:
             try:
                 if self.binance_client:
                     spot_bal = float(
-                        self.binance_client.get_asset_balance(asset=symbol).get("free", 0.0)
+                        self.binance_client.get_asset_balance(asset=symbol).get(
+                            "free", 0.0
+                        )
                     )
                 else:
                     spot_bal = 0.0
@@ -652,21 +650,8 @@ class TradeExecutor:
                         )
                         continue
 
-                    # Check earn redemption
-                    redemption_success, redemption_messages = (
-                        self._redeem_from_earn_if_needed(
-                            asset=symbol,
-                            required_amount=adjusted_quantity,
-                            is_live=is_live,
-                        )
-                    )
-                    result.messages.extend(redemption_messages)
-
-                    if not redemption_success:
-                        result.messages.append(
-                            f"⚠️ SKIPPING SELL for {symbol} due to redemption check failure."
-                        )
-                        continue
+                    # No automatic redemption from Earn - let the trade fail naturally if insufficient balance
+                    # Users can manually redeem using the direct redemption functionality if needed
 
                     result.messages.append(
                         f"\nPreparing MARKET SELL for {adjusted_quantity:.8f} {symbol}..."
@@ -749,7 +734,9 @@ class TradeExecutor:
                             # Record trade (approx quantity using current price)
                             price_now = 0
                             if self.data_synchronizer:
-                                prices = self.data_synchronizer._get_current_prices([symbol])
+                                prices = self.data_synchronizer._get_current_prices(
+                                    [symbol]
+                                )
                                 price_now = prices.get(symbol, 0.0) or 0.0
                             qty = (usd_value / price_now) if price_now > 0 else 0.0
 
@@ -782,7 +769,9 @@ class TradeExecutor:
 
                         price_now = 0
                         if self.data_synchronizer:
-                            prices = self.data_synchronizer._get_current_prices([symbol])
+                            prices = self.data_synchronizer._get_current_prices(
+                                [symbol]
+                            )
                             price_now = prices.get(symbol, 0.0) or 0.0
                         qty = (usd_value / price_now) if price_now > 0 else 0.0
 
@@ -862,7 +851,7 @@ class TradeExecutor:
                     result.messages.append(f"LIVE BUY ORDER PLACED: {order}")
                     result.data["order"] = order
                 else:
-                    result.messages.append(f"(Dry Run) BUY Trade was not placed.")
+                    result.messages.append("(Dry Run) BUY Trade was not placed.")
                 result.success = True
 
             elif trade_type == "SELL":
@@ -900,7 +889,7 @@ class TradeExecutor:
                     result.messages.append(f"LIVE SELL ORDER PLACED: {order}")
                     result.data["order"] = order
                 else:
-                    result.messages.append(f"(Dry Run) SELL Trade was not placed.")
+                    result.messages.append("(Dry Run) SELL Trade was not placed.")
                 result.success = True
 
             result.messages.append(
