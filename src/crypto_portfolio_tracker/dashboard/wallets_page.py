@@ -167,15 +167,6 @@ def _display_wallet_balances(metrics, dashboard=None):
                     columns={"asset": "Asset", "free": "Balance"}
                 )
                 st.dataframe(funding_display, use_container_width=True)
-
-                # Add transfer widget for USDT if available
-                usdt_funding = non_zero_funding[non_zero_funding["asset"] == "USDT"]
-                if not usdt_funding.empty:
-                    usdt_balance = float(usdt_funding.iloc[0]["free"])
-                    if usdt_balance > 0:
-                        st.markdown("---")
-                        st.markdown("#### 🔄 Transfer Funds")
-                        render_transfer_widget(None, context="wallets_page")
             else:
                 st.info("No non-zero balances in Funding wallet.")
         else:

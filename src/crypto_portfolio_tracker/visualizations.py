@@ -786,7 +786,7 @@ class Visualizer:
                 zeroline=True,
                 zerolinecolor="lightgray",
                 tickmode="linear",
-                dtick=20,
+                dtick=50,
                 tickfont=dict(size=12),
                 tickformat="$,.0f",
             ),
