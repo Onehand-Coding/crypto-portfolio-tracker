@@ -17,63 +17,23 @@ from .utils import calculate_fifo_cost_basis
 class DataManager:
     """
     Handles all data persistence and transaction management operations including:
-    - Strategy state loading and saving
     - Transaction recording
     - Holdings updates with FIFO cost basis
     - Portfolio snapshots
     - Data cleanup operations
     """
 
-    def __init__(self, config: Dict[str, Any], db_manager=None,
-                 strategy_state_path: Optional[Path] = None):
+    def __init__(self, config: Dict[str, Any], db_manager=None):
         """
         Initialize DataManager with necessary dependencies.
 
         Args:
             config: Configuration dictionary
             db_manager: Database manager instance
-            strategy_state_path: Path to strategy state JSON file
         """
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.db_manager = db_manager
-        self.strategy_state_path = strategy_state_path
-        self.strategy_states = {}
-
-        # Load strategy states if path is provided
-        if self.strategy_state_path:
-            self.strategy_states = self._load_strategy_state()
-
-    def _load_strategy_state(self) -> Dict[str, Any]:
-        """Loads the state of all strategies from a JSON file."""
-        if not self.strategy_state_path or not self.strategy_state_path.exists():
-            return {}
-
-        try:
-            with open(self.strategy_state_path, "r") as f:
-                states = json.load(f)
-                self.logger.info(
-                    f"Loaded strategy states from {self.strategy_state_path}"
-                )
-                return states
-        except (json.JSONDecodeError, IOError) as e:
-            self.logger.error(
-                f"Error loading strategy state file: {e}. Starting fresh."
-            )
-            return {}
-
-    def _save_strategy_state(self):
-        """Saves the current state of all strategies to a JSON file."""
-        if not self.strategy_state_path:
-            self.logger.warning("No strategy state path configured, cannot save")
-            return
-
-        try:
-            with open(self.strategy_state_path, "w") as f:
-                json.dump(self.strategy_states, f, indent=4)
-                self.logger.info(f"Saved strategy states to {self.strategy_state_path}")
-        except IOError as e:
-            self.logger.error(f"Error saving strategy state file: {e}")
 
     def _make_tx_hash(
         self, source: str, batch_id: str, symbol: str, side: str,
@@ -287,33 +247,6 @@ class DataManager:
         else:
             self.logger.warning("Database manager not available for cleanup")
 
-    def get_strategy_state(self, strategy_name: str) -> Dict[str, Any]:
-        """Get the state for a specific strategy."""
-        return self.strategy_states.get(strategy_name, {})
-
-    def set_strategy_state(self, strategy_name: str, state: Dict[str, Any]):
-        """Set the state for a specific strategy."""
-        self.strategy_states[strategy_name] = state
-        self._save_strategy_state()
-
-    def update_strategy_state(self, strategy_name: str, updates: Dict[str, Any]):
-        """Update specific fields in a strategy's state."""
-        if strategy_name not in self.strategy_states:
-            self.strategy_states[strategy_name] = {}
-
-        self.strategy_states[strategy_name].update(updates)
-        self._save_strategy_state()
-
-    def clear_strategy_state(self, strategy_name: str):
-        """Clear the state for a specific strategy."""
-        if strategy_name in self.strategy_states:
-            del self.strategy_states[strategy_name]
-            self._save_strategy_state()
-
-    def get_all_strategy_states(self) -> Dict[str, Any]:
-        """Get all strategy states."""
-        return self.strategy_states.copy()
-
     def backup_data(self) -> Dict[str, Any]:
         """Create a backup of important data."""
         if not self.db_manager:
@@ -322,7 +255,6 @@ class DataManager:
 
         backup_data = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "strategy_states": self.strategy_states,
             "transactions_count": len(self.db_manager.get_all_transactions()),
             "holdings_count": len(self.db_manager.get_holdings()),
             "snapshots_count": len(self.db_manager.get_all_snapshots()),
@@ -331,8 +263,3 @@ class DataManager:
         self.logger.info(f"Created data backup summary: {backup_data}")
         return backup_data
 
-    def restore_strategy_states(self, states: Dict[str, Any]):
-        """Restore strategy states from backup."""
-        self.strategy_states = states.copy()
-        self._save_strategy_state()
-        self.logger.info(f"Restored {len(states)} strategy states")

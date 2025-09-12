@@ -115,25 +115,6 @@ class TestCryptoPortfolioTracker:
                 result = await tracker.sync_data()
                 assert result is False
 
-    def test_save_and_load_strategy_state(self, tracker):
-        """Test strategy state persistence."""
-        # Check if the method exists and has correct signature
-        if hasattr(tracker, "_save_strategy_state"):
-            # Mock the file operations
-            with patch("builtins.open", create=True) as mock_open:
-                mock_open.return_value.__enter__.return_value.write.return_value = None
-
-                state = {"test": "data"}
-                # Call with correct number of arguments
-                try:
-                    tracker._save_strategy_state("test_strategy", state)
-                    assert True  # If no error, test passes
-                except TypeError:
-                    # If method has different signature, skip
-                    pytest.skip("_save_strategy_state has different signature")
-        else:
-            pytest.skip("_save_strategy_state method not available")
-
     def test_export_functions(self, tracker):
         """Test export functionality."""
         data = pd.DataFrame({"test": [1, 2, 3]})

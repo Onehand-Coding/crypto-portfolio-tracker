@@ -114,29 +114,61 @@ def _display_metrics(metrics):
     else:
         st.info("No other holdings data available.")
 
-    # Futures Wallet Summary
-    st.markdown("#### 💹 Futures Wallet Summary")
-    if metrics.get("futures_balances"):
-        fut_df = pd.DataFrame(metrics["futures_balances"])
-        fut_clean = clean_futures_balances(fut_df)
-        if fut_clean is not None and not fut_clean.empty:
-            st.dataframe(fut_clean, use_container_width=True)
-        else:
-            st.info("No futures balances found.")
-    else:
-        st.info("No futures balances found.")
+    # Futures Wallet
+    st.markdown("#### 💹 Futures Wallet")
+    futures_balances = metrics.get("futures_balances", [])
+    if futures_balances:
+        futures_df = pd.DataFrame(futures_balances)
+        if not futures_df.empty:
+            # Filter for non-zero balances
+            futures_df["balance"] = pd.to_numeric(
+                futures_df["balance"], errors="coerce"
+            )
+            non_zero_futures = futures_df[futures_df["balance"] > 1e-8]
 
-    # Funding Wallet Summary
-    st.markdown("#### 💰 Funding Wallet Summary")
-    if metrics.get("funding_balances"):
-        fund_df = pd.DataFrame(metrics["funding_balances"])
-        fund_clean = clean_funding_balances(fund_df)
-        if fund_clean is not None and not fund_clean.empty:
-            st.dataframe(fund_clean, use_container_width=True)
+            if not non_zero_futures.empty:
+                futures_display = non_zero_futures[["asset", "balance"]].copy()
+                futures_display = futures_display.rename(
+                    columns={"asset": "Asset", "balance": "Balance"}
+                )
+                # Format numeric values as strings for left alignment
+                futures_display["Balance"] = futures_display["Balance"].apply(
+                    lambda x: f"{float(x):,.8f}" if pd.notna(x) else "0.00000000"
+                )
+                st.dataframe(futures_display, use_container_width=True)
+            else:
+                st.info("No non-zero balances in Futures wallet.")
         else:
-            st.info("No funding balances found.")
+            st.info("No Futures balances found.")
     else:
-        st.info("No funding balances found.")
+        st.info("No Futures balances found.")
+
+    # Funding Wallet
+    st.markdown("#### 💵 Funding Wallet")
+    funding_balances = metrics.get("funding_balances", [])
+    if funding_balances:
+        funding_df = pd.DataFrame(funding_balances)
+        if not funding_df.empty:
+            # Filter for non-zero balances
+            funding_df["free"] = pd.to_numeric(funding_df["free"], errors="coerce")
+            non_zero_funding = funding_df[funding_df["free"] > 1e-8]
+
+            if not non_zero_funding.empty:
+                funding_display = non_zero_funding[["asset", "free"]].copy()
+                funding_display = funding_display.rename(
+                    columns={"asset": "Asset", "free": "Balance"}
+                )
+                # Format numeric values as strings for left alignment
+                funding_display["Balance"] = funding_display["Balance"].apply(
+                    lambda x: f"{float(x):,.8f}" if pd.notna(x) else "0.00000000"
+                )
+                st.dataframe(funding_display, use_container_width=True)
+            else:
+                st.info("No non-zero balances in Funding wallet.")
+        else:
+            st.info("No Funding balances found.")
+    else:
+        st.info("No Funding balances found.")
 
 
 def render_home_page(dashboard):

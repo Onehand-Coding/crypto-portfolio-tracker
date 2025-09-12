@@ -28,12 +28,12 @@ from enum import Enum
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pandas_ta")
 
-from . import trading_strategies
+# from . import trading_strategies
 from .portfolio_tracker import CryptoPortfolioTracker, ExecutionMode
 from .config import ConfigManager
 from .exceptions import NetworkOperationError, NetworkUnavailableError
 from .rebalancing_backtester import RebalancingBacktester
-from .strategy_backtester import StrategyBacktester
+# from .strategy_backtester import StrategyBacktester
 from .crypto_trend_analyzer import CryptoTrendAnalyzer
 from . import __version__
 
@@ -479,12 +479,6 @@ def print_configuration(tracker: CryptoPortfolioTracker):
         safe_config["main_api_keys"] = {
             k: "********" for k in safe_config["main_api_keys"]
         }
-    if "sub_accounts" in safe_config:
-        for account in safe_config["sub_accounts"]:
-            if "binance_key" in account:
-                account["binance_key"] = "********"
-            if "binance_secret" in account:
-                account["binance_secret"] = "********"
     print(json.dumps(safe_config, indent=2))
     print("=" * 50)
 
@@ -908,7 +902,7 @@ async def run_rebalancing_menu(tracker: CryptoPortfolioTracker):
                     else:
                         execution_mode = ExecutionMode.CONFIRM
 
-                    result = await tracker.execute_rebalancing_trades_core(
+                    result = await tracker.execute_rebalancing_trades(
                         suggestions_df,
                         earn_balances,
                         confirmation_callback=cli_confirmation,
@@ -940,375 +934,6 @@ async def run_rebalancing_menu(tracker: CryptoPortfolioTracker):
     except Exception as e:
         logger.error(f"Unexpected error in rebalancing: {e}", exc_info=True)
         print(f"❌ Unexpected error: {e}")
-
-
-async def run_trading_strategy_backtest(tracker: CryptoPortfolioTracker):
-    """
-    Handles the user flow for running a directional strategy backtest.
-    """
-    print("\n--- 🧪 Directional Strategy Backtesting Mode ---")
-    loop = asyncio.get_event_loop()
-
-    try:
-        analyzer = CryptoTrendAnalyzer(
-            config=tracker.config, binance_client=tracker.binance_client
-        )
-        backtester = StrategyBacktester(config=tracker.config, analyzer=analyzer)
-    except Exception as e:
-        logger.error(f"Failed to initialize backtesting components: {e}", exc_info=True)
-        print(
-            "❌ Failed to initialize backtesting components. Returning to main menu..."
-        )
-        return
-
-    # Strategy Selection
-    available_strategies = {
-        name: obj
-        for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
-        if issubclass(obj, trading_strategies.Strategy)
-        and obj is not trading_strategies.Strategy
-    }
-    if not available_strategies:
-        print("❌ No strategy classes found in 'src/trading_strategies.py'.")
-        return
-
-    print("\nAvailable Strategies:")
-    strategy_list = list(available_strategies.keys())
-    for i, name in enumerate(strategy_list):
-        print(f"  {i + 1}. {name}")
-
-    strategy_to_run = None
-    try:
-        while strategy_to_run is None:
-            choice_str = await loop.run_in_executor(
-                None,
-                input,
-                f"Select the strategy to backtest (1-{len(strategy_list)}): ",
-            )
-            if not choice_str:
-                print("Returning to main menu...")
-                return
-            try:
-                choice = int(choice_str) - 1
-                if 0 <= choice < len(strategy_list):
-                    strategy_name = strategy_list[choice]
-                    strategy_class = available_strategies[strategy_name]
-                    print(f"\nConfiguring strategy: {strategy_name}")
-                    user_params = (
-                        strategy_class.get_user_params()
-                        if hasattr(strategy_class, "get_user_params")
-                        else {}
-                    )
-                    strategy_to_run = strategy_class(analyzer=analyzer, **user_params)
-                else:
-                    print("❌ Invalid selection. Please enter a valid number.")
-            except (ValueError, IndexError):
-                print("❌ Invalid input. Please enter a number.")
-
-        print(f"\nSelected Strategy: {strategy_to_run.name}")
-
-        # Get period first
-        period_str = await loop.run_in_executor(
-            None, input, "Enter backtest period (e.g., '3y', '60d', default: '3y'): "
-        )
-        period = period_str if period_str else "3y"
-
-        # Interval Selection - Use strategy's preferred interval
-        if (
-            hasattr(strategy_to_run, "valid_intervals")
-            and strategy_to_run.valid_intervals
-        ):
-            # For intraday strategies, use the first valid interval
-            if strategy_to_run.strategy_type == "day":
-                interval = strategy_to_run.valid_intervals[
-                    0
-                ]  # Use 1h for ORB strategies
-                # For intraday strategies, limit period to 60 days to avoid data limitations
-                if period == "3y":
-                    period = "60d"
-                    print(
-                        "Note: Using 60-day period for intraday strategy (3y not available for intraday data)"
-                    )
-            else:
-                interval = "1d"  # Default for swing strategies
-        else:
-            interval = "1d"
-
-        print(f"Using interval: {interval}")
-        print(f"Using period: {period}")
-
-        # Coin Selection
-        while True:
-            symbol_to_test = await loop.run_in_executor(
-                None, input, "Enter the symbol to backtest (e.g., BTC-USD): "
-            )
-            symbol_to_test = symbol_to_test.strip().upper()
-            if not symbol_to_test:
-                print("Returning to main menu...")
-                return
-            if re.match(r"^[A-Z0-9\-]{3,15}$", symbol_to_test):
-                break
-            print(
-                "❌ Invalid symbol format. Please enter a valid symbol (e.g., BTC-USD)."
-            )
-
-        # Initial capital
-        try:
-            initial_capital_str = await loop.run_in_executor(
-                None, input, "Enter initial capital (default: 10000): "
-            )
-            initial_capital = (
-                float(initial_capital_str) if initial_capital_str else 10000.0
-            )
-        except ValueError:
-            print("❌ Invalid input. Using default initial capital: 10000.")
-            initial_capital = 10000.0
-
-        await backtester.run(
-            strategy=strategy_to_run,
-            symbol=symbol_to_test,
-            initial_capital=initial_capital,
-            period=period,
-            interval=interval,
-        )
-        backtester.generate_report()
-
-    except (KeyboardInterrupt, EOFError):
-        print("\nReturning to main menu...")
-        return
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        return
-
-
-async def run_live_strategy(tracker: CryptoPortfolioTracker):
-    """
-    Master workflow for running a directional strategy for live signal generation and execution.
-    """
-    print("\n--- 🤖 Live Trading Strategy Runner ---")
-    loop = asyncio.get_event_loop()
-    try:
-        # 1. Select Account
-        accounts = [
-            {
-                "name": "Main Account",
-                "type": "main",
-                **tracker.config.get("main_api_keys", {}),
-            }
-        ]
-        sub_accounts = tracker.config.get("sub_accounts", [])
-        for sub in sub_accounts:
-            # Infer account type from name
-            if "swing" in sub["name"].lower():
-                sub["type"] = "swing"
-            elif "day" in sub["name"].lower():
-                sub["type"] = "day"
-            else:
-                sub["type"] = "main"  # Default if not specified
-            accounts.append(sub)
-
-        if not any(acc.get("binance_key") for acc in accounts):
-            print("❌ No API keys found for any account. Cannot run live strategies.")
-            return
-
-        print("\nSelect account to trade on:")
-        for i, acc in enumerate(accounts):
-            print(f"  {i + 1}. {acc['name']} (Type: {acc.get('type', 'N/A')})")
-
-        selected_account = None
-        while selected_account is None:
-            choice_str = await loop.run_in_executor(
-                None, input, f"Select account (1-{len(accounts)}): "
-            )
-            choice_str = choice_str.strip()
-            if not choice_str:
-                print("Returning to main menu...")
-                return
-            try:
-                choice = int(choice_str) - 1
-                if 0 <= choice < len(accounts):
-                    selected_account = accounts[choice]
-                else:
-                    print("❌ Invalid selection. Please enter a valid number.")
-            except (ValueError, IndexError):
-                print("❌ Invalid input. Please enter a number.")
-
-        print(f"\nTrading on account: {selected_account['name']}")
-        live_client = tracker._init_binance_client(
-            api_key=selected_account.get("binance_key"),
-            api_secret=selected_account.get("binance_secret"),
-        )
-        if not live_client:
-            print(
-                f"❌ Failed to initialize Binance client for account: {selected_account['name']}. Check API keys."
-            )
-            return
-
-        # 2. Select and Configure Strategy based on account type
-        all_strategies = {
-            name: obj
-            for name, obj in inspect.getmembers(trading_strategies, inspect.isclass)
-            if issubclass(obj, trading_strategies.Strategy)
-            and obj is not trading_strategies.Strategy
-        }
-
-        account_type = selected_account.get("type")
-        if account_type == "main":
-            available_strategies = all_strategies
-        elif account_type == "swing":
-            available_strategies = {
-                k: v
-                for k, v in all_strategies.items()
-                if v.strategy_type in ["swing", "general"]
-            }
-        elif account_type == "day":
-            available_strategies = {
-                k: v
-                for k, v in all_strategies.items()
-                if v.strategy_type in ["day", "general"]
-            }
-        else:
-            available_strategies = {}
-
-        if not available_strategies:
-            print(
-                f"❌ No suitable strategies found for an account of type '{account_type}'."
-            )
-            return
-
-        print("\nAvailable Strategies:")
-        strategy_list = list(available_strategies.keys())
-        for i, name in enumerate(strategy_list):
-            print(f"  {i + 1}. {name}")
-
-        strategy_class = None
-        user_params = {}
-        strategy_name = ""
-        while strategy_class is None:
-            choice_str = await loop.run_in_executor(
-                None, input, f"Select strategy to run (1-{len(strategy_list)}): "
-            )
-            choice_str = choice_str.strip()
-            if not choice_str:
-                print("Returning to main menu...")
-                return
-            try:
-                choice = int(choice_str) - 1
-                if 0 <= choice < len(strategy_list):
-                    strategy_name = strategy_list[choice]
-                    strategy_class = available_strategies[strategy_name]
-                    print(f"\nConfiguring strategy: {strategy_name}")
-                    if hasattr(strategy_class, "get_user_params"):
-                        user_params = strategy_class.get_user_params()
-                else:
-                    print("❌ Invalid selection. Please enter a valid number.")
-            except (ValueError, IndexError):
-                print("❌ Invalid input. Please enter a number.")
-
-        # Create a temporary instance just to get the name for the print message
-        temp_strategy_for_name = strategy_class(analyzer=None, **user_params)
-        print(
-            f"\n🔄 Running '{temp_strategy_for_name.name}' to generate live signals..."
-        )
-
-        # 3. Generate Signals for all portfolio assets
-        target_coins = list(tracker.config.get("target_allocation", {}).keys())
-        signals_to_execute = []
-        analyzer = CryptoTrendAnalyzer(
-            config=tracker.config, binance_client=live_client
-        )
-
-        for coin in target_coins:
-            yf_ticker = f"{coin}-USD"
-            analyzer.set_symbol(yf_ticker)
-            state_key = f"{selected_account['name']}_{strategy_name}_{coin}"
-            previous_state = tracker.strategy_states.get(state_key)
-
-            strategy_instance = strategy_class(
-                analyzer=analyzer, state=previous_state, **user_params
-            )
-
-            interval = strategy_instance.valid_intervals[0]
-            # Use a shorter period for live trading to be faster
-            period = "7d" if "m" in interval or "h" in interval else "1y"
-            data = await analyzer.fetch_crypto_data_async(
-                yf_ticker, period=period, interval=interval
-            )
-
-            if data is None or data.empty:
-                tracker.logger.warning(
-                    f"Could not fetch data for {yf_ticker}, cannot generate signal."
-                )
-                continue
-
-            signal, size, reason = await strategy_instance.generate_signal(data)
-            tracker.strategy_states[state_key] = strategy_instance.get_state()
-
-            if signal in ["BUY", "SELL"]:
-                signals_to_execute.append(
-                    {"Symbol": coin, "Signal": signal, "Size": size, "Reason": reason}
-                )
-
-        tracker._save_strategy_state()
-
-        # 4. Present Trades and Ask for Execution
-        if not signals_to_execute:
-            print(
-                "\n✅ Analysis complete. No new BUY or SELL signals generated by the strategy."
-            )
-            return
-
-        is_live = tracker.config_manager.is_live
-        is_testnet = tracker.config_manager.is_testnet_mode
-
-        print("\n" + "=" * 80)
-        print("🚨 PROPOSED TRADES - PLEASE REVIEW CAREFULLY 🚨")
-        print("=" * 80)
-
-        if is_testnet:
-            print(
-                "🟡🟡🟡 NOTE: Connected to TESTNET. No real funds will be used. 🟡🟡🟡"
-            )
-
-        if is_live:
-            print(
-                "🔴🔴🔴 WARNING: Live Trading is ENABLED. Real orders will be placed. 🔴🔴🔴"
-            )
-        else:
-            print("🟡🟡🟡 NOTE: Live Trading is DISABLED. This is a DRY RUN. 🟡🟡🟡")
-
-        print("=" * 80)
-        for trade in signals_to_execute:
-            print(f"-> {trade['Signal']} {trade['Symbol']} (Reason: {trade['Reason']})")
-        print("=" * 80)
-
-        confirm = await loop.run_in_executor(
-            None, input, "Type 'EXECUTE' to proceed with the trades listed above: "
-        )
-        if confirm.strip() != "EXECUTE":
-            print("🛑 Trade execution cancelled by user.")
-            return
-
-        # 5. Execute Trades
-        for trade in signals_to_execute:
-            try:
-                # Use the updated _execute_directional_trade method
-                result = tracker._execute_directional_trade(trade, live_client)
-                # Print messages from the result
-                for msg in result.messages:
-                    print(msg)
-                if not result.success:
-                    for err in result.errors:
-                        print(f"   - {err}")
-            except Exception as e:
-                print(f"❌ Error executing trade for {trade['Symbol']}: {e}")
-
-    except (KeyboardInterrupt, EOFError):
-        print("\nReturning to main menu...")
-        return
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        return
 
 
 async def run_chart_selection_menu(tracker: CryptoPortfolioTracker):
@@ -1628,27 +1253,7 @@ async def run_backtesting_menu(tracker: CryptoPortfolioTracker):
     """Runs the backtesting menu."""
     loop = asyncio.get_event_loop()
     try:
-        while True:
-            print("\n--- 🧪 Backtesting ---\n")
-            print("Select a backtest type:")
-            print("1. Rebalancing Backtest")
-            print("2. Strategy Backtest")
-
-            choice = await loop.run_in_executor(
-                None, input, "Select option (1-2) or Enter to return: "
-            )
-            choice = choice.strip()
-            if not choice:
-                print("Returning to main menu...")
-                break
-            if choice == "1":
-                await run_rebalancing_backtest(tracker)
-            elif choice == "2":
-                await run_trading_strategy_backtest(tracker)
-            else:
-                print(
-                    "❌ Invalid option. Please select 1 or 2, or press Enter to return."
-                )
+        await run_rebalancing_backtest(tracker)
     except (KeyboardInterrupt, EOFError):
         print("\nReturning to main menu...")
         return
@@ -1745,34 +1350,7 @@ async def run_trading_menu(tracker: CryptoPortfolioTracker):
 
     print()  # Add spacing
 
-    while True:
-        print("Select trading Mode:")
-        print("1. Manual Trade (Buy/Sell)")
-        print("2. Live Trading Strategy")
-        try:
-            sub_choice = await loop.run_in_executor(
-                None, input, "Select option (1-2) or Enter to return: "
-            )
-            sub_choice = sub_choice.strip()
-            if not sub_choice:
-                print("Returning to main menu...")
-                return
-            if sub_choice == "1":
-                await run_manual_trade_session(tracker)
-                return
-            elif sub_choice == "2":
-                await run_live_strategy(tracker)
-                return
-            else:
-                print(
-                    "❌ Invalid option. Please select 1 or 2, or press Enter to return."
-                )
-        except (KeyboardInterrupt, EOFError):
-            print("\nReturning to main menu...")
-            return
-        except Exception as e:
-            print(f"❌ Unexpected error: {e}")
-            return
+    await run_manual_trade_session(tracker)
 
 
 async def _run_integrated_profit_taking(

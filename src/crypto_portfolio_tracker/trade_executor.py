@@ -202,111 +202,6 @@ class TradeExecutor:
 
         return result
 
-    def _execute_directional_trade(
-        self, trade: Dict[str, Any], client: Client
-    ) -> TradeResult:
-        """Helper function to execute a single directional BUY or SELL trade."""
-        result = TradeResult(success=False)
-        symbol = trade["Symbol"]
-        signal = trade["Signal"]
-        size = trade.get("Size", 1.0)  # Default to 100% if not provided
-        trade_ticker = f"{symbol}USDT"
-        min_trade_usd = self.config.get("portfolio", {}).get("minimum_trade_usd", 10.0)
-        is_live = self.config.get("portfolio", {}).get("live_trading_enabled", False)
-
-        self.logger.info(
-            f"Executing {signal} for {symbol} (Size: {size:.2%}) on account via directional strategy. LIVE: {is_live}"
-        )
-
-        try:
-            if signal == "BUY":
-                usdt_balance = float(
-                    client.get_asset_balance(asset="USDT").get("free", 0.0)
-                )
-                trade_amount_usd = usdt_balance * size
-
-                if trade_amount_usd < min_trade_usd:
-                    result.messages.append(
-                        f"⚠️ SKIPPING BUY for {symbol}: Calculated trade size (${trade_amount_usd:,.2f}) is below minimum of ${min_trade_usd:,.2f}."
-                    )
-                    return result
-
-                result.messages.append(
-                    f"\nPreparing MARKET BUY for ${trade_amount_usd:,.2f} of {symbol}..."
-                )
-
-                if is_live:
-                    order = client.order_market_buy(
-                        symbol=trade_ticker, quoteOrderQty=f"{trade_amount_usd:.2f}"
-                    )
-                    result.messages.append(f"✅ LIVE BUY ORDER PLACED: {order}")
-                    self.logger.info(f"LIVE BUY ORDER PLACED: {order}")
-                    result.success = True
-                else:
-                    result.messages.append(
-                        f"✅ [DRY RUN] Market BUY order for ${trade_amount_usd:,.2f} of {trade_ticker} was not placed."
-                    )
-                    self.logger.info(
-                        f"[DRY RUN] Market BUY order for {trade_ticker} was not placed."
-                    )
-                    result.success = True
-
-            elif signal == "SELL":
-                asset_balance = float(
-                    client.get_asset_balance(asset=symbol).get("free", 0.0)
-                )
-                trade_quantity = asset_balance * size
-
-                # Get current price from data synchronizer
-                current_price = 0
-                if self.data_synchronizer:
-                    prices = self.data_synchronizer._get_current_prices([symbol])
-                    current_price = prices.get(symbol, 0)
-
-                if (trade_quantity * current_price) < min_trade_usd:
-                    result.messages.append(
-                        f"⚠️ SKIPPING SELL for {symbol}: Position value is below minimum trade size."
-                    )
-                    return result
-
-                result.messages.append(
-                    f"\nPreparing MARKET SELL for {trade_quantity:.8f} {symbol} ({size:.0%} of holding)..."
-                )
-
-                if is_live:
-                    order = client.order_market_sell(
-                        symbol=trade_ticker, quantity=f"{trade_quantity:.8f}"
-                    )
-                    result.messages.append(f"✅ LIVE SELL ORDER PLACED: {order}")
-                    self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
-                    result.success = True
-                else:
-                    result.messages.append(
-                        f"✅ [DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed."
-                    )
-                    self.logger.info(
-                        f"[DRY RUN] Market SELL order for {trade_quantity:.8g} {symbol} was not placed."
-                    )
-                    result.success = True
-
-        except BinanceAPIException as e:
-            result.messages.append(
-                f"❌ {('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}"
-            )
-            self.logger.error(
-                f"{('LIVE' if is_live else 'DRY RUN')} {signal} FAILED for {symbol}: {e}"
-            )
-            result.errors.append(str(e))
-        except Exception as e:
-            self.logger.error(
-                f"An unexpected error occurred executing directional trade for {symbol}: {e}",
-                exc_info=True,
-            )
-            result.messages.append(f"❌ Unexpected Error for {symbol}: {e}")
-            result.errors.append(str(e))
-
-        return result
-
     async def execute_profit_taking_trades(
         self, profit_trades: List[Dict[str, Any]], is_live: bool = False
     ) -> TradeResult:
@@ -455,7 +350,7 @@ class TradeExecutor:
 
         return result
 
-    async def execute_rebalancing_trades_core(
+    async def execute_rebalancing_trades(
         self,
         suggestions_df,
         earn_balances,

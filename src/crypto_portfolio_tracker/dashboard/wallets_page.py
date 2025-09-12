@@ -143,6 +143,10 @@ def _display_wallet_balances(metrics, dashboard=None):
                 futures_display = futures_display.rename(
                     columns={"asset": "Asset", "balance": "Balance"}
                 )
+                # Format numeric values as strings for left alignment
+                futures_display["Balance"] = futures_display["Balance"].apply(
+                    lambda x: f"{float(x):,.8f}" if pd.notna(x) else "0.00000000"
+                )
                 st.dataframe(futures_display, use_container_width=True)
             else:
                 st.info("No non-zero balances in Futures wallet.")
@@ -165,6 +169,10 @@ def _display_wallet_balances(metrics, dashboard=None):
                 funding_display = non_zero_funding[["asset", "free"]].copy()
                 funding_display = funding_display.rename(
                     columns={"asset": "Asset", "free": "Balance"}
+                )
+                # Format numeric values as strings for left alignment
+                funding_display["Balance"] = funding_display["Balance"].apply(
+                    lambda x: f"{float(x):,.8f}" if pd.notna(x) else "0.00000000"
                 )
                 st.dataframe(funding_display, use_container_width=True)
             else:
@@ -215,9 +223,9 @@ def _display_wallet_allocation(metrics):
 
             st.dataframe(allocation_display, use_container_width=True)
 
-            # Visual representation (only if we have non-zero values)
-            if len(non_zero_allocation) > 1 or non_zero_allocation.iloc[0]["Value"] > 0:
-                st.bar_chart(non_zero_allocation.set_index("Wallet")["Value"])
+            # # Visual representation (only if we have non-zero values)
+            # if len(non_zero_allocation) > 1 or non_zero_allocation.iloc[0]["Value"] > 0:
+            #     st.bar_chart(non_zero_allocation.set_index("Wallet")["Value"])
         else:
             st.info("No wallet values to display.")
     else:

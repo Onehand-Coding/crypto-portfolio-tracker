@@ -680,7 +680,6 @@ def render_settings_page(dashboard):
                         export_config = config.copy()
                         # Remove sensitive data
                         del export_config["main_api_keys"]
-                        del export_config["sub_accounts"]
                         del export_config["apis"]["coingecko"]["api_key"]
 
                         export_path_obj = Path(export_path)
@@ -710,7 +709,7 @@ def render_settings_page(dashboard):
                         required_keys = {
                             key: type(value)
                             for key, value in default_config.items()
-                            if key not in ["main_api_keys", "sub_accounts"]
+                            if key not in ["main_api_keys"]
                         }
 
                         validation_passed = True
@@ -753,9 +752,6 @@ def render_settings_page(dashboard):
                                     # Preserve sensitive data
                                     new_config["main_api_keys"] = config.get(
                                         "main_api_keys", {}
-                                    )
-                                    new_config["sub_accounts"] = config.get(
-                                        "sub_accounts", {}
                                     )
 
                                     config.update(new_config)

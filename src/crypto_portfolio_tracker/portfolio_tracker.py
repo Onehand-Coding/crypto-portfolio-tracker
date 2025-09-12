@@ -87,9 +87,6 @@ class CryptoPortfolioTracker:
             str(self.cache_dir / "fiat_exchange_rates")
         )
 
-        # Initialize strategy state
-        self.strategy_state_path = self.cache_dir.parent / "strategy_state.json"
-
         # --- Initialize NEW specialized classes ---
         # We need to initialize these before the Binance client because _init_binance_client delegates to data_synchronizer
         self.data_synchronizer = DataSynchronizer(
@@ -108,7 +105,6 @@ class CryptoPortfolioTracker:
         self.data_manager = DataManager(
             config=self.config,
             db_manager=self.db_manager,
-            strategy_state_path=self.strategy_state_path,
         )
 
         # Initialize Binance client (now that data_synchronizer exists)
@@ -224,14 +220,6 @@ class CryptoPortfolioTracker:
         """Get yFinance ticker - delegates to DataSynchronizer."""
         return self.data_synchronizer._get_yfinance_ticker(symbol)
 
-    def _load_strategy_state(self) -> Dict[str, Any]:
-        """Load strategy state - delegates to DataManager."""
-        return self.data_manager._load_strategy_state()
-
-    def _save_strategy_state(self):
-        """Save strategy state - delegates to DataManager."""
-        return self.data_manager._save_strategy_state()
-
     def _get_symbol_filters(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Get symbol filters - delegates to TradeExecutor."""
         return self.trade_executor._get_symbol_filters(symbol)
@@ -244,15 +232,9 @@ class CryptoPortfolioTracker:
 
     def redeem_from_earn(
         self, asset: str, amount: float, is_live: bool = False
-    ) -> "TradeResult":
+    ) -> TradeResult:
         """Redeem assets directly from earn - delegates to TradeExecutor."""
         return self.trade_executor.redeem_from_earn(asset, amount, is_live)
-
-    def _execute_directional_trade(
-        self, trade: Dict[str, Any], client: Client
-    ) -> TradeResult:
-        """Execute directional trade - delegates to TradeExecutor."""
-        return self.trade_executor._execute_directional_trade(trade, client)
 
     async def get_profit_taking_opportunities(
         self,
@@ -313,7 +295,7 @@ class CryptoPortfolioTracker:
             error=error,
         )
 
-    async def execute_rebalancing_trades_core(
+    async def execute_rebalancing_trades(
         self,
         suggestions_df,
         earn_balances,
@@ -321,7 +303,7 @@ class CryptoPortfolioTracker:
         execution_mode=ExecutionMode.CONFIRM,
     ):
         """Execute rebalancing trades - delegates to TradeExecutor."""
-        return await self.trade_executor.execute_rebalancing_trades_core(
+        return await self.trade_executor.execute_rebalancing_trades(
             suggestions_df, earn_balances, confirmation_callback, execution_mode
         )
 
@@ -493,30 +475,3 @@ class CryptoPortfolioTracker:
         return await self.data_synchronizer.transfer_futures_to_funding(
             asset, amount, is_live
         )
-
-    # Strategy state management methods - delegates to DataManager
-    def get_strategy_state(self, strategy_name: str) -> Dict[str, Any]:
-        """Get strategy state."""
-        return self.data_manager.get_strategy_state(strategy_name)
-
-    def set_strategy_state(self, strategy_name: str, state: Dict[str, Any]):
-        """Set strategy state."""
-        return self.data_manager.set_strategy_state(strategy_name, state)
-
-    def update_strategy_state(self, strategy_name: str, updates: Dict[str, Any]):
-        """Update strategy state."""
-        return self.data_manager.update_strategy_state(strategy_name, updates)
-
-    def clear_strategy_state(self, strategy_name: str):
-        """Clear strategy state."""
-        return self.data_manager.clear_strategy_state(strategy_name)
-
-    @property
-    def strategy_states(self):
-        """Get all strategy states."""
-        return self.data_manager.get_all_strategy_states()
-
-    @strategy_states.setter
-    def strategy_states(self, value):
-        """Set all strategy states."""
-        self.data_manager.restore_strategy_states(value)

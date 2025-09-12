@@ -23,26 +23,22 @@ A comprehensive, personal cryptocurrency portfolio tracking application built on
 ### ⚡ **Advanced Trading & Analysis**
 - **Intelligent Rebalancing Engine**:
   - **Accurate Calculations**: Rebalancing logic is calculated based only on the value of your core portfolio assets, not the entire wallet, leading to much more accurate and logical trade suggestions
-- **Live Trading & Rebalancing Execution**: Execute trades based on analysis (optional, disabled by default):
-  - **Granular Control**: Use one-by-one confirmation of each trade, or  approve all suggested trades at once.
-  - **Manual Trading**: A dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
-  - **Directional Strategy Trading**: Run technical strategies live with safety checks
+- **Rebalancing Execution**: Execute trades based on analysis.
+- **Manual Trading**: A dedicated menu option allows you to place ad-hoc BUY or SELL market orders for any asset, independent of rebalancing suggestions. Perfect for acting on news or opportunities
 - **Automated Profit-Taking**: Intelligently identifies opportunities to lock in gains when your portfolio is balanced. It uses a multi-factor scoring system to suggest selling a small portion of assets with significant unrealized profits, without touching your core position.
-- **Fund Transfers**: Easily transfer assets between your Funding and Spot wallets directly from the interface.
+- **Fund Transfers**: Easily transfer assets between your wallets directly from the interface.
 - **Dollar Cost Averaging (DCA)**: Automated investment strategy for consistent portfolio growth:
   - **Proportional DCA**: Distribute new funds to maintain current portfolio proportions, ideal for maintaining existing allocation ratios
   - **Target-Weight DCA**: Allocate new funds to reach your target allocation percentages, perfect for gradually achieving desired portfolio balance
   - **Smart Validation**: Automatic validation of DCA amounts against available USDT balance and minimum trade requirements
   - **Flexible Execution**: Choose between manual confirmation or automated execution with comprehensive trade preview
   - **Balance Integration**: Seamlessly combines Spot and Earn wallet balances for maximum buying power
-- **Dual Backtesting Engines**: Test and validate strategies with two specialized backtesters:
-  - **Directional Strategy Backtester**: Evaluate entry/exit signals from technical trading strategies
+- **Backtesting Engine**: Test and validate strategies with two specialized backtesters:
   - **Rebalancing Strategy Backtester**: Simulate long-term performance of allocation-based rebalancing
 - **Multi-Timeframe Technical Analysis**: Advanced `CryptoTrendAnalyzer` generates comprehensive reports:
   - Long-term (4-year), Swing (3-month), and Day (60-day) analysis
   - RSI, MACD, SMA crossovers, and momentum indicators
   - Confidence-weighted recommendations
-- **Pluggable Strategy Architecture**: Easily develop custom trading strategies by extending the base `Strategy` class
 
 ### 🔧 **Robust & Performance Optimized**
 - **Modern Python Toolchain**: Uses `uv` for lightning-fast dependency management and `ruff` for high-performance formatting and linting
@@ -80,7 +76,10 @@ crypto-portfolio-tracker/
 │   │       └── cache.db
 │   ├── db_backups/
 │   │   ├── portfolio.db.20250628_120358.bak
-│   │   └── ... (automated backups)
+│   │   └── ... (backups)
+│   ├── testnet_db_backups/
+│   │   ├── portfolio.db.20250628_120358.bak
+│   │   └── ... (testnet backups)
 │   ├── exports/
 │   │   ├── charts/
 │   │   ├── portfolio_report_*.xlsx
@@ -91,8 +90,8 @@ crypto-portfolio-tracker/
 │   ├── coingecko_mappings.json
 │   ├── connection_state.json
 │   ├── portfolio.db
-│   ├── strategy_state.json
 │   └── testnet_portfolio.db
+│
 ├── logs/
 │   └── portfolio_tracker.log
 ├── src/
@@ -140,10 +139,8 @@ crypto-portfolio-tracker/
 │       ├── rebalancing_backtester.py
 │       ├── rebalancing_logic.py
 │       ├── report_generator.py
-│       ├── strategy_backtester.py
 │       ├── symbol_mapper.py
 │       ├── trade_executor.py
-│       ├── trading_strategies.py
 │       ├── utils.py
 │       └── visualizations.py
 ├── tests/
@@ -765,18 +762,6 @@ This software is for **educational and informational purposes only** and does **
 - **Set `testnet_mode=false`** only when ready for real trading
 - **Double-check database indicator** in portfolio summaries
 
-### Strategy Performance Warning
-- **Default strategies are educational**: Not optimized for profit
-- **Backtesting may show underperformance**: Many strategies underperform buy-and-hold
-- **Past performance ≠ future results**: Historical data doesn't guarantee future success
-- **Do your own research**: Optimize strategies for your risk tolerance
-
-### Live Trading Risks
-- **Disabled by default**: Live trading requires explicit enablement
-- **Potential for losses**: Bugs or market conditions can cause financial loss
-- **Start small**: Test with minimal amounts first
-- **Active monitoring required**: Don't leave automated systems unattended
-
 ## ⚠️ Data Limitations & Important Notes
 
 ### Transaction Data Limitations
@@ -836,16 +821,13 @@ All files are organized in the `data/` directory:
 
 ### Analysis and Logs
 - **Technical Analysis**: `data/trend_reports/` (Detailed market analysis JSON files)
-- **Strategy State**: `data/strategy_state.json` (Trading strategy persistence)
 - **Application Logs**: `logs/portfolio_tracker.log` (Rotating logs with 5 backup files)
 
 ## 🚀 Roadmap
 
 ### Next Major Features
-- [ ] Real-time price alerts and notifications
 - [ ] Manual transaction import from CSV files
-- [ ] Additional exchange integrations
-- [ ] Multi-portfolio management for different strategies
+- [ ] Real-time price alerts and notifications
 - [ ] Advanced options and futures tracking
 - [ ] Integrate a gem sniper tool for new token detection and analysis (BNB Chain, honeypot check, liquidity, etc.)
 
@@ -869,8 +851,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **uv team** for revolutionary Python dependency management
 - **Ruff team** for high-performance Python tooling
 - **Python community** for excellent libraries and tools
-- **Contributors** who help improve the project
-- **Users** who provide feedback and bug reports
 
 ---
 

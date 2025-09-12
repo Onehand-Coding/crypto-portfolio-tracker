@@ -72,11 +72,9 @@ class ConfigManager:
             "api_key": os.getenv("TESTNET_API_KEY"),
             "api_secret": os.getenv("TESTNET_API_SECRET"),
         }
-        self.sub_accounts: List[Dict[str, Any]] = self._load_sub_accounts()
 
-        # --- Add API keys and sub accounts to config ---
+        # --- Add API keys to config ---
         self.config["main_api_keys"] = self.main_api_keys
-        self.config["sub_accounts"] = self.sub_accounts
 
         self.symbol_mapper = SymbolMapper(self.config)
 
@@ -219,34 +217,11 @@ class ConfigManager:
         logging.info("Configuration validation completed successfully")
         return config
 
-    def _load_sub_accounts(self) -> List[Dict[str, Any]]:
-        """Loads sub-account keys from environment variables."""
-        accounts = []
-        if os.getenv("SWING_API_KEY") and os.getenv("SWING_API_SECRET"):
-            accounts.append(
-                {
-                    "name": "Swing Trading Account",
-                    "type": "swing",
-                    "binance_key": os.getenv("SWING_API_KEY"),
-                    "binance_secret": os.getenv("SWING_API_SECRET"),
-                }
-            )
-        if os.getenv("DAY_API_KEY") and os.getenv("DAY_API_SECRET"):
-            accounts.append(
-                {
-                    "name": "Day Trading Account",
-                    "type": "day",
-                    "binance_key": os.getenv("DAY_API_KEY"),
-                    "binance_secret": os.getenv("DAY_API_SECRET"),
-                }
-            )
-        return accounts
+    
 
-    def get_binance_keys(
-        self, account_name: Optional[str] = "Main Account"
-    ) -> Dict[str, Optional[str]]:
+    def get_binance_keys(self) -> Dict[str, Optional[str]]:
         """
-        Returns the appropriate API keys based on testnet mode and selected account.
+        Returns the appropriate API keys based on testnet mode.
         """
         if self.is_testnet_mode:
             logging.debug(
@@ -254,20 +229,7 @@ class ConfigManager:
             )
             return self.testnet_api_keys
 
-        # Live mode logic
-        if account_name == "Main Account":
-            return self.main_api_keys
-
-        for acc in self.sub_accounts:
-            if acc["name"] == account_name:
-                return {
-                    "api_key": acc["binance_key"],
-                    "api_secret": acc["binance_secret"],
-                }
-
-        logging.warning(
-            f"No keys found for account '{account_name}'. Defaulting to main keys."
-        )
+        # Live mode - return main account keys
         return self.main_api_keys
 
     def _resolve_paths(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -312,7 +274,6 @@ class ConfigManager:
                 # Remove sensitive data from config.
                 config = self.config
                 del config["main_api_keys"]
-                del config["sub_accounts"]
                 del config["apis"]["coingecko"]["api_key"]
 
                 json.dump(self.config, f, indent=2)

@@ -215,32 +215,31 @@ def render_rebalancing_page(dashboard):
             else:
                 st.success("✅ Sufficient liquidity for rebalancing")
 
-            # Offer contextual transfer if funding has balance
-            if funding_usdt > 0:
-                # If suggestions exist, estimate required USDT for BUY actions
-                required_usdt = None
-                suggestions_df = st.session_state.get("rebalance_suggestions")
-                if (
-                    suggestions_df is not None
-                    and not suggestions_df.empty
-                    and "action_usd_value" in suggestions_df.columns
-                    and "Signal" in suggestions_df.columns
-                ):
-                    try:
-                        required_usdt = float(
-                            suggestions_df.loc[
-                                suggestions_df["Signal"] == "BUY",
-                                "action_usd_value",
-                            ]
-                            .clip(lower=0)
-                            .sum()
-                        )
-                    except Exception:
-                        required_usdt = None
+    # Offer contextual transfer
+    # If suggestions exist, estimate required USDT for BUY actions
+    required_usdt = None
+    suggestions_df = st.session_state.get("rebalance_suggestions")
+    if (
+        suggestions_df is not None
+        and not suggestions_df.empty
+        and "action_usd_value" in suggestions_df.columns
+        and "Signal" in suggestions_df.columns
+    ):
+        try:
+            required_usdt = float(
+                suggestions_df.loc[
+                    suggestions_df["Signal"] == "BUY",
+                    "action_usd_value",
+                ]
+                .clip(lower=0)
+                .sum()
+            )
+        except Exception:
+            required_usdt = None
 
-                render_transfer_widget(
-                    dashboard, context="rebalancing", required_amount=required_usdt
-                )
+    render_transfer_widget(
+        dashboard, context="rebalancing", required_amount=required_usdt
+    )
 
     # --- Display Interactive Rebalancing Suggestions ---
     st.markdown("### 📝 Rebalancing Suggestions & Trade Selection")
@@ -606,7 +605,8 @@ def render_rebalancing_page(dashboard):
 
                     # Run execution
                     result = asyncio.run(
-                        tracker.execute_rebalancing_trades_core(
+                        tracker.execute_rebalancing_trades
+(
                             filtered_df,
                             earn_balances,
                             confirmation_callback=None,  # Add this parameter
