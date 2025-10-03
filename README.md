@@ -2,6 +2,27 @@
 
 A comprehensive, personal cryptocurrency portfolio tracking application built on a modern, high-performance Python toolkit. It connects to Binance to provide detailed analysis of your holdings, accurate P/L calculations using dual accounting perspectives, intelligent rebalancing suggestions, and advanced backtesting capabilities.
 
+## 📸 Dashboard Preview
+
+<table>
+  <tr>
+    <td align="center">Main Dashboard</td>
+    <td align="center">Portfolio Overview</td>
+  </tr>
+  <tr>
+    <td><img src="assets/main-dashboard.png" alt="Main Dashboard" width="420"></td>
+    <td><img src="assets/overview.png" alt="Portfolio Overview" width="420"></td>
+  </tr>
+  <tr>
+    <td align="center">Visualization</td>
+    <td align="center">Wallets Overview</td>
+  </tr>
+  <tr>
+    <td><img src="assets/pie.png" alt="Portfolio pie Chart" width="420"></td>
+    <td><img src="assets/wallets-overview.png" alt="Wallets Overview" width="420"></td>
+  </tr>
+</table>
+
 ## 🚀 Key Features
 
 ### 📊 **Complete Portfolio Intelligence**
