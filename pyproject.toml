@@ -54,8 +54,9 @@ dev = [
     "ruff>=0.6",        # Linting and formatting
 ]
 
-# CLI entry point
+# CLI entry points
 [project.scripts]
+cpt = "crypto_portfolio_tracker.launcher:main"
 track-portfolio-cli = "crypto_portfolio_tracker.__main__:main"
 track-portfolio-web = "crypto_portfolio_tracker.dashboard_launcher:main"
 check-deps = "crypto_portfolio_tracker.check_deps:main"
