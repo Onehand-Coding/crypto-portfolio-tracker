@@ -729,6 +729,151 @@ class BinanceFetcher:
             )
             print(f"❌ Unexpected error: {e}")
 
+    def fetch_p2p_usdt_sells(
+        self,
+        source_name: str,
+        days_back: int = 90,
+        latest_known_ts: Optional[datetime.datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetches P2P sell history (when user cashes out to fiat), filtering for COMPLETED trades
+        and de-duplicating by orderNumber to ensure absolute accuracy.
+        """
+        time_window = self._get_start_end_timestamps(
+            source_name, days_back, latest_known_ts
+        )
+        if not time_window:
+            return []
+        start_ms, end_ms = time_window
+
+        p2p_fiat_currency = (
+            self.config.get("portfolio", {}).get("p2p_fiat_currency", "PHP").upper()
+        )
+
+        all_completed_trades = []
+        current_page = 1
+        PAGE_SIZE = 100
+
+        try:
+            while True:
+                history = self.binance_client.get_c2c_trade_history(
+                    tradeType="SELL",
+                    page=current_page,
+                    rows=PAGE_SIZE,
+                    startTimestamp=start_ms,
+                    endTimestamp=end_ms,
+                )
+                trades_in_page = history.get("data", [])
+                if not trades_in_page:
+                    break
+
+                for trade in trades_in_page:
+                    # Step 1: Filter for only completed trades. The status is 'COMPLETED'.
+                    if trade.get("orderStatus") == "COMPLETED":
+                        all_completed_trades.append(trade)
+
+                if len(trades_in_page) < PAGE_SIZE:
+                    break
+                current_page += 1
+                time.sleep(0.5)
+            # Step 2: De-duplicate the COMPLETED trades by orderNumber to be 100% safe.
+            # This handles the case where the API might send the same completed order twice.
+            unique_trades = {
+                trade["orderNumber"]: trade for trade in all_completed_trades
+            }
+            final_trades = list(unique_trades.values())
+
+            raw_transactions = []
+            for trade in final_trades:
+                raw_transactions.append(
+                    {
+                        "tx_type": "P2P_SELL",
+                        "timestamp": pd.to_datetime(
+                            trade.get("createTime"), unit="ms", utc=True
+                        ),
+                        "source": "Binance P2P Sell",
+                        "transaction_hash": trade.get("orderNumber"),
+                        "raw_data": {
+                            "asset": "USDT",
+                            "quantity": float(trade.get("amount", 0)),
+                            "fiat_currency": p2p_fiat_currency,
+                            "fiat_amount": float(trade.get("totalPrice", 0)),
+                        },
+                    }
+                )
+
+            self.logger.debug(
+                f"Found {len(raw_transactions)} COMPLETED and de-duplicated P2P sell transactions."
+            )
+            return raw_transactions
+        except BinanceAPIException as e:
+            # Use our centralized error handling
+            if self._handle_binance_api_exception(e, f"fetching P2P USDT sells for {source_name}"):
+                # If error is recoverable, try once more
+                try:
+                    current_page = 1
+                    all_completed_trades = []
+                    while True:
+                        history = self.binance_client.get_c2c_trade_history(
+                            tradeType="SELL",
+                            page=current_page,
+                            rows=PAGE_SIZE,
+                            startTimestamp=start_ms,
+                            endTimestamp=end_ms,
+                        )
+                        trades_in_page = history.get("data", [])
+                        if not trades_in_page:
+                            break
+                        for trade in trades_in_page:
+                            if trade.get("orderStatus") == "COMPLETED":
+                                all_completed_trades.append(trade)
+                        if len(trades_in_page) < PAGE_SIZE:
+                            break
+                        current_page += 1
+                    # Step 2: De-duplicate the COMPLETED trades by orderNumber to be 100% safe.
+                    # This handles the case where the API might send the same completed order twice.
+                    unique_trades = {
+                        trade["orderNumber"]: trade for trade in all_completed_trades
+                    }
+                    final_trades = list(unique_trades.values())
+
+                    raw_transactions = []
+                    for trade in final_trades:
+                        raw_transactions.append(
+                            {
+                                "tx_type": "P2P_SELL",
+                                "timestamp": pd.to_datetime(
+                                    trade.get("createTime"), unit="ms", utc=True
+                                ),
+                                "source": "Binance P2P Sell",
+                                "transaction_hash": trade.get("orderNumber"),
+                                "raw_data": {
+                                    "asset": "USDT",
+                                    "quantity": float(trade.get("amount", 0)),
+                                    "fiat_currency": p2p_fiat_currency,
+                                    "fiat_amount": float(trade.get("totalPrice", 0)),
+                                },
+                            }
+                        )
+
+                    self.logger.debug(
+                        f"Found {len(raw_transactions)} COMPLETED and de-duplicated P2P sell transactions."
+                    )
+                    return raw_transactions
+                except BinanceAPIException as e2:
+                    self.logger.error(
+                        f"Error fetching P2P USDT sells after retry: {e2}",
+                        exc_info=True,
+                    )
+                    print(f"❌ Binance API error: {e2}")
+            # Non-recoverable error or retry failed
+            return raw_transactions
+        except Exception as e:
+            self.logger.error(
+                f"Unexpected error fetching P2P USDT sells: {e}", exc_info=True
+            )
+            print(f"❌ Unexpected error: {e}")
+
     def fetch_spot_convert_history(
         self,
         source_name: str,

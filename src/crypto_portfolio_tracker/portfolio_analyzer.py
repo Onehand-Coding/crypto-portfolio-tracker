@@ -51,32 +51,37 @@ class PortfolioAnalyzer:
     def calculate_total_invested_capital(self) -> float:
         """
         Calculates the NET invested capital by summing capital inflows (P2P Buys)
-        and subtracting capital outflows (Withdrawals).
-        
+        and subtracting capital outflows (Withdrawals and P2P Sells).
+
         Returns:
             float: The net invested capital value
         """
         # Fetch the raw transaction data needed for the calculation
         transactions_df = self.db_manager.get_invested_capital_transactions()
-        
+
         if transactions_df.empty:
             return 0.0
-            
+
         # Calculate net invested capital
         # Inflows: Binance P2P Buys (source = 'Binance P2P Buy')
-        # Outflows: Withdrawals (type = 'WITHDRAWAL')
+        # Outflows: Withdrawals (type = 'WITHDRAWAL') and P2P Sells (source = 'Binance P2P Sell')
         net_invested = 0.0
-        
-        # Sum inflows (P2P buys)
-        p2p_transactions = transactions_df[transactions_df['source'] == 'Binance P2P Buy']
-        if not p2p_transactions.empty:
-            net_invested += (p2p_transactions['quantity'] * p2p_transactions['price_usd']).sum()
-            
-        # Subtract outflows (withdrawals)
+
+        # Sum inflows (P2P buys - buying crypto with fiat)
+        p2p_buy_transactions = transactions_df[transactions_df['source'] == 'Binance P2P Buy']
+        if not p2p_buy_transactions.empty:
+            net_invested += (p2p_buy_transactions['quantity'] * p2p_buy_transactions['price_usd']).sum()
+
+        # Subtract outflows (withdrawals - crypto leaving Binance)
         withdrawal_transactions = transactions_df[transactions_df['type'] == 'WITHDRAWAL']
         if not withdrawal_transactions.empty:
             net_invested -= (withdrawal_transactions['quantity'] * withdrawal_transactions['price_usd']).sum()
-            
+
+        # Subtract outflows (P2P sells - cashing out crypto to fiat)
+        p2p_sell_transactions = transactions_df[transactions_df['source'] == 'Binance P2P Sell']
+        if not p2p_sell_transactions.empty:
+            net_invested -= (p2p_sell_transactions['quantity'] * p2p_sell_transactions['price_usd']).sum()
+
         self.logger.info(f"Calculated NET invested capital: ${net_invested:,.2f}")
         return float(net_invested)
 

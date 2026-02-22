@@ -330,7 +330,7 @@ class PriceEnricher:
                 symbols_to_price.extend([raw.get("symbol"), raw.get("fee_currency")])
             elif tx_type == "CONVERT":
                 symbols_to_price.extend([raw.get("from_asset"), raw.get("to_asset")])
-            elif tx_type != "P2P_BUY":
+            elif tx_type not in ["P2P_BUY", "P2P_SELL"]:
                 symbols_to_price.append(raw.get("symbol"))
 
             for symbol in symbols_to_price:
@@ -506,6 +506,25 @@ class PriceEnricher:
                         "source": tx["source"],
                         "transaction_hash": tx["transaction_hash"],
                         "notes": f"P2P Buy: {raw['fiat_amount']} {raw['fiat_currency']}",
+                    }
+                )
+
+            elif tx["tx_type"] == "P2P_SELL":
+                # For P2P Sell, we record the USDT sold (capital outflow)
+                # The price_usd is $1.0 for USDT (stablecoin)
+                enriched_transactions.append(
+                    {
+                        "symbol": raw["asset"],
+                        "timestamp": ts,
+                        "type": "SELL",
+                        "quantity": raw["quantity"],
+                        "price_usd": 1.0,  # USDT is pegged to USD
+                        "fee_quantity": 0,
+                        "fee_currency": None,
+                        "fee_usd": 0,
+                        "source": tx["source"],
+                        "transaction_hash": tx["transaction_hash"],
+                        "notes": f"P2P Sell: {raw['fiat_amount']} {raw['fiat_currency']}",
                     }
                 )
 

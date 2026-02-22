@@ -526,6 +526,10 @@ class DataSynchronizer:
                 "fetcher": self.fetcher.fetch_p2p_usdt_buys,
                 "days": lookback_config.get("p2p_buys", 90),
             },
+            "Binance P2P Sell": {
+                "fetcher": self.fetcher.fetch_p2p_usdt_sells,
+                "days": lookback_config.get("p2p_sells", 90),
+            },
             "Binance Convert": {
                 "fetcher": self.fetcher.fetch_spot_convert_history,
                 "days": lookback_config.get("spot_convert_history", 90),

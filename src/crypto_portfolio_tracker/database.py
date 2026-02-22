@@ -670,12 +670,12 @@ class DatabaseManager:
     def get_invested_capital_transactions(self) -> pd.DataFrame:
         """
         Fetches raw transaction data needed for invested capital calculation.
-        Returns transactions that are either Binance P2P Buys or Withdrawals.
+        Returns transactions for P2P Buys (capital in), P2P Sells (capital out), and Withdrawals (capital out).
         """
         query = """
             SELECT source, type, quantity, price_usd
             FROM transactions
-            WHERE source = 'Binance P2P Buy' OR type = 'WITHDRAWAL';
+            WHERE source IN ('Binance P2P Buy', 'Binance P2P Sell') OR type = 'WITHDRAWAL';
         """
         try:
             with self._get_connection() as conn:

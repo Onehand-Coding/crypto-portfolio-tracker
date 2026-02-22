@@ -85,6 +85,7 @@
     "deposits": 90,
     "withdrawals": 90,
     "p2p_buys": 90,
+    "p2p_sells": 90,
     "internal_transfers": 90,
     "spot_futures_transfers": 90,
     "spot_convert_history": 90,
