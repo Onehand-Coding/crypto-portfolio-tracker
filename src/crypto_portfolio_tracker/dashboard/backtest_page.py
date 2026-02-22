@@ -310,7 +310,7 @@ def render_backtest_page(dashboard):
                         add_asset = st.selectbox(
                             "Select Asset",
                             ["Select an asset..."] + available_to_add,
-                            key=f"add_asset_select_{st.session_state.get("add_asset_counter", 0)}",
+                            key=f"add_asset_select_{st.session_state.get('add_asset_counter', 0)}",
                             label_visibility="collapsed",  # Hide the label completely
                         )
                     with col2:
