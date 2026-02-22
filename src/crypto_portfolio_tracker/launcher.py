@@ -48,13 +48,16 @@ def main():
         # CLI mode - import and run the main function with args
         from crypto_portfolio_tracker.__main__ import amain
         import asyncio
-        
+
         # Set sys.argv for the CLI to pick up the log level args
         if args.loglevel:
-            sys.argv = [sys.argv[0], f"--{args.loglevel.lower()}"]
+            if args.loglevel == "DEBUG":
+                sys.argv = [sys.argv[0], "-v"]
+            elif args.loglevel == "WARNING":
+                sys.argv = [sys.argv[0], "-q"]
         else:
             sys.argv = [sys.argv[0]]
-        
+
         try:
             asyncio.run(amain())
         except KeyboardInterrupt:
