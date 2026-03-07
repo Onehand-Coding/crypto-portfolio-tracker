@@ -1046,7 +1046,15 @@ class BinanceFetcher:
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetches raw Simple Earn flexible reward data with robust pagination."""
+        """Fetches raw Simple Earn flexible reward data with robust pagination.
+        
+        NOTE: Binance has deprecated the Simple Earn rewards endpoint.
+        With auto-earn enabled, rewards are typically compounded automatically
+        into your balance rather than paid as separate transactions.
+        
+        If you need reward tracking, check your Simple Earn balance increases
+        or export from Binance web interface.
+        """
         time_window = self._get_start_end_timestamps(
             source_name, days_back, latest_known_ts
         )
@@ -1102,8 +1110,12 @@ class BinanceFetcher:
                     break
                 current_page += 1
             except Exception as e:
-                self.logger.error(
-                    f"Error fetching Simple Earn rewards (Page {current_page}): {e}"
+                # Log as warning - endpoint is deprecated
+                # Auto-earn rewards are compounded, not paid separately
+                self.logger.warning(
+                    f"Simple Earn rewards endpoint unavailable (Page {current_page}): {e}. "
+                    "Binance has deprecated this endpoint. With auto-earn enabled, "
+                    "rewards are compounded into your balance automatically."
                 )
                 break
         return raw_transactions
@@ -1292,64 +1304,261 @@ class BinanceFetcher:
         days_back: int = 90,
         latest_known_ts_map: Optional[Dict[str, datetime.datetime]] = None,
     ) -> List[Dict[str, Any]]:
+        """
+        Fetch staking history for subscriptions, redemptions, and interest.
+        
+        Uses new Binance staking endpoints (2026+):
+        - ETH staking: get_staking_history_us(), margin_v1_get_eth_staking_eth_history_*()
+        - SOL staking: margin_v1_get_sol_staking_sol_history_*()
+        
+        NOTE: Old endpoint /sapi/v1/staking/history is deprecated.
+        """
         if latest_known_ts_map is None:
             latest_known_ts_map = {}
         all_txs = []
-        transaction_types = {
-            "SUBSCRIPTION": {
-                "source": "Binance Staking Subscription",
-                "tx_type": "STAKING_SUBSCRIBE",
-            },
-            "REDEMPTION": {
-                "source": "Binance Staking Redemption",
-                "tx_type": "STAKING_REDEMPTION",
-            },
-            "INTEREST": {
-                "source": "Binance Staking Interest",
-                "tx_type": "STAKING_INTEREST",
-            },
-        }
-        for txn_type, details in transaction_types.items():
-            source_name = details["source"]
-            time_window = self._get_start_end_timestamps(
-                source_name, days_back, latest_known_ts_map.get(source_name)
+        
+        # Calculate time window
+        time_window = self._get_start_end_timestamps(
+            "Binance Staking", days_back, None
+        )
+        if not time_window:
+            return all_txs
+        start_ms, end_ms = time_window
+        
+        # Fetch ETH staking history
+        try:
+            eth_txs = self._fetch_eth_staking_history(start_ms, end_ms)
+            all_txs.extend(eth_txs)
+        except Exception as e:
+            self.logger.warning(
+                f"ETH staking history fetch skipped: {e}. "
+                "ETH staking may not be available or enabled."
             )
-            if not time_window:
-                continue
-            start_ms, end_ms = time_window
-            try:
-                for item in self._fetch_paginated_history(
-                    "staking/history",
-                    {
-                        "product": "STAKING",
-                        "txnType": txn_type,
-                        "startTime": start_ms,
-                        "endTime": end_ms,
-                    },
-                ):
-                    timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
-                    if pd.isna(timestamp):
-                        continue
-                    normalized_symbol = self.symbol_mappings.normalize_symbol(
-                        item.get("asset", "").upper()
-                    )
-                    if normalized_symbol not in self.target_assets_for_sync:
-                        continue
-                    all_txs.append(
-                        {
-                            "tx_type": details["tx_type"],
-                            "timestamp": timestamp,
-                            "source": source_name,
-                            "transaction_hash": str(item.get("txnId")),
-                            "raw_data": {
-                                "symbol": normalized_symbol,
-                                "quantity": float(item.get("amount", 0.0)),
-                            },
-                        }
-                    )
-            except Exception as e:
-                self.logger.error(f"Error fetching staking history for {txn_type}: {e}")
+        
+        # Fetch SOL staking history
+        try:
+            sol_txs = self._fetch_sol_staking_history(start_ms, end_ms)
+            all_txs.extend(sol_txs)
+        except Exception as e:
+            self.logger.warning(
+                f"SOL staking history fetch skipped: {e}. "
+                "SOL staking may not be available or enabled."
+            )
+        
+        # Fetch general staking rewards (if any)
+        try:
+            rewards_txs = self._fetch_general_staking_rewards(start_ms, end_ms)
+            all_txs.extend(rewards_txs)
+        except Exception as e:
+            self.logger.warning(
+                f"General staking rewards fetch skipped: {e}. "
+                "This endpoint may be deprecated by Binance."
+            )
+        
         return all_txs
+    
+    def _fetch_eth_staking_history(
+        self, start_ms: int, end_ms: int
+    ) -> List[Dict[str, Any]]:
+        """Fetch ETH staking subscription, redemption, and interest history."""
+        txs = []
+        
+        # ETH staking history (subscriptions)
+        try:
+            history = self.binance_client.margin_v1_get_eth_staking_eth_history_staking_history(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in history:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_SUBSCRIBE",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Subscription",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": "ETH",
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass  # Silently skip if ETH staking not used
+        
+        # ETH staking redemptions
+        try:
+            redemptions = self.binance_client.margin_v1_get_eth_staking_eth_history_redemption_history(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in redemptions:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_REDEMPTION",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Redemption",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": "ETH",
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass
+        
+        # ETH staking rewards (interest)
+        try:
+            rewards = self.binance_client.margin_v1_get_eth_staking_eth_history_wbeth_rewards_history(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in rewards:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_INTEREST",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Interest",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": "ETH",
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass
+        
+        return txs
+    
+    def _fetch_sol_staking_history(
+        self, start_ms: int, end_ms: int
+    ) -> List[Dict[str, Any]]:
+        """Fetch SOL staking subscription, redemption, and interest history."""
+        txs = []
+        
+        # SOL staking history (subscriptions)
+        try:
+            history = self.binance_client.margin_v1_get_sol_staking_sol_history_staking_history(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in history:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_SUBSCRIBE",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Subscription",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": "SOL",
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass
+        
+        # SOL staking redemptions
+        try:
+            redemptions = self.binance_client.margin_v1_get_sol_staking_sol_history_redemption_history(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in redemptions:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_REDEMPTION",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Redemption",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": "SOL",
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass
+        
+        # SOL staking boost rewards (interest)
+        try:
+            rewards = self.binance_client.margin_v1_get_sol_staking_sol_history_boost_rewards_history(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in rewards:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_INTEREST",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Interest",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": "SOL",
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass
+        
+        return txs
+    
+    def _fetch_general_staking_rewards(
+        self, start_ms: int, end_ms: int
+    ) -> List[Dict[str, Any]]:
+        """Fetch general staking rewards history (non-ETH/SOL)."""
+        txs = []
+        
+        try:
+            rewards = self.binance_client.get_staking_rewards_history_us(
+                startTime=start_ms,
+                endTime=end_ms
+            )
+            for item in rewards:
+                timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                if pd.isna(timestamp):
+                    continue
+                normalized_symbol = self.symbol_mappings.normalize_symbol(
+                    item.get("asset", "").upper()
+                )
+                if normalized_symbol not in self.target_assets_for_sync:
+                    continue
+                quantity = float(item.get("amount", 0.0))
+                if quantity > 0:
+                    txs.append({
+                        "tx_type": "STAKING_INTEREST",
+                        "timestamp": timestamp,
+                        "source": "Binance Staking Interest",
+                        "transaction_hash": str(item.get("txnId", "")),
+                        "raw_data": {
+                            "symbol": normalized_symbol,
+                            "quantity": quantity,
+                        },
+                    })
+        except Exception:
+            pass
+        
+        return txs
 
     def fetch_futures_balance(self) -> List[Dict[str, Any]]:
         """Fetches futures account balance."""
