@@ -138,6 +138,61 @@ class BinanceFetcher:
         )
         return start_ts, end_ts
 
+    def _get_30day_chunks(
+        self,
+        start_ts: int,
+        end_ts: int,
+    ) -> list[tuple[int, int]]:
+        """Split a time range into 30-day chunks to stay within Binance API limits.
+        
+        Binance Simple Earn endpoints have a 30-day max time range.
+        """
+        chunks = []
+        current_start = start_ts
+        while current_start < end_ts:
+            chunk_end = min(current_start + 30 * 24 * 60 * 60 * 1000, end_ts)
+            chunks.append((current_start, chunk_end))
+            current_start = chunk_end
+        return chunks
+
+    def _fetch_in_30day_chunks(
+        self,
+        fetch_func: callable,
+        source_name: str,
+        start_ts: int,
+        end_ts: int,
+    ) -> list:
+        """Fetch data in 30-day chunks to avoid 'Query time range too large' errors.
+        
+        Args:
+            fetch_func: Function to call for each chunk. Must accept (start_ms, end_ms) parameters.
+            source_name: Name for logging purposes.
+            start_ts: Start timestamp in milliseconds.
+            end_ts: End timestamp in milliseconds.
+            
+        Returns:
+            List of all transactions from all chunks.
+        """
+        chunks = self._get_30day_chunks(start_ts, end_ts)
+        all_transactions = []
+        
+        for i, (chunk_start, chunk_end) in enumerate(chunks):
+            self.logger.debug(
+                f"[{source_name}] Fetching chunk {i+1}/{len(chunks)}: "
+                f"{datetime.datetime.fromtimestamp(chunk_start/1000, tz=datetime.timezone.utc).strftime('%Y-%m-%d')} to "
+                f"{datetime.datetime.fromtimestamp(chunk_end/1000, tz=datetime.timezone.utc).strftime('%Y-%m-%d')}"
+            )
+            try:
+                chunk_transactions = fetch_func(chunk_start, chunk_end)
+                if chunk_transactions:
+                    all_transactions.extend(chunk_transactions)
+            except Exception as e:
+                self.logger.warning(
+                    f"[{source_name}] Error fetching chunk {i+1}/{len(chunks)}: {e}"
+                )
+        
+        return all_transactions
+
     def _fetch_paginated_history(
         self, endpoint_path: str, params: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
@@ -1126,7 +1181,10 @@ class BinanceFetcher:
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetches raw Simple Earn flexible subscription data with robust pagination."""
+        """Fetches raw Simple Earn flexible subscription data with robust pagination.
+        
+        Uses 30-day chunks to avoid Binance API 'Query time range too large' errors.
+        """
         time_window = self._get_start_end_timestamps(
             source_name, days_back, latest_known_ts
         )
@@ -1134,56 +1192,60 @@ class BinanceFetcher:
             return []
         start_ms, end_ms = time_window
 
-        raw_transactions = []
-        current_page = 1
-        endpoint_path = "simple-earn/flexible/history/subscriptionRecord"
+        def fetch_chunk(chunk_start: int, chunk_end: int) -> List[Dict[str, Any]]:
+            """Fetch subscriptions for a single 30-day chunk."""
+            raw_transactions = []
+            current_page = 1
+            endpoint_path = "simple-earn/flexible/history/subscriptionRecord"
 
-        while True:
-            try:
-                params = {
-                    "startTime": start_ms,
-                    "endTime": end_ms,
-                    "current": current_page,
-                    "size": 100,
-                }
-                response = self.binance_client._request_margin_api(
-                    "get", endpoint_path, True, data=params
-                )
-                rows = response.get("rows", [])
-                if not rows:
-                    break
-
-                for item in rows:
-                    timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
-                    if pd.isna(timestamp):
-                        continue
-                    normalized_symbol = self.symbol_mappings.normalize_symbol(
-                        item.get("asset", "").upper()
+            while True:
+                try:
+                    params = {
+                        "startTime": chunk_start,
+                        "endTime": chunk_end,
+                        "current": current_page,
+                        "size": 100,
+                    }
+                    response = self.binance_client._request_margin_api(
+                        "get", endpoint_path, True, data=params
                     )
-                    if normalized_symbol not in self.target_assets_for_sync:
-                        continue
-                    raw_transactions.append(
-                        {
-                            "tx_type": "EARN_SUBSCRIPTION",
-                            "timestamp": timestamp,
-                            "source": "Binance Simple Earn Subscription",
-                            "transaction_hash": str(item.get("purchaseId")),
-                            "raw_data": {
-                                "symbol": normalized_symbol,
-                                "quantity": float(item.get("amount", 0.0)),
-                            },
-                        }
-                    )
+                    rows = response.get("rows", [])
+                    if not rows:
+                        break
 
-                if len(rows) < 100:
+                    for item in rows:
+                        timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                        if pd.isna(timestamp):
+                            continue
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(
+                            item.get("asset", "").upper()
+                        )
+                        if normalized_symbol not in self.target_assets_for_sync:
+                            continue
+                        raw_transactions.append(
+                            {
+                                "tx_type": "EARN_SUBSCRIPTION",
+                                "timestamp": timestamp,
+                                "source": "Binance Simple Earn Subscription",
+                                "transaction_hash": str(item.get("purchaseId")),
+                                "raw_data": {
+                                    "symbol": normalized_symbol,
+                                    "quantity": float(item.get("amount", 0.0)),
+                                },
+                            }
+                        )
+
+                    if len(rows) < 100:
+                        break
+                    current_page += 1
+                except Exception as e:
+                    self.logger.warning(
+                        f"Error fetching Simple Earn subscriptions (Page {current_page}): {e}"
+                    )
                     break
-                current_page += 1
-            except Exception as e:
-                self.logger.error(
-                    f"Error fetching Simple Earn subscriptions (Page {current_page}): {e}"
-                )
-                break
-        return raw_transactions
+            return raw_transactions
+
+        return self._fetch_in_30day_chunks(fetch_chunk, source_name, start_ms, end_ms)
 
     def fetch_simple_earn_redemptions(
         self,
@@ -1191,7 +1253,10 @@ class BinanceFetcher:
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
     ) -> List[Dict[str, Any]]:
-        """Fetches raw Simple Earn flexible redemption data with robust pagination."""
+        """Fetches raw Simple Earn flexible redemption data with robust pagination.
+        
+        Uses 30-day chunks to avoid Binance API 'Query time range too large' errors.
+        """
         time_window = self._get_start_end_timestamps(
             source_name, days_back, latest_known_ts
         )
@@ -1199,56 +1264,60 @@ class BinanceFetcher:
             return []
         start_ms, end_ms = time_window
 
-        raw_transactions = []
-        current_page = 1
-        endpoint_path = "simple-earn/flexible/history/redemptionRecord"
+        def fetch_chunk(chunk_start: int, chunk_end: int) -> List[Dict[str, Any]]:
+            """Fetch redemptions for a single 30-day chunk."""
+            raw_transactions = []
+            current_page = 1
+            endpoint_path = "simple-earn/flexible/history/redemptionRecord"
 
-        while True:
-            try:
-                params = {
-                    "startTime": start_ms,
-                    "endTime": end_ms,
-                    "current": current_page,
-                    "size": 100,
-                }
-                response = self.binance_client._request_margin_api(
-                    "get", endpoint_path, True, data=params
-                )
-                rows = response.get("rows", [])
-                if not rows:
-                    break
-
-                for item in rows:
-                    timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
-                    if pd.isna(timestamp):
-                        continue
-                    normalized_symbol = self.symbol_mappings.normalize_symbol(
-                        item.get("asset", "").upper()
+            while True:
+                try:
+                    params = {
+                        "startTime": chunk_start,
+                        "endTime": chunk_end,
+                        "current": current_page,
+                        "size": 100,
+                    }
+                    response = self.binance_client._request_margin_api(
+                        "get", endpoint_path, True, data=params
                     )
-                    if normalized_symbol not in self.target_assets_for_sync:
-                        continue
-                    raw_transactions.append(
-                        {
-                            "tx_type": "EARN_REDEMPTION",
-                            "timestamp": timestamp,
-                            "source": "Binance Simple Earn Redemption",
-                            "transaction_hash": str(item.get("redeemId")),
-                            "raw_data": {
-                                "symbol": normalized_symbol,
-                                "quantity": float(item.get("amount", 0.0)),
-                            },
-                        }
-                    )
+                    rows = response.get("rows", [])
+                    if not rows:
+                        break
 
-                if len(rows) < 100:
+                    for item in rows:
+                        timestamp = pd.to_datetime(item.get("time"), unit="ms", utc=True)
+                        if pd.isna(timestamp):
+                            continue
+                        normalized_symbol = self.symbol_mappings.normalize_symbol(
+                            item.get("asset", "").upper()
+                        )
+                        if normalized_symbol not in self.target_assets_for_sync:
+                            continue
+                        raw_transactions.append(
+                            {
+                                "tx_type": "EARN_REDEMPTION",
+                                "timestamp": timestamp,
+                                "source": "Binance Simple Earn Redemption",
+                                "transaction_hash": str(item.get("redeemId")),
+                                "raw_data": {
+                                    "symbol": normalized_symbol,
+                                    "quantity": float(item.get("amount", 0.0)),
+                                },
+                            }
+                        )
+
+                    if len(rows) < 100:
+                        break
+                    current_page += 1
+                except Exception as e:
+                    self.logger.warning(
+                        f"Error fetching Simple Earn redemptions (Page {current_page}): {e}"
+                    )
                     break
-                current_page += 1
-            except Exception as e:
-                self.logger.error(
-                    f"Error fetching Simple Earn redemptions (Page {current_page}): {e}"
-                )
-                break
-        return raw_transactions
+            return raw_transactions
+
+        return self._fetch_in_30day_chunks(fetch_chunk, source_name, start_ms, end_ms)
 
     def fetch_dividend_history(
         self,
@@ -1311,51 +1380,58 @@ class BinanceFetcher:
         - ETH staking: get_staking_history_us(), margin_v1_get_eth_staking_eth_history_*()
         - SOL staking: margin_v1_get_sol_staking_sol_history_*()
         
+        Uses 30-day chunks to avoid Binance API 'Query time range too large' errors.
+        
         NOTE: Old endpoint /sapi/v1/staking/history is deprecated.
         """
         if latest_known_ts_map is None:
             latest_known_ts_map = {}
-        all_txs = []
         
         # Calculate time window
         time_window = self._get_start_end_timestamps(
             "Binance Staking", days_back, None
         )
         if not time_window:
-            return all_txs
+            return []
         start_ms, end_ms = time_window
-        
-        # Fetch ETH staking history
-        try:
-            eth_txs = self._fetch_eth_staking_history(start_ms, end_ms)
-            all_txs.extend(eth_txs)
-        except Exception as e:
-            self.logger.warning(
-                f"ETH staking history fetch skipped: {e}. "
-                "ETH staking may not be available or enabled."
-            )
-        
-        # Fetch SOL staking history
-        try:
-            sol_txs = self._fetch_sol_staking_history(start_ms, end_ms)
-            all_txs.extend(sol_txs)
-        except Exception as e:
-            self.logger.warning(
-                f"SOL staking history fetch skipped: {e}. "
-                "SOL staking may not be available or enabled."
-            )
-        
-        # Fetch general staking rewards (if any)
-        try:
-            rewards_txs = self._fetch_general_staking_rewards(start_ms, end_ms)
-            all_txs.extend(rewards_txs)
-        except Exception as e:
-            self.logger.warning(
-                f"General staking rewards fetch skipped: {e}. "
-                "This endpoint may be deprecated by Binance."
-            )
-        
-        return all_txs
+
+        def fetch_all_for_chunk(chunk_start: int, chunk_end: int) -> List[Dict[str, Any]]:
+            """Fetch all staking data for a single 30-day chunk."""
+            chunk_txs = []
+            
+            # Fetch ETH staking history
+            try:
+                eth_txs = self._fetch_eth_staking_history(chunk_start, chunk_end)
+                chunk_txs.extend(eth_txs)
+            except Exception as e:
+                self.logger.warning(
+                    f"ETH staking history fetch skipped: {e}. "
+                    "ETH staking may not be available or enabled."
+                )
+            
+            # Fetch SOL staking history
+            try:
+                sol_txs = self._fetch_sol_staking_history(chunk_start, chunk_end)
+                chunk_txs.extend(sol_txs)
+            except Exception as e:
+                self.logger.warning(
+                    f"SOL staking history fetch skipped: {e}. "
+                    "SOL staking may not be available or enabled."
+                )
+            
+            # Fetch general staking rewards (if any)
+            try:
+                rewards_txs = self._fetch_general_staking_rewards(chunk_start, chunk_end)
+                chunk_txs.extend(rewards_txs)
+            except Exception as e:
+                self.logger.warning(
+                    f"General staking rewards fetch skipped: {e}. "
+                    "This endpoint may be deprecated by Binance."
+                )
+            
+            return chunk_txs
+
+        return self._fetch_in_30day_chunks(fetch_all_for_chunk, "Binance Staking", start_ms, end_ms)
     
     def _fetch_eth_staking_history(
         self, start_ms: int, end_ms: int
