@@ -1,8 +1,46 @@
 # Crypto Portfolio Tracker - Project Context & State
 
-**Last Updated:** 2026-04-02
-**Version:** 2.1.1
+**Last Updated:** 2026-05-04
+**Version:** 2.1.2
 **Project Root:** `/home/kenneth/Coding/projects/crypto-portfolio-tracker`
+
+---
+
+## 🎯 CRITICAL: Recent Changes (2026-05-04)
+
+### Binance API Time Range Fix - 30-Day Chunking
+
+**Problem:** "Query time range too large" errors (APIError code -6021):
+```
+ERROR - Error fetching Simple Earn subscriptions (Page 1): APIError(code=-6021): Query time range too large
+ERROR - Error fetching Simple Earn redemptions (Page 1): APIError(code=-6021): Query time range too large
+```
+Binance Simple Earn endpoints have a **30-day max time range**, but code was fetching 90 days.
+
+**Solution Implemented:**
+
+1. **Added `_get_30day_chunks()`** - Helper method to split time range into 30-day chunks
+
+2. **Added `_fetch_in_30day_chunks()`** - Generic method for chunked fetching with logging:
+   - Logs each chunk: `[Binance Simple Earn Subscription] Fetching chunk 1/3: 2026-02-03 to 2026-03-05`
+   - Handles exceptions per chunk (one failed chunk doesn't stop others)
+
+3. **Updated three methods to use 30-day chunks:**
+   - `fetch_simple_earn_subscriptions()` - Splits 90-day window into 3 chunks
+   - `fetch_simple_earn_redemptions()` - Splits 90-day window into 3 chunks
+   - `fetch_staking_history()` - Splits 90-day window into 3 chunks
+
+**Files Modified:**
+```
+src/crypto_portfolio_tracker/binance_fetcher.py     (+204 lines, -128 lines)
+```
+
+**Testing Status:** ✅ All 57 tests passing
+
+**Notes for Future:**
+- Logs show chunk progress: "Fetching chunk 1/3", "Fetching chunk 2/3", etc.
+- If Binance further reduces limits, chunk size is centralized in `_get_30day_chunks()`
+- Simple Earn rewards endpoint still shows WARNING (deprecated by Binance)
 
 ---
 
