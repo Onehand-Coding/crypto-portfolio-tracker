@@ -488,11 +488,9 @@ class PriceEnricher:
                 fiat_rate = self._get_historical_fiat_exchange_rate(
                     ts, raw["fiat_currency"], "USD"
                 )
-                price_usd = (
-                    (raw["fiat_amount"] * fiat_rate) / raw["quantity"]
-                    if raw["quantity"] > 0
-                    else 0
-                )
+                price_usd = 1.0
+                if fiat_rate > 0 and raw["quantity"] > 0:
+                    price_usd = (raw["fiat_amount"] * fiat_rate) / raw["quantity"]
                 enriched_transactions.append(
                     {
                         "symbol": raw["asset"],

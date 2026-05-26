@@ -1,11 +1,49 @@
 # Crypto Portfolio Tracker - Project Context & State
 
-**Last Updated:** 2026-05-04
-**Version:** 2.1.2
+**Last Updated:** 2026-05-26
+**Version:** 2.1.3
 **Project Root:** `/home/kenneth/Coding/projects/crypto-portfolio-tracker`
 
 ---
 
+## 🎯 CRITICAL: Recent Changes (2026-05-26)
+
+### P2P Buy Price Fallback Fix
+
+**Problem:** P2P Buy transactions (buying USDT with fiat via Binance P2P) were recorded with `price_usd = 0.0` when yfinance failed to fetch the fiat exchange rate (e.g., PHP/USD). This caused ~$50.41 of capital inflow to go uncounted, making the portfolio report show a false profit.
+
+**Log evidence:**
+```
+WARNING - Could not fetch yfinance rate for PHPUSD=X on 2026-03-06: Cannot losslessly cast '1772807493830 ms' to s
+```
+
+**Root Cause:** `_get_historical_fiat_exchange_rate()` returned `0.0` on yfinance failure, and the P2P_BUY handler used `(fiat_amount * 0.0) / quantity = 0.0` with no fallback.
+
+**Solution:**
+- Keep the fiat rate calculation (PHP→USD conversion) when yfinance succeeds
+- Fall back to `price_usd = 1.0` (USDT stablecoin peg) when the rate fetch fails or returns 0
+
+**Impact on Kenneth's Portfolio (2026-05-26 sync):**
+
+| Metric | Before (broken) | After (fixed) |
+|---|---|---|
+| Invested Capital | $26.00 | **$76.41** |
+| Overall P/L | **+$31.79 (122.30%)** ✗ | **-$18.63 (-24.38%)** ✓ |
+
+**Files Modified:**
+```
+src/crypto_portfolio_tracker/price_enricher.py     (+3 lines, -5 lines)
+```
+
+**Testing Status:** ✅ All 57 tests passing
+
+**Manual DB Fix Applied:** `UPDATE transactions SET price_usd = 1.0 WHERE id = 14747` (corrected the stale record from the earlier buggy sync).
+
+**Notes for Future:**
+- If yfinance continues having issues, consider hardcoding `price_usd = 1.0` for P2P BUY (asset is always USDT, stablecoin at $1)
+- Connection pool warnings still appear (`pool size: 10`) — the pool expansion to 50 from the April 2026 fix may not be fully applied. Investigate `requests.Session` vs `python-binance` internals.
+
+---
 ## 🎯 CRITICAL: Recent Changes (2026-05-04)
 
 ### Binance API Time Range Fix - 30-Day Chunking
@@ -822,45 +860,40 @@ uv run pytest tests/test_database.py -v  # Specific test file
 
 ## 📊 Current Portfolio State (Kenneth's)
 
-**As of 2026-02-22 16:59:**
+**As of 2026-05-26 15:47:**
 
 ### Summary
-- **Total Portfolio Value:** $1.44
-- **Total Invested Capital:** $26.00
-- **Overall P/L:** -$24.55 (-94.45%)
+- **Total Portfolio Value:** $57.78
+- **Total Invested Capital:** $76.41
+- **Overall P/L:** -$18.63 (-24.38%)
 - **Total Cost Basis (FIFO):** $199.75
-- **Unrealized P/L (FIFO):** -$198.81 (-99.53%)
+- **Unrealized P/L (FIFO):** $-142.85 (-71.52%)
 
 ### Wallet Breakdown
-- Spot & Earn Value: $0.94
+- Spot & Earn Value: $57.28
 - Futures Wallet Value: $0.50
 - Funding Wallet Value: $0.00
 
-### Holdings (Dust Amounts)
+### Top Holdings
 | Asset | Quantity | Value (USD) | Cost Basis | P/L |
 |-------|----------|-------------|------------|-----|
-| BTC | 9.33e-06 | $0.63 | $0.91 | -$0.28 |
-| BNB | 0.00020355 | $0.13 | $0.00 | +$0.13 |
-| LINK | 0.00961133 | $0.08 | $0.13 | -$0.05 |
-| ETH | 2.162e-05 | $0.04 | $0.06 | -$0.02 |
-| SOL | 0.00028173 | $0.02 | $0.05 | -$0.02 |
-| AVAX | 0.00122818 | $0.01 | $0.03 | -$0.01 |
-| RENDER | 0.0046801 | $0.01 | $0.02 | -$0.01 |
-| TAO | 3.029e-05 | $0.01 | $0.01 | -$0.01 |
-| ONDO | 0.01294673 | $0.00 | $0.01 | -$0.01 |
+| BTC | 0.0007386 | $56.57 | $72.37 | -$15.81 |
+| USDT | 0.3932802 | $0.39 | $0.40 | -$0.01 |
+| BNB | 0.00020358 | $0.13 | $0.00 | +$0.13 |
+| LINK | 0.00961133 | $0.09 | $0.13 | -$0.04 |
 
 ### P2P Transaction History
 | Date | Type | Quantity (USDT) | Fiat Amount | Notes |
 |------|------|-----------------|-------------|-------|
+| 2026-03-06 | P2P Buy | 50.41 | 3,000.00 PHP | BTC purchase |
 | 2026-01-18 | P2P Sell | 185.71 | 10,999.60 PHP | Cash out |
 | 2025-09-08 | P2P Buy | 20.96 | 1,200.00 PHP | |
 | 2025-08-04 | P2P Buy | 68.37 | 4,000.00 PHP | |
-| 2025-06-07 | P2P Buy | 17.83 | 1,000.00 PHP | |
 | ... | ... | ... | ... | (6 more P2P buys) |
 
-**Total P2P Buys:** $211.71  
+**Total P2P Buys:** $262.12  
 **Total P2P Sells:** $185.71  
-**Net Invested:** $26.00 ✓
+**Net Invested:** $76.41 ✓
 
 ---
 
