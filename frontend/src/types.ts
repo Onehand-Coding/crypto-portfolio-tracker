@@ -160,6 +160,24 @@ export interface AnalysisState {
   staleness: Staleness;
 }
 
+export interface BacktestConfig {
+  initial_capital: number;
+  period: string;
+  frequency: string;
+}
+
+export interface BacktestPoint {
+  date: string;
+  value: number | null;
+}
+
+export interface BacktestResponse extends AnalysisState {
+  result: Record<string, number> | null;
+  trade_log: string[] | null;
+  value_history: BacktestPoint[] | null;
+  config: BacktestConfig | null;
+}
+
 export interface RebalanceSuggestion {
   symbol: string;
   action: string | null;

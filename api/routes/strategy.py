@@ -5,7 +5,9 @@ cached result with its age. A GET never touches the network, so these pages
 open instantly and say plainly when their figures are old.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from api.analysis_runner import get_analysis_runner
 from api.cache import MetricsCache, analysis_cache_path, cache_path_for
@@ -71,10 +73,15 @@ def _pick(row: dict, *names):
 
 
 @router.post("/{kind}/run")
-async def run_analysis(kind: str) -> dict:
+async def run_analysis(
+    kind: str, params: Optional[dict] = Body(default=None)
+) -> dict:
+    # Optional body: the analysis screens POST with nothing, and only the
+    # backtest sends configuration. An absent body must stay a valid run, not a
+    # 422, so params defaults to None and each adapter supplies its own defaults.
     runner = get_analysis_runner()
     try:
-        started = runner.start(kind)
+        started = runner.start(kind, params)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Unknown analysis: {kind}")
     if not started:
@@ -334,5 +341,7 @@ def backtest(ctx=Depends(get_read_context)) -> dict:
         "error": runner.last_error("backtest"),
         "staleness": staleness.model_dump(),
         "result": cached.get("result"),
-        "report": cached.get("report"),
+        "trade_log": cached.get("trade_log"),
+        "value_history": cached.get("value_history"),
+        "config": cached.get("config"),
     }

@@ -12,7 +12,7 @@ already exposes.
 
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from api.cache import MetricsCache, analysis_cache_path
 from api.deps import get_tracker
@@ -21,7 +21,7 @@ from api.serialization import df_to_records
 logger = logging.getLogger(__name__)
 
 
-async def _rebalance(tracker) -> dict:
+async def _rebalance(tracker, params=None) -> dict:
     df = await tracker.portfolio_analyzer.get_core_portfolio_rebalance_suggestions_technical()
     # None means live balances could not be fetched. That is a failure, not an
     # empty portfolio, and the two must not render identically.
@@ -33,7 +33,7 @@ async def _rebalance(tracker) -> dict:
     return {"suggestions": df_to_records(df)}
 
 
-async def _profit_taking(tracker) -> dict:
+async def _profit_taking(tracker, params=None) -> dict:
     opportunities = await tracker.portfolio_analyzer.get_profit_taking_opportunities()
     return {
         "opportunities": [
@@ -56,12 +56,12 @@ async def _profit_taking(tracker) -> dict:
     }
 
 
-async def _dca(tracker) -> dict:
+async def _dca(tracker, params=None) -> dict:
     balance = tracker.dca_manager.get_available_usdt_balance()
     return {"available": balance}
 
 
-async def _technical(tracker) -> dict:
+async def _technical(tracker, params=None) -> dict:
     # The tracker exposes no trend analyzer; the core builds one on demand
     # inside its rebalance method (portfolio_analyzer.py). Same construction
     # here rather than inventing an attribute that does not exist.
@@ -80,22 +80,64 @@ async def _technical(tracker) -> dict:
     return {"reports": reports}
 
 
-async def _backtest(tracker) -> dict:
-    """Run the rebalancing backtest.
+# The core validates neither, and a bad period/frequency silently degrades the
+# run rather than erroring, so the adapter is the place to whitelist them.
+_BACKTEST_PERIODS = {"1y", "2y", "3y", "5y", "max"}
+_BACKTEST_FREQUENCIES = {"weekly", "monthly", "quarterly"}
+
+
+def _backtest_config(params) -> dict:
+    params = params or {}
+    try:
+        capital = float(params.get("initial_capital", 10000.0))
+    except (TypeError, ValueError):
+        capital = 10000.0
+    if not capital > 0:
+        capital = 10000.0
+    period = params.get("period", "2y")
+    if period not in _BACKTEST_PERIODS:
+        period = "2y"
+    frequency = params.get("frequency", "monthly")
+    if frequency not in _BACKTEST_FREQUENCIES:
+        frequency = "monthly"
+    return {"initial_capital": capital, "period": period, "frequency": frequency}
+
+
+async def _backtest(tracker, params=None) -> dict:
+    """Run the rebalancing backtest with the requested configuration.
 
     RebalancingBacktester.run is synchronous and fetches years of price history,
     so it goes to a thread rather than blocking the event loop and stalling
-    every other request for the duration.
+    every other request for the duration. run() itself returns None and stores
+    its figures on the instance -- the metrics live in summary_stats, the equity
+    curve in portfolio_value_history -- so they are read back off the backtester
+    rather than from a (non-existent) return value.
     """
     from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
 
+    config = _backtest_config(params)
     backtester = RebalancingBacktester(config=tracker.config)
-    result = await asyncio.to_thread(backtester.run, 10000.0, "2y", "monthly")
-    report = backtester.generate_report() if hasattr(backtester, "generate_report") else None
-    return {"result": result, "report": report}
+    await asyncio.to_thread(
+        backtester.run, config["initial_capital"], config["period"], config["frequency"]
+    )
+
+    stats = dict(getattr(backtester, "summary_stats", None) or {})
+    # The trade log is surfaced at top level; drop the duplicate the core tucks
+    # inside summary_stats so the metrics table stays scalars only.
+    trade_log = list(stats.pop("Trade Log", []) or [])
+    value_history = [
+        {"date": str(point.get("date")), "value": point.get("value")}
+        for point in (getattr(backtester, "portfolio_value_history", None) or [])
+    ]
+    return {
+        "result": stats,
+        "trade_log": trade_log,
+        "value_history": value_history,
+        "config": config,
+    }
 
 
-KINDS: dict[str, Callable[[Any], Awaitable[dict]]] = {
+KINDS: dict[str, Callable[..., Awaitable[dict]]] = {
     "rebalance": _rebalance,
     "profit": _profit_taking,
     "dca": _dca,
@@ -118,7 +160,7 @@ class AnalysisRunner:
     def last_error(self, kind: str) -> Optional[str]:
         return self._errors.get(kind)
 
-    def start(self, kind: str) -> bool:
+    def start(self, kind: str, params: Optional[dict] = None) -> bool:
         if kind not in KINDS:
             raise KeyError(kind)
         if self.is_running(kind):
@@ -127,15 +169,17 @@ class AnalysisRunner:
         # get_running_loop, not get_event_loop: the route must be async so a
         # loop exists here. A plain `def` endpoint runs in a threadpool and
         # this raises -- the exact bug that made POST /api/sync 500.
-        self._tasks[kind] = asyncio.get_running_loop().create_task(self._run(kind))
+        self._tasks[kind] = asyncio.get_running_loop().create_task(
+            self._run(kind, params)
+        )
         return True
 
-    async def _run(self, kind: str) -> None:
+    async def _run(self, kind: str, params: Optional[dict] = None) -> None:
         try:
             # Built inside the try: the tracker constructor pings Binance and
             # can raise, and that failure must be reported rather than escaping.
             tracker = get_tracker()
-            result = await KINDS[kind](tracker)
+            result = await KINDS[kind](tracker, params)
             MetricsCache(analysis_cache_path(tracker.config_manager, kind)).write(result)
         except Exception as exc:
             logger.exception("Analysis %s failed", kind)
