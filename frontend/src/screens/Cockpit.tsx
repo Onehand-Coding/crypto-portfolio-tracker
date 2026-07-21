@@ -9,14 +9,23 @@ import type { AccountingBasis, CockpitResponse } from '../types';
 
 function BasisBlock({ basis, denominator }: { basis: AccountingBasis; denominator: string }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div
+      className="flex flex-col"
+      style={{
+        gap: 'var(--space-2)',
+        background: 'var(--surface-2)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-panel)',
+        padding: 'var(--space-4)',
+      }}
+    >
       <Metric
         label={basis.label}
         value={`${formatSigned(basis.pl_usd)}  (${formatPercent(basis.pl_percent)})`}
         signal={basis.pl_usd}
         sub={denominator}
       />
-      <span className="font-ui text-xs italic" style={{ color: 'var(--text-secondary)' }}>
+      <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>
         {basis.question}
       </span>
     </div>
@@ -66,18 +75,30 @@ export function Cockpit() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
       <Panel>
-        <div className="flex items-baseline gap-3">
-          <span className="font-mono text-4xl tabular-nums">
-            {formatUsd(data.total_value_usd)}
-          </span>
-          <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
-            portfolio value
-          </span>
-          <span className="ml-auto">
-            <StalenessNote staleness={data.staleness} />
-          </span>
+        <div className="flex items-start justify-between">
+          <div className="flex flex-col" style={{ gap: 'var(--space-1)' }}>
+            <span
+              className="font-ui"
+              style={{
+                color: 'var(--text-tertiary)',
+                fontSize: '11px',
+                fontWeight: 500,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Portfolio value
+            </span>
+            <span
+              className="font-mono"
+              style={{ fontSize: '44px', lineHeight: 1.1, letterSpacing: '-0.02em' }}
+            >
+              {formatUsd(data.total_value_usd)}
+            </span>
+          </div>
+          <StalenessNote staleness={data.staleness} />
         </div>
 
         {/*
@@ -98,7 +119,8 @@ export function Cockpit() {
           They are computed from different sources and routinely differ several
           fold; rendering them as one number would be a lie.
         */}
-        <div className="mt-4 grid grid-cols-2 gap-8">
+        <div className="grid grid-cols-2"
+             style={{ gap: 'var(--space-4)', marginTop: 'var(--space-5)' }}>
           <BasisBlock
             basis={data.net_invested}
             denominator={`on ${formatUsd(data.net_invested.basis_usd)} net in`}

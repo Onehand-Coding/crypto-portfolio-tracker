@@ -75,34 +75,42 @@ export function CapitalFlow() {
             No capital flow recorded yet.
           </p>
         ) : (
-          <table className="w-full font-mono text-sm tabular-nums">
-            <thead>
-              <tr style={{ color: 'var(--text-secondary)' }}>
-                <th className="text-left font-normal">Source</th>
-                <th className="text-left font-normal">Dir</th>
-                <th className="text-right font-normal">Quantity</th>
-                <th className="text-right font-normal">Rate</th>
-                <th className="text-right font-normal">Value</th>
-                <th className="text-left font-normal">Provenance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.rows.map((row, index) => (
-                <tr key={index} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                  <td className="text-left">{row.source}</td>
-                  <td className="text-left">{row.direction === 'in' ? '+ in' : '- out'}</td>
-                  <td className="text-right">{formatQty(row.quantity)}</td>
-                  <td className="text-right">{formatQty(row.price_usd)}</td>
-                  <td className="text-right">{formatUsd(row.value_usd)}</td>
-                  <td className="text-left"
-                      style={{ color: row.is_suspect ? 'var(--warning)'
-                                                     : 'var(--text-secondary)' }}>
-                    {PROVENANCE_LABEL[row.provenance]}
-                  </td>
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th className="text-left">Source</th>
+                  <th className="text-left">Dir</th>
+                  <th className="text-right">Quantity</th>
+                  <th className="text-right">Rate</th>
+                  <th className="text-right">Value</th>
+                  <th className="text-left">Provenance</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.rows.map((row, index) => (
+                  <tr key={index}>
+                    <td className="text-left">{row.source}</td>
+                    <td className="text-left"
+                        style={{ color: row.direction === 'in' ? 'var(--positive)'
+                                                               : 'var(--negative)' }}>
+                      {row.direction === 'in' ? '+ in' : '- out'}
+                    </td>
+                    <td className="text-right">{formatQty(row.quantity)}</td>
+                    <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                      {formatQty(row.price_usd)}
+                    </td>
+                    <td className="text-right">{formatUsd(row.value_usd)}</td>
+                    <td className="text-left"
+                        style={{ color: row.is_suspect ? 'var(--warning)'
+                                                       : 'var(--text-tertiary)' }}>
+                      {PROVENANCE_LABEL[row.provenance]}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
     </div>

@@ -38,50 +38,57 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
   }
 
   return (
-    <table className="w-full font-mono text-sm tabular-nums">
-      <thead>
-        <tr style={{ color: 'var(--text-secondary)' }}>
-          <th className="text-left font-normal">Asset</th>
-          <th className="text-right font-normal">Quantity</th>
-          <th className="text-right font-normal">Price</th>
-          <th className="text-right font-normal">Value</th>
-          <th className="text-right font-normal">Unrealized</th>
-        </tr>
-      </thead>
-      <tbody>
-        {material.map((h) => (
-          <tr key={h.symbol} className="border-t" style={{ borderColor: 'var(--border)' }}>
-            <td className="text-left">{h.symbol}</td>
-            <td className="text-right">{formatQty(h.total_quantity)}</td>
-            <td className="text-right">{formatUsd(h.current_price)}</td>
-            <td className="text-right">{formatUsd(h.value_usd)}</td>
-            <td className="text-right" style={{ color: COLOUR[signOf(h.unrealized_pl_usd)] }}>
-              {formatSigned(h.unrealized_pl_usd)} ({formatPercent(h.unrealized_pl_percent)})
-            </td>
+    <div className="table-scroll">
+      <table className="data">
+        <thead>
+          <tr>
+            <th className="text-left">Asset</th>
+            <th className="text-right">Quantity</th>
+            <th className="text-right">Price</th>
+            <th className="text-right">Value</th>
+            <th className="text-right">Unrealized</th>
           </tr>
-        ))}
-        {unpriced.map((h) => (
-          <tr key={h.symbol} className="border-t" style={{ borderColor: 'var(--border)' }}>
-            <td className="text-left">{h.symbol}</td>
-            <td className="text-right">{formatQty(h.total_quantity)}</td>
-            <td className="text-right" style={{ color: 'var(--warning)' }}>
-              price unavailable
-            </td>
-            <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
-            <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
-          </tr>
-        ))}
-        {dust.length > 0 && (
-          <tr className="border-t" style={{ borderColor: 'var(--border)',
-                                            color: 'var(--text-secondary)' }}>
-            <td className="text-left">{dust.length} dust positions</td>
-            <td className="text-right">—</td>
-            <td className="text-right">—</td>
-            <td className="text-right">{formatUsd(dustValue)}</td>
-            <td className="text-right">—</td>
-          </tr>
-        )}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {material.map((h) => (
+            <tr key={h.symbol}>
+              <td className="text-left" style={{ fontWeight: 500 }}>{h.symbol}</td>
+              <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                {formatQty(h.total_quantity)}
+              </td>
+              <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                {formatUsd(h.current_price)}
+              </td>
+              <td className="text-right">{formatUsd(h.value_usd)}</td>
+              <td className="text-right" style={{ color: COLOUR[signOf(h.unrealized_pl_usd)] }}>
+                {formatSigned(h.unrealized_pl_usd)} ({formatPercent(h.unrealized_pl_percent)})
+              </td>
+            </tr>
+          ))}
+          {unpriced.map((h) => (
+            <tr key={h.symbol}>
+              <td className="text-left" style={{ fontWeight: 500 }}>{h.symbol}</td>
+              <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                {formatQty(h.total_quantity)}
+              </td>
+              <td className="text-right" style={{ color: 'var(--warning)' }}>
+                price unavailable
+              </td>
+              <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
+              <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
+            </tr>
+          ))}
+          {dust.length > 0 && (
+            <tr style={{ color: 'var(--text-tertiary)' }}>
+              <td className="text-left">{dust.length} dust positions</td>
+              <td className="text-right">—</td>
+              <td className="text-right">—</td>
+              <td className="text-right">{formatUsd(dustValue)}</td>
+              <td className="text-right">—</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }

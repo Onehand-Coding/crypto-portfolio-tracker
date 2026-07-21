@@ -4,13 +4,25 @@ import type { ReactNode } from 'react';
 export function Panel({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section
-      className="rounded-panel border p-3"
-      style={{ background: 'var(--surface-1)', borderColor: 'var(--border)' }}
+      style={{
+        background: 'var(--surface-1)',
+        borderColor: 'var(--border)',
+        borderWidth: '1px',
+        borderRadius: 'var(--radius-panel)',
+        padding: 'var(--space-5)',
+      }}
     >
       {title && (
         <h2
-          className="mb-2 font-ui text-xs uppercase tracking-wider"
-          style={{ color: 'var(--text-secondary)' }}
+          className="font-ui"
+          style={{
+            color: 'var(--text-tertiary)',
+            fontSize: '11px',
+            fontWeight: 500,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            marginBottom: 'var(--space-4)',
+          }}
         >
           {title}
         </h2>

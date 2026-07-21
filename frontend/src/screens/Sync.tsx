@@ -139,29 +139,47 @@ export function Sync() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
       <Panel title="Sync">
-        <p className="mb-3 font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
-          Sync is the only action that contacts Binance. Everything else reads
-          local data.
-        </p>
-        <button
-          onClick={start}
-          disabled={running}
-          className="rounded-control px-3 py-1 font-ui text-sm"
-          style={{
-            background: running ? 'var(--surface-2)' : 'var(--action)',
-            color: 'var(--text-primary)',
-            cursor: running ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {running ? 'Syncing…' : 'Start sync'}
-        </button>
+        <div className="flex items-center justify-between" style={{ gap: 'var(--space-5)' }}>
+          <p className="font-ui text-sm" style={{ color: 'var(--text-secondary)', margin: 0 }}>
+            Sync is the only action that contacts Binance. Everything else reads
+            local data.
+          </p>
+          <button
+            onClick={start}
+            disabled={running}
+            className="font-ui shrink-0 transition-colors"
+            style={{
+              background: running ? 'var(--surface-2)' : 'var(--action)',
+              color: running ? 'var(--text-secondary)' : '#FFFFFF',
+              cursor: running ? 'not-allowed' : 'pointer',
+              borderRadius: 'var(--radius-control)',
+              padding: 'var(--space-3) var(--space-5)',
+              fontSize: '14px',
+              fontWeight: 500,
+            }}
+          >
+            {running ? 'Syncing…' : 'Start sync'}
+          </button>
+        </div>
       </Panel>
 
       {events.length > 0 && (
         <Panel title="Progress">
-          <ul className="flex flex-col gap-1 font-mono text-xs">
+          <ul
+            className="flex flex-col font-mono"
+            style={{
+              gap: 'var(--space-2)',
+              fontSize: '12px',
+              lineHeight: 1.5,
+              maxHeight: '480px',
+              overflowY: 'auto',
+              margin: 0,
+              padding: 0,
+              listStyle: 'none',
+            }}
+          >
             {events.map((event, index) => (
               <li key={index} style={{ color: lineColour(event) }}>
                 {lineText(event)}

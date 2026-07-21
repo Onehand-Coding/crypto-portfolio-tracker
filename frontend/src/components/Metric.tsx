@@ -19,17 +19,32 @@ export function Metric({
   sub?: string;
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="font-ui text-xs uppercase tracking-wider"
-            style={{ color: 'var(--text-secondary)' }}>
+    <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+      <span
+        className="font-ui"
+        style={{
+          color: 'var(--text-tertiary)',
+          fontSize: '11px',
+          fontWeight: 500,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+        }}
+      >
         {label}
       </span>
-      <span className="font-mono text-2xl tabular-nums"
-            style={{ color: signal === undefined ? 'var(--text-primary)' : COLOUR[signOf(signal)] }}>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: '26px',
+          lineHeight: 1.1,
+          letterSpacing: '-0.01em',
+          color: signal === undefined ? 'var(--text-primary)' : COLOUR[signOf(signal)],
+        }}
+      >
         {value}
       </span>
       {sub && (
-        <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
+        <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
           {sub}
         </span>
       )}

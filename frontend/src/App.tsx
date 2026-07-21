@@ -23,32 +23,63 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--surface-0)' }}>
+    // h-full + overflow-hidden makes this a fixed shell: the sidebar runs the
+    // full window height and <main> is the only thing that scrolls.
+    <div className="flex h-full flex-col overflow-hidden"
+         style={{ background: 'var(--surface-0)' }}>
       <EnvBanner environment={environment} />
-      <div className="flex">
-        <nav className="flex w-48 shrink-0 flex-col gap-1 border-r p-3"
-             style={{ borderColor: 'var(--border)' }}>
+      <div className="flex min-h-0 flex-1">
+        <nav
+          className="flex w-56 shrink-0 flex-col gap-1 border-r"
+          style={{
+            borderColor: 'var(--border)',
+            background: 'var(--surface-1)',
+            padding: 'var(--space-4) var(--space-3)',
+          }}
+        >
+          <span
+            className="font-ui"
+            style={{
+              color: 'var(--text-tertiary)',
+              fontSize: '11px',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              padding: `0 var(--space-3) var(--space-3)`,
+            }}
+          >
+            Portfolio
+          </span>
           {NAV.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/'}
-              className="px-2 py-1 font-ui text-sm"
+              className="font-ui text-sm transition-colors"
               style={({ isActive }) => ({
                 color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                borderLeft: `2px solid ${isActive ? 'var(--action)' : 'transparent'}`,
+                // The selected item is a filled row, not a 2px hairline that
+                // was invisible next to the browser's focus rectangle.
+                background: isActive ? 'var(--surface-2)' : 'transparent',
+                borderRadius: 'var(--radius-control)',
+                padding: 'var(--space-2) var(--space-3)',
+                fontWeight: isActive ? 500 : 400,
               })}
             >
               {item.label}
             </NavLink>
           ))}
         </nav>
-        <main className="flex-1 p-4">
-          <Routes>
-            <Route path="/" element={<Cockpit />} />
-            <Route path="/capital" element={<CapitalFlow />} />
-            <Route path="/sync" element={<Sync />} />
-          </Routes>
+        <main className="min-w-0 flex-1 overflow-y-auto"
+              style={{ padding: 'var(--space-6)' }}>
+          {/* Capped and centred: a table row stretched across 1920px forces the
+              eye to travel from the label to its own number. */}
+          <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-max)' }}>
+            <Routes>
+              <Route path="/" element={<Cockpit />} />
+              <Route path="/capital" element={<CapitalFlow />} />
+              <Route path="/sync" element={<Sync />} />
+            </Routes>
+          </div>
         </main>
       </div>
     </div>

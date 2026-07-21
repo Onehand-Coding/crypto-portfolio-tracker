@@ -3,8 +3,88 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The app is a full-height shell: the sidebar rule must run the height of the
+   window and the main column scrolls on its own. Without this chain the flex
+   row collapses to content height and the page ends in a void partway down. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   background: var(--surface-0);
   color: var(--text-primary);
   font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The browser's default focus ring rendered as a white rectangle around each
+   nav item, which read as a rendering bug rather than a selection. Keyboard
+   users still get a clear, deliberate ring. */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+  border-radius: var(--radius-control);
+}
+
+/* Tabular figures everywhere numbers appear, so columns line up digit for
+   digit rather than shifting as values change. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Shared table treatment. Cells previously had no horizontal padding at all,
+   which is why "Value" and "Provenance" collided in the header and
+   "$185.71USDT peg fallback" ran together in the body. */
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+table.data th {
+  padding: 0 var(--space-4) var(--space-3);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+table.data td {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+table.data th:first-child,
+table.data td:first-child {
+  padding-left: 0;
+}
+
+table.data th:last-child,
+table.data td:last-child {
+  padding-right: 0;
+}
+
+table.data tbody tr {
+  transition: background 100ms ease;
+}
+
+table.data tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+/* Horizontal scroll belongs to the table, never the page body. */
+.table-scroll {
+  overflow-x: auto;
 }

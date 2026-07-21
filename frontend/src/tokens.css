@@ -1,21 +1,41 @@
 :root {
-  --surface-0: #0B0C0E;
-  --surface-1: #14161A;
-  --surface-2: #1C1F26;
-  --border: #2D3139;
+  /* Surfaces. Depth is tonal layering plus a 1px border -- no shadows. The
+     steps are deliberately close together: this is a dark UI that should read
+     as calm, not as high-contrast stripes. */
+  --surface-0: #0A0B0D;
+  --surface-1: #121418;
+  --surface-2: #1A1D23;
+  --surface-hover: #1E222A;
+  --border: #262A32;
+  --border-strong: #343945;
 
-  --positive: #00C076;
-  --negative: #E04E4E;
-  --warning: #D9A441;
-  --action: #4F46E5;
+  --positive: #2ED698;
+  --negative: #FF6B6B;
+  --warning: #E0A94A;
+  --action: #6366F1;
+  --action-hover: #7C7FF5;
 
-  --text-primary: #F9FAFB;
-  --text-secondary: #9BA3AF;
+  --text-primary: #F4F6F8;
+  --text-secondary: #98A1AE;
+  --text-tertiary: #6B7482;
 
-  --radius-control: 4px;
-  --radius-panel: 6px;
-  --space: 4px;
-  --panel-padding: 12px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
+
+  /* Spacing scale. Previously a single 4px value that nothing referenced,
+     which is why every gap in the app was p-3/p-4 and everything felt cramped. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* The widest a content column gets. Without a cap, a table row on a 1920px
+     display stretches the eye from the label on the far left to the number on
+     the far right. */
+  --content-max: 1240px;
 
   --font-ui: Inter, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
