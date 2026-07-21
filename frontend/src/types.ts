@@ -98,6 +98,25 @@ export interface OverviewResponse {
   staleness: Staleness;
 }
 
+export interface TransactionRow {
+  timestamp: string | null;
+  symbol: string;
+  type: string;
+  quantity: number | null;
+  price_usd: number | null;
+  value_usd: number | null;
+  fee_usd: number | null;
+  source: string | null;
+  notes: string | null;
+}
+
+export interface TransactionsResponse {
+  has_data: boolean;
+  count: number;
+  rows: TransactionRow[];
+  staleness: Staleness;
+}
+
 export interface RealizedGainRow {
   date: string | null;
   year: number | null;

@@ -52,6 +52,27 @@ class AssetDetailResponse(BaseModel):
     staleness: Staleness
 
 
+class TransactionRow(BaseModel):
+    """One transaction across all assets, for the global trade log."""
+
+    timestamp: Optional[str]
+    symbol: str
+    type: str
+    quantity: Optional[float]
+    price_usd: Optional[float]
+    value_usd: Optional[float]
+    fee_usd: Optional[float]
+    source: Optional[str]
+    notes: Optional[str]
+
+
+class TransactionsResponse(BaseModel):
+    has_data: bool
+    count: int
+    rows: list[TransactionRow] = []
+    staleness: Staleness
+
+
 class RealizedGainRow(BaseModel):
     """One taxable event (a SELL/WITHDRAWAL) priced against its FIFO lots."""
 

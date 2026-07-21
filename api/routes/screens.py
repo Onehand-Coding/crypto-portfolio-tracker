@@ -24,6 +24,8 @@ from api.schemas.screens import (
     ReportsResponse,
     SnapshotPoint,
     SystemHealthResponse,
+    TransactionRow,
+    TransactionsResponse,
 )
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
@@ -145,6 +147,45 @@ def reports(ctx=Depends(get_read_context)) -> ReportsResponse:
             )
     files.sort(key=lambda f: f.modified, reverse=True)
     return ReportsResponse(files=files, export_dir=str(export_dir))
+
+
+@router.get("/transactions", response_model=TransactionsResponse)
+def transactions(ctx=Depends(get_read_context)) -> TransactionsResponse:
+    """The full trade log across every asset, newest first.
+
+    Reads only: the whole transaction table with a computed value per row.
+    Filtering and CSV export are done client-side off this single payload.
+    """
+    cache = MetricsCache(cache_path_for(ctx.config_manager))
+    all_tx = ctx.db_manager.get_all_transactions()
+
+    if not isinstance(all_tx, pd.DataFrame) or all_tx.empty:
+        return TransactionsResponse(has_data=False, count=0, staleness=staleness_for(cache))
+
+    rows: list[TransactionRow] = []
+    for record in all_tx.to_dict(orient="records"):
+        quantity = opt(record.get("quantity"))
+        price = opt(record.get("price_usd"))
+        rows.append(
+            TransactionRow(
+                timestamp=_str_or_none(record.get("timestamp")),
+                symbol=str(record.get("symbol") or "?"),
+                type=str(record.get("type") or "?"),
+                quantity=quantity,
+                price_usd=price,
+                # Unknown times unknown is unknown, not zero.
+                value_usd=(quantity * price
+                           if quantity is not None and price is not None else None),
+                fee_usd=opt(record.get("fee_usd")),
+                source=_str_or_none(record.get("source")),
+                notes=_str_or_none(record.get("notes")),
+            )
+        )
+    rows.sort(key=lambda r: r.timestamp or "", reverse=True)
+
+    return TransactionsResponse(
+        has_data=True, count=len(rows), rows=rows, staleness=staleness_for(cache),
+    )
 
 
 @router.get("/realized", response_model=RealizedResponse)

@@ -82,6 +82,7 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: <Icon><ellipse cx="8" cy="4" rx="5.5" ry="2" /><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4" />
       <path d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" /></Icon>,
     items: [
+      { to: '/transactions', label: 'Trade Log' },
       { to: '/sync', label: 'Sync' },
       { to: '/reports', label: 'Reports' },
     ],

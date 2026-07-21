@@ -20,6 +20,7 @@ import { Market } from './screens/Market';
 import { Backtest } from './screens/Backtest';
 import { Trading } from './screens/Trading';
 import { Reports } from './screens/Reports';
+import { TradeLog } from './screens/TradeLog';
 import { SystemHealth } from './screens/SystemHealth';
 
 /** The rail: six sections, fixed, never scrolls at any window height. */
@@ -187,6 +188,7 @@ export default function App() {
                 <Route path="/profit" element={<ProfitTaking />} />
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/trade" element={<Trading />} />
+                <Route path="/transactions" element={<TradeLog />} />
                 <Route path="/sync" element={<Sync />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/system" element={<SystemHealth />} />
