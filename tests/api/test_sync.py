@@ -119,6 +119,25 @@ async def test_runner_emits_error_event_and_leaves_cache_untouched(mock_tracker,
     assert not cache_file.exists()
 
 
+def test_post_sync_starts_a_real_sync_through_the_route(mock_tracker):
+    """The route and the real SyncRunner together, which is what production
+    runs. Every other test here either drives the runner directly from inside
+    an async test -- where an event loop is already running -- or substitutes a
+    fake runner. Neither exercises the seam, and the seam is where this broke:
+    a plain `def` endpoint runs in a threadpool with no running event loop, so
+    SyncRunner.start()'s get_running_loop() raised and every sync 500'd.
+    """
+    async def fake_sync():
+        return {"total_value_usd": 57.78, "holdings_df": pd.DataFrame()}
+
+    mock_tracker.run_full_sync = fake_sync
+
+    response = TestClient(app).post("/api/sync")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "started"}
+
+
 def test_post_sync_returns_409_when_already_running(mock_tracker, monkeypatch):
     from api.routes import sync as sync_route
 
