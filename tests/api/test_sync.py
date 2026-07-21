@@ -119,3 +119,27 @@ async def test_runner_does_not_recompute_metrics_after_sync(mock_tracker, tmp_pa
             break
 
     mock_tracker.calculate_portfolio_metrics.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runner_reports_error_when_tracker_construction_fails(tmp_path, monkeypatch):
+    """CryptoPortfolioTracker.__init__ pings Binance and raises
+    NetworkUnavailableError when offline. If that escapes _run, no error event
+    is emitted and the SSE client waits forever on a sync that already died."""
+    def boom():
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setattr("api.sync_runner.get_tracker", boom)
+
+    runner = SyncRunner(cache_path=tmp_path / "metrics.json")
+    assert runner.start() is True
+
+    events = []
+    async for event in runner.events():
+        events.append(event)
+        if event["event"] in ("complete", "error"):
+            break
+
+    assert events[-1]["event"] == "error"
+    assert "network unavailable" in events[-1]["message"]
+    assert not (tmp_path / "metrics.json").exists()
