@@ -81,6 +81,19 @@ export function Cockpit() {
         </div>
 
         {/*
+          The total sums only the holdings that could be priced, so an unpriced
+          position makes it an understatement of unknown size. Saying so beats
+          presenting a confident figure that is quietly missing a holding.
+        */}
+        {data.unpriced_count > 0 && (
+          <p className="mt-2 font-ui text-sm" style={{ color: 'var(--warning)' }}>
+            Understated: {data.unpriced_count} holding
+            {data.unpriced_count === 1 ? '' : 's'} could not be priced and
+            {data.unpriced_count === 1 ? ' is' : ' are'} excluded from this total.
+          </p>
+        )}
+
+        {/*
           Both bases, side by side, each with its denominator and its question.
           They are computed from different sources and routinely differ several
           fold; rendering them as one number would be a lie.

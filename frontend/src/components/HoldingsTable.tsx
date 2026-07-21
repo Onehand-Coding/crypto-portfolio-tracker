@@ -12,10 +12,17 @@ const COLOUR: Record<string, string> = {
 /**
  * Dust collapses into one aggregate row rather than presenting sub-$0.40
  * positions as meaningful allocations.
+ *
+ * Holdings whose price could not be fetched are excluded from that collapse
+ * entirely. Their value is unknown, not small: a failed lookup on a large
+ * position would otherwise hide it inside the dust row, and the position would
+ * read as "too small to matter" while being the bulk of the portfolio.
  */
 export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
-  const material = holdings.filter((h) => (h.value_usd ?? 0) >= DUST_THRESHOLD_USD);
-  const dust = holdings.filter((h) => (h.value_usd ?? 0) < DUST_THRESHOLD_USD);
+  const unpriced = holdings.filter((h) => h.price_unavailable);
+  const priced = holdings.filter((h) => !h.price_unavailable);
+  const material = priced.filter((h) => (h.value_usd ?? 0) >= DUST_THRESHOLD_USD);
+  const dust = priced.filter((h) => (h.value_usd ?? 0) < DUST_THRESHOLD_USD);
   const dustValue = dust.reduce((sum, h) => sum + (h.value_usd ?? 0), 0);
 
   if (holdings.length === 0) {
@@ -47,6 +54,17 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
             <td className="text-right" style={{ color: COLOUR[signOf(h.unrealized_pl_usd)] }}>
               {formatSigned(h.unrealized_pl_usd)} ({formatPercent(h.unrealized_pl_percent)})
             </td>
+          </tr>
+        ))}
+        {unpriced.map((h) => (
+          <tr key={h.symbol} className="border-t" style={{ borderColor: 'var(--border)' }}>
+            <td className="text-left">{h.symbol}</td>
+            <td className="text-right">{formatQty(h.total_quantity)}</td>
+            <td className="text-right" style={{ color: 'var(--warning)' }}>
+              price unavailable
+            </td>
+            <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
+            <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
           </tr>
         ))}
         {dust.length > 0 && (

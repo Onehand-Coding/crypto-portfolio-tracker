@@ -22,18 +22,21 @@ api/                  FastAPI app wrapping the core (read-only over src/)
 ├── serialization.py  jsonable() / df_to_records()
 ├── accounting.py     portfolio-wide FIFO cost basis
 ├── sync_runner.py    background sync + SSE progress
+├── schemas/          Pydantic response models — the frontend's contract
 └── routes/           portfolio.py, capital.py, sync.py
-frontend/             Vite + React 18 + TypeScript + Tailwind v3
+frontend/             Vite + React 19 + TypeScript + Tailwind v3
 run_ui.py             entry point (uvicorn, 127.0.0.1:8000)
 ```
 
 ### The rule that shapes everything: reads never touch the network
 
 `CryptoPortfolioTracker.__init__` pings Binance and calls `get_server_time()`,
-so constructing it is a network operation. Every read endpoint therefore depends
-on `get_read_context()` — a `ReadContext` holding a `ConfigManager`,
-`DatabaseManager`, and an **offline-mode** `PortfolioAnalyzer` — and never on
-`get_tracker()`. Only the sync route builds a real tracker.
+so constructing it is a network operation. No read path may do it. The two
+data-reading endpoints (`/api/portfolio/cockpit`, `/api/capital/flow`) therefore
+depend on `get_read_context()` — a `ReadContext` holding a `ConfigManager`,
+`DatabaseManager`, and an **offline-mode** `PortfolioAnalyzer`. `get_tracker()`
+appears in exactly one place, `api/sync_runner.py`, reached only from
+`POST /api/sync`. A test pins this: `test_cockpit_never_constructs_the_networked_tracker`.
 
 Read endpoints serve figures from `data/api_cache/metrics_{live|testnet}.json`,
 written at the end of each sync. The cache is per-environment because testnet
@@ -47,11 +50,25 @@ would report every holding as worth $0.00.
 
 ### Serving
 
-One process, one port. `api/main.py` mounts `/assets` and registers a catch-all
+One process, one port. `mount_spa()` in `api/main.py` registers a catch-all
 **after** the routers, so an unmatched `/api/*` path 404s instead of silently
-returning `index.html`; every other path returns the SPA so client-side deep
-links work. In development Vite proxies `/api` to the same app. Neither
-arrangement needs CORS.
+returning `index.html`. Beyond that the catch-all sorts requests three ways: a
+real file in `dist/` is served as itself; a path that names an asset (has an
+extension, or is under `assets/`) but does not exist 404s; anything else is a
+client-side route and gets the SPA, so refreshing on `/sync` works.
+
+The distinction matters because the failure it prevents is silent — a stale
+bundle reference served as `index.html` with a `200` breaks later, on MIME type,
+far from its cause.
+
+`mount_spa` takes its app and dist directory as arguments so tests can run it
+against a temporary build. `dist/` is gitignored; reading the real one made the
+tests pass vacuously in every fresh clone. It returns `False` when there is no
+`index.html`, leaving the JSON API up — an interrupted `vite build` must not
+take the whole server down.
+
+In development Vite proxies `/api` to the same app. Neither arrangement needs
+CORS.
 
 ### Conventions worth preserving
 
@@ -61,12 +78,24 @@ arrangement needs CORS.
 - `pd.NaT` is an instance of `datetime.datetime`; missing-value checks must come
   **before** any datetime branch or a missing timestamp serializes as `"NaT"`.
 
-### Known gap
+### Unknown prices (do not regress this)
 
-A holding whose price lookup fails gets `value_usd == 0.0` from the core and is
-then folded into the UI's "dust positions" aggregate — a real position reads as
-worthless. The root cause is in `portfolio_analyzer.py`; the fix belongs in the
-API layer (flag `current_price == 0.0` as price-unavailable). Undecided.
+`portfolio_analyzer` seeds its price map with `0.0` and overwrites only on a
+successful lookup, so a failed price fetch is indistinguishable from a real
+price of zero by the time it reaches the cache. Left alone, the holding renders
+as `$0.00`, the holdings table folds it into the dust aggregate, and a material
+position disappears while the total silently understates it.
+
+The core is read-only here, so `api/routes/portfolio.py::_holding` corrects it at
+the boundary: a holding with quantity but no price is marked `price_unavailable`,
+and every figure derived from that price (`value_usd`, both unrealized fields) is
+nulled rather than passed through as a fabricated total loss. `unpriced_count` on
+the cockpit response drives an explicit caveat under the portfolio total, and
+`HoldingsTable` excludes these rows from the dust collapse entirely.
+
+`total_value_usd` still comes from the core and still omits unpriced holdings —
+hence the caveat rather than a corrected figure. Making the total itself honest
+would require changing the core.
 
 ### Commands
 

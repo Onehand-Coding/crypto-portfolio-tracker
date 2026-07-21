@@ -33,6 +33,12 @@ class Holding(BaseModel):
     unrealized_pl_usd: Optional[float] = None
     unrealized_pl_percent: Optional[float] = None
     is_core: bool = False
+    price_unavailable: bool = Field(
+        False,
+        description="True when the price lookup failed, so value_usd is unknown "
+                    "rather than zero. The UI must not collapse these into dust: "
+                    "a real position would silently vanish.",
+    )
 
 
 class CockpitResponse(BaseModel):
@@ -45,4 +51,10 @@ class CockpitResponse(BaseModel):
     has_data: bool = Field(
         description="False when no sync has ever run; the UI renders an "
                     "explicit empty state rather than zeros"
+    )
+    unpriced_count: int = Field(
+        0,
+        description="Holdings whose price could not be fetched. Non-zero means "
+                    "total_value_usd is understated by an unknown amount and "
+                    "must be presented with that caveat.",
     )

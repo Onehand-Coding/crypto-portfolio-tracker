@@ -31,6 +31,8 @@ export interface Holding {
   unrealized_pl_usd: number | null;
   unrealized_pl_percent: number | null;
   is_core: boolean;
+  /** Price lookup failed: value_usd is unknown, not zero. Never dust-collapse. */
+  price_unavailable: boolean;
 }
 
 export interface CockpitResponse {
@@ -41,6 +43,8 @@ export interface CockpitResponse {
   staleness: Staleness;
   environment: Environment;
   has_data: boolean;
+  /** >0 means total_value_usd is understated by an unknown amount. */
+  unpriced_count: number;
 }
 
 export interface CapitalFlowRow {

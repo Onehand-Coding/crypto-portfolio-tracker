@@ -8,7 +8,7 @@ function holding(overrides: Partial<Holding>): Holding {
     symbol: 'XXX', total_quantity: 1, spot_quantity: 1, earn_quantity: 0,
     current_price: 1, value_usd: 1, average_cost_basis: 1,
     cost_basis_total: 1, unrealized_pl_usd: 0,
-    unrealized_pl_percent: 0, is_core: false,
+    unrealized_pl_percent: 0, is_core: false, price_unavailable: false,
     ...overrides,
   };
 }
@@ -50,6 +50,29 @@ describe('HoldingsTable', () => {
     render(<HoldingsTable holdings={[holding({ symbol: 'DOGE', value_usd: 0.4 })]} />);
     expect(screen.getByText('DOGE')).toBeDefined();
     expect(screen.queryByText(/dust position/)).toBeNull();
+  });
+
+  it('keeps an unpriced holding as its own row instead of hiding it in dust', () => {
+    // The regression this guards: a failed price lookup used to arrive as
+    // value_usd 0.0, which is below the dust threshold, so the position was
+    // collapsed away. Here BTC is the whole portfolio and must stay visible.
+    render(<HoldingsTable holdings={[
+      holding({ symbol: 'BTC', value_usd: null, current_price: null,
+                price_unavailable: true }),
+      holding({ symbol: 'DOGE', value_usd: 0.1 }),
+    ]} />);
+    expect(screen.getByText('BTC')).toBeDefined();
+    expect(screen.getByText('price unavailable')).toBeDefined();
+    // ...and it must not be counted among the dust it was previously mixed into.
+    expect(screen.getByText('1 dust positions')).toBeDefined();
+  });
+
+  it('does not fold an unpriced holding into the dust value total', () => {
+    render(<HoldingsTable holdings={[
+      holding({ symbol: 'BTC', value_usd: null, price_unavailable: true }),
+      holding({ symbol: 'DOGE', value_usd: 0.1 }),
+    ]} />);
+    expect(screen.getByText('$0.10')).toBeDefined();
   });
 
   it('treats a holding with value_usd: null as dust (0 via ?? 0), not material, and does not crash', () => {
