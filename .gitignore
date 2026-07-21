@@ -82,3 +82,7 @@ data/api_cache/
 # The Python "lib/" rule above (Distribution / Packaging) unintentionally
 # matches frontend/src/lib/ since it is unanchored; un-ignore it here.
 !frontend/src/lib/
+
+# Local MCP server config: carries an X-Goog-Api-Key header, so it is one
+# `git add -A` away from committing a credential.
+.mcp.json

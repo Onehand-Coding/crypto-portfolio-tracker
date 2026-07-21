@@ -73,6 +73,67 @@ describe('Sync', () => {
   });
 });
 
+describe('Sync failures logged by the core', () => {
+  async function startAndStream() {
+    render(<Sync />);
+    fireEvent.click(screen.getByRole('button', { name: /start sync/i }));
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    return FakeEventSource.instances[0];
+  }
+
+  it('marks an ERROR-level progress line as an error, not ordinary progress', async () => {
+    // The core logs a failed fiat-rate lookup at ERROR while the sync keeps
+    // running. It arrives as a progress event, and used to render in muted
+    // grey among dozens of chunk lines -- indistinguishable from success.
+    const source = await startAndStream();
+    source.emit({
+      event: 'progress', level: 'ERROR',
+      message: 'HTTP error fetching exchange rate for PHPUSD=X',
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText(/error: HTTP error fetching exchange rate/)).toBeDefined());
+  });
+
+  it('marks a WARNING-level progress line as a warning', async () => {
+    const source = await startAndStream();
+    source.emit({ event: 'progress', level: 'WARNING', message: 'Simple Earn rewards unavailable' });
+
+    await waitFor(() =>
+      expect(screen.getByText(/warning: Simple Earn rewards unavailable/)).toBeDefined());
+  });
+
+  it('does not report an unqualified success when errors occurred during the run', async () => {
+    const source = await startAndStream();
+    source.emit({ event: 'progress', level: 'ERROR', message: 'price lookup failed' });
+    source.emit({
+      event: 'complete', message: 'Sync complete', error_count: 1, warning_count: 0,
+    });
+
+    await waitFor(() => expect(screen.getByText(/1 error occurred/)).toBeDefined());
+    expect(screen.getByText(/data may be missing or mispriced/)).toBeDefined();
+  });
+
+  it('still reports a clean sync as a clean sync', async () => {
+    const source = await startAndStream();
+    source.emit({
+      event: 'complete', message: 'Sync complete', error_count: 0, warning_count: 0,
+    });
+
+    await waitFor(() => expect(screen.getByText('Sync complete')).toBeDefined());
+    expect(screen.queryByText(/error/)).toBeNull();
+  });
+
+  it('does not treat an ERROR log line as terminal -- the sync is still running', async () => {
+    const source = await startAndStream();
+    source.emit({ event: 'progress', level: 'ERROR', message: 'one chunk failed' });
+
+    await waitFor(() => expect(screen.getByText(/error: one chunk failed/)).toBeDefined());
+    expect(source.closed).toBe(false);
+    expect(screen.getByRole('button', { name: /syncing/i })).toBeDefined();
+  });
+});
+
 describe('Sync connection loss', () => {
   it('surfaces a lost-connection message and re-enables the button on a dropped stream', async () => {
     render(<Sync />);

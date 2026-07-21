@@ -75,10 +75,13 @@ describe('HoldingsTable', () => {
     expect(screen.getByText('$0.10')).toBeDefined();
   });
 
-  it('treats a holding with value_usd: null as dust (0 via ?? 0), not material, and does not crash', () => {
+  it('treats a holding with value_usd: null as unknown, not as $0.00 dust', () => {
+    // This test previously asserted the opposite -- that the row vanished into
+    // a "$0.00 dust" aggregate. An unknown value is not a small one, and
+    // price_unavailable is independent of value_usd in the schema, so the null
+    // must be handled on its own rather than via `?? 0`.
     render(<HoldingsTable holdings={[holding({ symbol: 'NULLCOIN', value_usd: null })]} />);
-    expect(screen.queryByText('NULLCOIN')).toBeNull();
-    expect(screen.getByText('1 dust positions')).toBeDefined();
-    expect(screen.getByText('$0.00')).toBeDefined();
+    expect(screen.getByText('NULLCOIN')).toBeDefined();
+    expect(screen.queryByText(/dust position/)).toBeNull();
   });
 });

@@ -5,6 +5,55 @@ import { apiPost, ApiError, NetworkError } from '../lib/api';
 interface SyncEvent {
   event: 'progress' | 'complete' | 'error';
   message: string;
+  /** Log level of the underlying core record. Present on progress events. */
+  level?: string;
+  /** On the terminal `complete` event: failures logged during the run. */
+  error_count?: number;
+  warning_count?: number;
+}
+
+/**
+ * A core ERROR arrives as an ordinary progress event -- it must not close the
+ * stream, since the sync keeps running. Colouring by level is what stops it
+ * scrolling past in muted grey among dozens of chunk lines.
+ */
+function lineColour(event: SyncEvent): string {
+  if (event.event === 'error' || event.level === 'ERROR' || event.level === 'CRITICAL') {
+    return 'var(--negative)';
+  }
+  if (event.level === 'WARNING') {
+    return 'var(--warning)';
+  }
+  if (event.event === 'complete') {
+    return (event.error_count ?? 0) > 0 ? 'var(--warning)' : 'var(--positive)';
+  }
+  return 'var(--text-secondary)';
+}
+
+function lineText(event: SyncEvent): string {
+  if (event.event === 'error') {
+    return `error: ${event.message}`;
+  }
+  // Prefixed rather than relying on colour alone: colour is never the sole
+  // carrier of meaning anywhere else in this UI.
+  if (event.level === 'ERROR' || event.level === 'CRITICAL') {
+    return `error: ${event.message}`;
+  }
+  if (event.level === 'WARNING') {
+    return `warning: ${event.message}`;
+  }
+  if (event.event === 'complete') {
+    const errors = event.error_count ?? 0;
+    const warnings = event.warning_count ?? 0;
+    if (errors > 0) {
+      return `${event.message} — but ${errors} error${errors === 1 ? '' : 's'} occurred. `
+           + 'Some data may be missing or mispriced.';
+    }
+    if (warnings > 0) {
+      return `${event.message} — ${warnings} warning${warnings === 1 ? '' : 's'} logged.`;
+    }
+  }
+  return event.message;
 }
 
 function startErrorMessage(e: unknown): string {
@@ -114,15 +163,8 @@ export function Sync() {
         <Panel title="Progress">
           <ul className="flex flex-col gap-1 font-mono text-xs">
             {events.map((event, index) => (
-              <li
-                key={index}
-                style={{
-                  color: event.event === 'error' ? 'var(--negative)'
-                       : event.event === 'complete' ? 'var(--positive)'
-                       : 'var(--text-secondary)',
-                }}
-              >
-                {event.event === 'error' ? `error: ${event.message}` : event.message}
+              <li key={index} style={{ color: lineColour(event) }}>
+                {lineText(event)}
               </li>
             ))}
           </ul>

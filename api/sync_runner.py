@@ -22,8 +22,24 @@ class _QueueHandler(logging.Handler):
         super().__init__()
         self.queue = queue
         self.loop = loop
+        # Counted so the terminal event can say the sync finished with
+        # failures in it. A sync that logs "HTTP error fetching exchange rate"
+        # and then reports a bare "Sync complete" reads as total success, and
+        # a failed fiat lookup is exactly what once hid $50.41 of inflow.
+        self.error_count = 0
+        self.warning_count = 0
 
     def emit(self, record: logging.LogRecord) -> None:
+        # Serialised by Handler.handle's lock, so these increments are safe
+        # despite arriving from the chunk-fetching worker threads.
+        if record.levelno >= logging.ERROR:
+            self.error_count += 1
+        elif record.levelno >= logging.WARNING:
+            self.warning_count += 1
+        # Stays "progress" even for an ERROR record: "error" is a terminal
+        # event that closes the stream, and a single failed price lookup must
+        # not abort a sync that is still running. The level rides along so the
+        # UI can render it as the failure it is.
         event = {"event": "progress", "message": record.getMessage(),
                  "level": record.levelname}
         self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
@@ -92,7 +108,8 @@ class SyncRunner:
             emit({
                 "event": "complete",
                 "message": "Sync complete",
-                "total_value_usd": float(metrics.get("total_value_usd") or 0.0),
+                "error_count": handler.error_count,
+                "warning_count": handler.warning_count,
             })
         except Exception as exc:  # surfaced to the UI, never swallowed
             emit({"event": "error", "message": str(exc)})

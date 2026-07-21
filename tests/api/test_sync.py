@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 import pandas as pd
@@ -30,6 +31,37 @@ async def test_runner_forwards_core_log_records_as_events(mock_tracker, tmp_path
 
     assert any("chunk 1 of 3" in e.get("message", "") for e in messages)
     assert messages[-1]["event"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_runner_reports_core_errors_on_the_terminal_event(mock_tracker, tmp_path):
+    """A sync that logs failures and then reports a bare "Sync complete" reads
+    as total success. A failed fiat-rate lookup is exactly what once hid
+    $50.41 of inflow, and it is logged at ERROR while the sync keeps going."""
+    async def fake_sync():
+        log = logging.getLogger("crypto_portfolio_tracker.price_enricher")
+        log.error("HTTP error fetching exchange rate for PHPUSD=X")
+        log.warning("Simple Earn rewards endpoint unavailable")
+        return {"total_value_usd": 57.78, "holdings_df": pd.DataFrame()}
+
+    mock_tracker.run_full_sync = fake_sync
+
+    runner = SyncRunner(cache_path=tmp_path / "metrics.json")
+    assert runner.start() is True
+
+    messages = []
+    async for event in runner.events():
+        messages.append(event)
+        if event["event"] == "complete":
+            break
+
+    complete = messages[-1]
+    assert complete["error_count"] == 1
+    assert complete["warning_count"] == 1
+    # The ERROR must not have closed the stream: the sync was still running.
+    assert complete["event"] == "complete"
+    levels = [e.get("level") for e in messages if e["event"] == "progress"]
+    assert "ERROR" in levels
 
 
 @pytest.mark.asyncio
@@ -143,3 +175,35 @@ async def test_runner_reports_error_when_tracker_construction_fails(tmp_path, mo
     assert events[-1]["event"] == "error"
     assert "network unavailable" in events[-1]["message"]
     assert not (tmp_path / "metrics.json").exists()
+
+
+def test_stream_route_emits_parseable_sse_frames(monkeypatch):
+    """The browser's EventSource only recognises "data: {json}\\n\\n". The
+    runner's dict events are covered above, but nothing asserted the wire
+    format itself -- a change to the framing breaks the UI with no test
+    failing anywhere.
+    """
+    class FakeRunner:
+        def start(self):
+            return True
+
+        async def events(self):
+            yield {"event": "progress", "message": "Fetching chunk 1 of 3", "level": "INFO"}
+            yield {"event": "complete", "message": "Sync complete",
+                   "error_count": 0, "warning_count": 0}
+
+    monkeypatch.setattr("api.routes.sync.get_sync_runner", FakeRunner)
+
+    with TestClient(app) as client:
+        response = client.get("/api/sync/stream")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    frames = [f for f in response.text.split("\n\n") if f.strip()]
+    assert len(frames) == 2
+    for frame in frames:
+        assert frame.startswith("data: ")
+        json.loads(frame[len("data: "):])
+
+    assert json.loads(frames[-1][len("data: "):])["event"] == "complete"

@@ -19,8 +19,12 @@ const COLOUR: Record<string, string> = {
  * read as "too small to matter" while being the bulk of the portfolio.
  */
 export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
-  const unpriced = holdings.filter((h) => h.price_unavailable);
-  const priced = holdings.filter((h) => !h.price_unavailable);
+  // A null value_usd counts as unknown too, not just the flagged case: the two
+  // are independent in the schema, and `?? 0` here would classify an unknown
+  // value as dust and make the row vanish -- the same defect the flag exists
+  // to prevent, arriving through the other door.
+  const unpriced = holdings.filter((h) => h.price_unavailable || h.value_usd == null);
+  const priced = holdings.filter((h) => !h.price_unavailable && h.value_usd != null);
   const material = priced.filter((h) => (h.value_usd ?? 0) >= DUST_THRESHOLD_USD);
   const dust = priced.filter((h) => (h.value_usd ?? 0) < DUST_THRESHOLD_USD);
   const dustValue = dust.reduce((sum, h) => sum + (h.value_usd ?? 0), 0);
