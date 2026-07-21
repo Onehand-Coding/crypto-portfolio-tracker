@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatUsd } from '../lib/format';
-import type { SystemHealthResponse } from '../types';
+import type { BackupCreateResponse, SystemHealthResponse } from '../types';
 
 function humanSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -19,7 +21,24 @@ function humanAge(seconds: number | null): string {
 }
 
 export function SystemHealth() {
-  const { data, error } = useApi<SystemHealthResponse>('/api/system/health');
+  const { data, error, reload } = useApi<SystemHealthResponse>('/api/system/health');
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+
+  async function createBackup() {
+    setBackingUp(true);
+    setBackupMsg(null);
+    try {
+      const result = await apiPost<BackupCreateResponse>('/api/system/backup');
+      setBackupMsg(result.created ? `Backup created: ${result.name}`
+                                  : `Backup failed: ${result.error ?? 'unknown error'}`);
+      if (result.created) reload();
+    } catch (e) {
+      setBackupMsg(`Backup failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBackingUp(false);
+    }
+  }
 
   if (error) return <ErrorPanel title="System" message={`Failed to load system health: ${error}`} />;
   if (!data) return <Panel title="System"><Empty>Loading…</Empty></Panel>;
@@ -119,6 +138,16 @@ export function SystemHealth() {
         </Panel>
 
         <Panel title={`Backups (${data.backups.length})`}>
+          <div className="flex flex-wrap items-center justify-between"
+               style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+            <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+              {backupMsg ?? 'Create an on-demand copy of the database. This only reads the '
+                + 'live file — it never modifies it.'}
+            </span>
+            <Button variant="secondary" onClick={createBackup} disabled={backingUp}>
+              {backingUp ? 'Creating…' : 'Create backup'}
+            </Button>
+          </div>
           {data.backups.length === 0 ? (
             <Empty>No database backups found.</Empty>
           ) : (

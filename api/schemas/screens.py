@@ -233,6 +233,13 @@ class BackupInfo(BaseModel):
     modified: str
 
 
+class BackupCreateResponse(BaseModel):
+    created: bool
+    name: Optional[str] = None
+    path: Optional[str] = None
+    error: Optional[str] = None
+
+
 class SystemHealthResponse(BaseModel):
     environment_label: str
     is_testnet: bool

@@ -15,6 +15,7 @@ from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
     AssetDetailResponse,
     AssetTransaction,
+    BackupCreateResponse,
     BackupInfo,
     ExportFile,
     OverviewResponse,
@@ -309,3 +310,23 @@ def system_health(ctx=Depends(get_read_context)) -> SystemHealthResponse:
         metrics_cache_age_seconds=MetricsCache(cache_path_for(ctx.config_manager)).age_seconds(),
         binance_configured=binance_configured,
     )
+
+
+@router.post("/system/backup", response_model=BackupCreateResponse)
+def create_backup(ctx=Depends(get_read_context)) -> BackupCreateResponse:
+    """Create a timestamped copy of the database. Additive: never touches the
+    live file, only reads it, so this cannot lose data.
+
+    force=True because auto-backup may be disabled in config, and an explicit
+    request from the user is exactly the case that should always run.
+    """
+    try:
+        path = ctx.db_manager.backup_database(reason="manual", force=True)
+    except Exception as exc:  # a failed backup must report, not 500 the page
+        return BackupCreateResponse(created=False, error=str(exc))
+    if not path:
+        return BackupCreateResponse(
+            created=False,
+            error="Backup could not be created -- the database file may be missing.",
+        )
+    return BackupCreateResponse(created=True, name=Path(path).name, path=path)

@@ -290,6 +290,13 @@ export interface BackupInfo {
   modified: string;
 }
 
+export interface BackupCreateResponse {
+  created: boolean;
+  name: string | null;
+  path: string | null;
+  error: string | null;
+}
+
 export interface SystemHealthResponse {
   environment_label: string;
   is_testnet: boolean;
