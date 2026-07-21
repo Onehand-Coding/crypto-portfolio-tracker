@@ -15,6 +15,12 @@ import pandas as pd
 
 def jsonable(value: Any) -> Any:
     """Recursively convert a value into something json.dumps accepts."""
+    # Missing values first. pd.NaT IS an instance of datetime.datetime, so if
+    # this check came after the datetime branch, .isoformat() would turn a
+    # missing timestamp into the string "NaT" -- a plausible-looking value
+    # rendered where null belongs.
+    if value is None or value is pd.NaT:
+        return None
     if isinstance(value, pd.DataFrame):
         return df_to_records(value)
     if isinstance(value, (pd.Timestamp, datetime.datetime, datetime.date)):
@@ -26,8 +32,6 @@ def jsonable(value: Any) -> Any:
         return None if math.isnan(as_float) else as_float
     if isinstance(value, np.bool_):
         return bool(value)
-    if value is pd.NaT or value is None:
-        return None
     if isinstance(value, dict):
         return {str(k): jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set, np.ndarray)):

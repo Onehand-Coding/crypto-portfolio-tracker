@@ -2,7 +2,6 @@ import datetime
 import json
 
 import pandas as pd
-import pytest
 
 from api.cache import MetricsCache
 from api.serialization import df_to_records, jsonable
@@ -55,3 +54,15 @@ def test_age_seconds_is_small_immediately_after_write(tmp_path):
     cache = MetricsCache(tmp_path / "metrics.json")
     cache.write({"total_value_usd": 1.0})
     assert cache.age_seconds() < 5.0
+
+
+def test_jsonable_converts_missing_timestamps_to_none():
+    """pd.NaT is an instance of datetime.datetime. If the missing-value check
+    runs after the datetime check, a missing timestamp serializes to the
+    string "NaT" and renders in the UI as though it were a real value."""
+    assert jsonable(pd.NaT) is None
+
+
+def test_df_to_records_converts_missing_timestamps_to_none():
+    df = pd.DataFrame({"symbol": ["BTC"], "last_trade": [pd.NaT]})
+    assert df_to_records(df) == [{"symbol": "BTC", "last_trade": None}]
