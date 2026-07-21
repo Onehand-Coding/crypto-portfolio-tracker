@@ -41,4 +41,22 @@ describe('signOf', () => {
     expect(signOf(-1)).toBe('negative');
     expect(signOf(0)).toBe('zero');
   });
+
+  it('treats null and undefined as zero-signed', () => {
+    expect(signOf(null)).toBe('zero');
+    expect(signOf(undefined)).toBe('zero');
+  });
+});
+
+describe('missing values never render as zero', () => {
+  it.each([
+    ['formatUsd', formatUsd],
+    ['formatSigned', formatSigned],
+    ['formatPercent', formatPercent],
+    ['formatQty', formatQty],
+  ])('%s renders null, undefined and NaN as an em dash', (_name, fn) => {
+    expect(fn(null)).toBe('—');
+    expect(fn(undefined)).toBe('—');
+    expect(fn(NaN)).toBe('—');
+  });
 });
