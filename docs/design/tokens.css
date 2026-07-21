@@ -1,0 +1,22 @@
+:root {
+  --surface-0: #0B0C0E;
+  --surface-1: #14161A;
+  --surface-2: #1C1F26;
+  --border: #2D3139;
+
+  --positive: #00C076;
+  --negative: #E04E4E;
+  --warning: #D9A441;
+  --action: #4F46E5;
+
+  --text-primary: #F9FAFB;
+  --text-secondary: #9BA3AF;
+
+  --radius-control: 4px;
+  --radius-panel: 6px;
+  --space: 4px;
+  --panel-padding: 12px;
+
+  --font-ui: Inter, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
