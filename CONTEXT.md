@@ -319,6 +319,7 @@ would render testnet figures under a LIVE banner.
 **Important Files:**
 | File | Purpose |
 |---|---|
+| `start.sh` | **React UI launcher** — build, graceful restart, `--dev` mode |
 | `run_ui.py` | **React UI entry point** (uvicorn, 127.0.0.1:8000) |
 | `api/main.py` | **FastAPI app** — routers plus `mount_spa()` |
 | `src/crypto_portfolio_tracker/__main__.py` | **CLI entry point** |
@@ -346,9 +347,15 @@ would render testnet figures under a LIVE banner.
 uv sync                            # install Python dependencies
 uv run track-portfolio-cli         # CLI
 uv run track-portfolio-web         # Streamlit UI
-npm --prefix frontend run build    # build the React bundle first...
-uv run python run_ui.py            # ...then serve it on http://127.0.0.1:8000
-npm --prefix frontend run dev      # React dev server, proxies /api to :8000
+
+./start.sh                         # React UI: builds, then serves on :8000
+./start.sh --dev                   # hot reload: Vite on :5173 proxying to :8000
+./start.sh --skip-build            # serve the existing bundle unchanged
+
+# start.sh gracefully stops a previous run first (PID file, SIGTERM then
+# SIGKILL) and aborts rather than serving a stale bundle if the build fails.
+# The manual equivalent, if you need it:
+npm --prefix frontend run build && uv run python run_ui.py
 ```
 
 **Verification commands** — run before claiming a task is done:
