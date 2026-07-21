@@ -86,3 +86,6 @@ data/api_cache/
 # Local MCP server config: carries an X-Goog-Api-Key header, so it is one
 # `git add -A` away from committing a credential.
 .mcp.json
+
+# Runtime artifact written by start.sh
+.crypto_tracker.pids
