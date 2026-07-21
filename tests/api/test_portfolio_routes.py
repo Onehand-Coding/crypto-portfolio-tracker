@@ -105,3 +105,26 @@ def test_cockpit_never_constructs_the_networked_tracker(mock_read_context, tmp_p
 
     assert response.status_code == 200
     tracker_ctor.assert_not_called()
+
+
+def test_cockpit_reports_undefined_percentage_when_basis_is_zero(
+    mock_read_context, tmp_path, monkeypatch
+):
+    """A portfolio built from deposits or rewards has zero net invested. The
+    percentage is undefined there -- reporting 0% would read as 'unchanged'
+    while the portfolio is actually up."""
+    cache_file = tmp_path / "metrics.json"
+    monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
+
+    from api.cache import MetricsCache
+    MetricsCache(cache_file).write({
+        "total_value_usd": 57.78,
+        "total_invested_capital": 0.0,
+        "holdings_df": pd.DataFrame(),
+    })
+    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+
+    body = _client().get("/api/portfolio/cockpit").json()
+
+    assert body["net_invested"]["pl_usd"] == 57.78
+    assert body["net_invested"]["pl_percent"] is None

@@ -18,7 +18,10 @@ STALE_AFTER_SECONDS = 3600.0
 
 def _basis(label: str, question: str, value: float, basis_usd: float) -> AccountingBasis:
     pl = value - basis_usd
-    percent = (pl / basis_usd * 100.0) if basis_usd else 0.0
+    # A zero basis makes the percentage undefined, not zero. Reporting 0.0 would
+    # render as "unchanged" for a portfolio built entirely from deposits or
+    # rewards, which is a lie in the direction that costs money.
+    percent = (pl / basis_usd * 100.0) if basis_usd else None
     return AccountingBasis(
         label=label, question=question, basis_usd=basis_usd,
         pl_usd=pl, pl_percent=percent,

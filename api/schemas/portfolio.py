@@ -13,7 +13,12 @@ class AccountingBasis(BaseModel):
     question: str = Field(description="The plain question this basis answers")
     basis_usd: float = Field(description="Denominator: net in, or cost basis")
     pl_usd: float
-    pl_percent: float
+    pl_percent: Optional[float] = Field(
+        None,
+        description="None when basis_usd is zero -- the percentage is undefined, "
+                    "not zero. Rendering 0% there would read as 'unchanged' while "
+                    "the portfolio is actually up.",
+    )
 
 
 class Holding(BaseModel):
