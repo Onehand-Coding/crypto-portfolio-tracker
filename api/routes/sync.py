@@ -11,7 +11,12 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 
 @router.post("")
-def start_sync() -> dict:
+async def start_sync() -> dict:
+    # Must be async. FastAPI runs a plain `def` endpoint in a threadpool, and
+    # SyncRunner.start() calls asyncio.get_running_loop() to schedule the sync
+    # task -- there is no running loop in a worker thread, so every sync 500'd
+    # with "no running event loop". The body does no blocking work; it only
+    # creates a task.
     runner = get_sync_runner()
     if not runner.start():
         raise HTTPException(status_code=409, detail="A sync is already running")
