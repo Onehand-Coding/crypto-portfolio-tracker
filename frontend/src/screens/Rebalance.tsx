@@ -95,9 +95,13 @@ export function Rebalance() {
                       <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
                         {formatPercentPlain(s.target_allocation_pct)}
                       </td>
+                      {/* Drift is not P/L: being over target is not "good" and
+                          under target is not "bad". Both are deviations, so
+                          colour tracks magnitude, not direction. */}
                       <td className="text-right"
                           style={{ color: s.drift_pct === null ? undefined
-                                        : s.drift_pct > 0 ? 'var(--positive)' : 'var(--negative)' }}>
+                                        : Math.abs(s.drift_pct) < 1 ? 'var(--text-tertiary)'
+                                        : 'var(--warning)' }}>
                         {formatPercent(s.drift_pct)}
                       </td>
                       <td className="text-right">{formatUsd(s.current_value_usd)}</td>

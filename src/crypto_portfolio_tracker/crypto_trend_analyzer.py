@@ -259,8 +259,10 @@ class CryptoTrendAnalyzer:
 
         # Only create and run the strategy if there are indicators to apply
         if ta_list:
-            ta_strategy = ta.Strategy(name="Crypto Trend Analysis", ta=ta_list)
-            temp_data.ta.strategy(ta_strategy)
+            # pandas_ta 0.4 renamed Strategy -> Study and the accessor
+            # .ta.strategy() -> .ta.study(). The kwargs are unchanged.
+            ta_study = ta.Study(name="Crypto Trend Analysis", ta=ta_list)
+            temp_data.ta.study(ta_study)
 
         return temp_data
 

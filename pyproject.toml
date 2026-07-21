@@ -20,7 +20,7 @@ dependencies = [
     # Data processing
     "pandas>=2.0,<3",
     "numpy>=1.26",
-    "pandas-ta>=0.3", # Technical analysis
+    "pandas-ta>=0.4", # Technical analysis (0.4 renamed Strategy -> Study)
     # Financial data
     "yfinance>=0.2",
     "python-binance>=1.0",

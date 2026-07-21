@@ -31,16 +31,42 @@ def _cache(ctx, kind: str) -> MetricsCache:
     return MetricsCache(analysis_cache_path(ctx.config_manager, kind))
 
 
-def _pick(row: dict, *names):
-    """First present key among aliases.
+def _norm(name: str) -> str:
+    """Reduce a column name to letters and digits, lowercased.
 
-    The core's DataFrame column names differ between methods and have changed
-    over time. Trying several and falling back to None keeps a renamed column
-    showing as unknown rather than as zero.
+    The core labels its rebalance columns for humans -- "Target %",
+    "Drift (pts)", "Current Value (USD)" -- while other methods return
+    snake_case. Normalising both sides means one alias matches either spelling
+    instead of the alias list having to guess at punctuation.
     """
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _bare_symbol(symbol) -> str:
+    """Strip the quote-currency suffix the trend analyzer carries.
+
+    It reports yfinance tickers -- "BTC-USD" -- while every other screen keys
+    on "BTC". Left unstripped, joins against holdings match nothing and the
+    indicator columns silently render blank rather than erroring.
+    """
+    text = str(symbol).upper()
+    for suffix in ("-USD", "-USDT", "USDT"):
+        if text.endswith(suffix) and len(text) > len(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def _pick(row: dict, *names):
+    """First present key among aliases, compared on normalised names.
+
+    Falling back to None keeps a renamed column showing as unknown rather than
+    as zero.
+    """
+    normalised = {_norm(str(k)): v for k, v in row.items()}
     for name in names:
-        if name in row and row[name] is not None:
-            return row[name]
+        value = normalised.get(_norm(name))
+        if value is not None:
+            return value
     return None
 
 
@@ -68,20 +94,25 @@ def rebalance(ctx=Depends(get_read_context)) -> RebalanceResponse:
             continue
         suggestions.append(
             RebalanceSuggestion(
-                symbol=str(_pick(row, "symbol", "asset") or "?"),
-                action=(str(_pick(row, "action", "signal", "suggestion"))
-                        if _pick(row, "action", "signal", "suggestion") else None),
-                current_value_usd=opt(_pick(row, "current_value_usd", "value_usd")),
-                current_allocation_pct=opt(_pick(row, "current_allocation_pct",
-                                                 "current_allocation", "current_pct")),
-                target_allocation_pct=opt(_pick(row, "target_allocation_pct",
-                                                "target_allocation", "target_pct")),
-                drift_pct=opt(_pick(row, "drift_pct", "drift", "allocation_drift_pct")),
-                action_amount_usd=opt(_pick(row, "action_amount_usd", "amount_usd",
-                                            "trade_value_usd")),
-                action_quantity=opt(_pick(row, "action_quantity", "quantity")),
-                reason=(str(_pick(row, "reason", "reasoning", "notes"))
-                        if _pick(row, "reason", "reasoning", "notes") else None),
+                # The first alias in each list is the name the core actually
+                # emits today, read off a real run rather than guessed at.
+                symbol=str(_pick(row, "Symbol", "asset") or "?"),
+                action=(str(_pick(row, "Signal", "action", "suggestion"))
+                        if _pick(row, "Signal", "action", "suggestion") else None),
+                current_value_usd=opt(_pick(row, "Current Value (USD)",
+                                            "current_value_usd", "value_usd")),
+                current_allocation_pct=opt(_pick(row, "Current %",
+                                                 "current_allocation_pct", "current_pct")),
+                target_allocation_pct=opt(_pick(row, "Target %",
+                                                "target_allocation_pct", "target_pct")),
+                drift_pct=opt(_pick(row, "Drift (pts)", "drift_pct", "drift")),
+                action_amount_usd=opt(_pick(row, "action_usd_value",
+                                            "action_amount_usd", "amount_usd")),
+                action_quantity=opt(_pick(row, "action_coin_quantity",
+                                          "action_quantity", "quantity")),
+                reason=(str(_pick(row, "Suggested Action Detail", "reason", "reasoning"))
+                        if _pick(row, "Suggested Action Detail", "reason", "reasoning")
+                        else None),
                 raw={str(k): v for k, v in row.items()},
             )
         )
@@ -253,13 +284,17 @@ def technical(ctx=Depends(get_read_context)) -> TechnicalResponse:
                 continue
             rows.append(
                 IndicatorRow(
-                    symbol=str(symbol),
+                    symbol=_bare_symbol(symbol),
                     price=opt(analysis.get("current_price") or analysis.get("price")),
                     rsi=opt(analysis.get("rsi")),
                     sma_short=opt(analysis.get("sma_short")),
                     sma_long=opt(analysis.get("sma_long")),
-                    support=opt(analysis.get("support")),
-                    resistance=opt(analysis.get("resistance")),
+                    # The core names these *_level; reading the bare names
+                    # returned None for every row while the response stayed 200.
+                    support=opt(analysis.get("support_level") or analysis.get("support")),
+                    resistance=opt(
+                        analysis.get("resistance_level") or analysis.get("resistance")
+                    ),
                     conditions=[str(c) for c in (analysis.get("active_conditions") or [])],
                 )
             )
