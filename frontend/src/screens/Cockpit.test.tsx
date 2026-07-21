@@ -13,12 +13,26 @@ const POPULATED: CockpitResponse = {
     label: 'FIFO BASIS', question: 'are my holdings underwater?',
     basis_usd: 199.75, pl_usd: -141.97, pl_percent: -71.07,
   },
-  holdings: [{
-    symbol: 'BTC', total_quantity: 0.001, spot_quantity: 0.001, earn_quantity: 0,
-    current_price: 57780, value_usd: 57.78, average_cost_basis: 100,
-    cost_basis_total: 199.75, unrealized_pl_usd: -141.97,
-    unrealized_pl_percent: -71.07, is_core: true,
-  }],
+  holdings: [
+    {
+      symbol: 'BTC', total_quantity: 0.0004, spot_quantity: 0.0004, earn_quantity: 0,
+      current_price: 95000, value_usd: 38.00, average_cost_basis: 330000,
+      cost_basis_total: 132.00, unrealized_pl_usd: -94.00,
+      unrealized_pl_percent: -71.21, is_core: true,
+    },
+    {
+      symbol: 'ETH', total_quantity: 0.006, spot_quantity: 0.006, earn_quantity: 0,
+      current_price: 3200, value_usd: 19.20, average_cost_basis: 11291.67,
+      cost_basis_total: 67.75, unrealized_pl_usd: -48.55,
+      unrealized_pl_percent: -71.66, is_core: true,
+    },
+    {
+      symbol: 'DOGE', total_quantity: 2.5, spot_quantity: 2.5, earn_quantity: 0,
+      current_price: 0.232, value_usd: 0.58, average_cost_basis: 0.4,
+      cost_basis_total: 1.00, unrealized_pl_usd: -0.42,
+      unrealized_pl_percent: -42.00, is_core: false,
+    },
+  ],
   staleness: { cached_at: '2026-07-21T09:30:00', age_seconds: 120, is_stale: false },
   environment: { is_testnet: true, database_path: 'data/testnet_portfolio.db', label: 'TESTNET' },
   has_data: true,
@@ -47,16 +61,9 @@ describe('Cockpit populated state', () => {
 
     // Regex, not exact strings: each basis renders its P/L and percent in a
     // single span, e.g. "-$18.63  (-24.38%)".
-    // getAllByText, not getByText: this fixture has exactly one holding, so
-    // total_value_usd and that holding's value_usd are legitimately equal
-    // (57.78) -- "$57.78" correctly renders in two places (header total and
-    // the holdings row), not a bug.
-    await waitFor(() => expect(screen.getAllByText('$57.78').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText('$57.78')).toBeDefined());
     expect(screen.getByText(/-\$18\.63/)).toBeDefined();
-    // getAllByText: the fixture's single holding's unrealized P/L (-141.97)
-    // legitimately equals the FIFO basis P/L for the whole portfolio, so it
-    // correctly renders in both the summary and the holdings row.
-    expect(screen.getAllByText(/-\$141\.97/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/-\$141\.97/)).toBeDefined();
   });
 
   it('labels each basis with the question it answers', async () => {
