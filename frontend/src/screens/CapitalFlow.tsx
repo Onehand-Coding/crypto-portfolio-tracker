@@ -1,3 +1,100 @@
+import { useEffect, useState } from 'react';
+import { Metric } from '../components/Metric';
+import { Panel } from '../components/Panel';
+import { apiGet } from '../lib/api';
+import { formatQty, formatUsd } from '../lib/format';
+import type { CapitalFlowResponse } from '../types';
+
+const PROVENANCE_LABEL: Record<string, string> = {
+  computed: 'computed',
+  usdt_peg_fallback: 'USDT peg fallback',
+  failed_lookup: 'failed lookup',
+};
+
 export function CapitalFlow() {
-  return null;
+  const [data, setData] = useState<CapitalFlowResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<CapitalFlowResponse>('/api/capital/flow')
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  // Checked before the "loading" branch: a fetch failure must always surface
+  // as a visible, legible error -- never a blank panel and never a loading
+  // state stuck forever.
+  if (error) {
+    return (
+      <Panel title="Capital flow">
+        <p className="font-mono text-sm" style={{ color: 'var(--negative)' }}>
+          Failed to load capital flow: {error}
+        </p>
+      </Panel>
+    );
+  }
+  if (!data) {
+    return (
+      <Panel title="Capital flow">
+        <p className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Loading…
+        </p>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Panel title="Capital flow">
+        <div className="grid grid-cols-3 gap-8">
+          <Metric label="Total in" value={formatUsd(data.total_in_usd)} />
+          <Metric label="Total out" value={formatUsd(data.total_out_usd)} />
+          <Metric label="Net invested" value={formatUsd(data.net_invested_usd)} />
+        </div>
+        {data.suspect_count > 0 && (
+          <p className="mt-3 font-ui text-sm" style={{ color: 'var(--warning)' }}>
+            {data.suspect_count} row{data.suspect_count === 1 ? '' : 's'} could not be
+            priced from a real exchange rate. Net invested may understate actual inflow.
+          </p>
+        )}
+      </Panel>
+
+      <Panel title="Transactions">
+        {data.rows.length === 0 ? (
+          <p className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
+            No capital flow recorded yet.
+          </p>
+        ) : (
+          <table className="w-full font-mono text-sm tabular-nums">
+            <thead>
+              <tr style={{ color: 'var(--text-secondary)' }}>
+                <th className="text-left font-normal">Source</th>
+                <th className="text-left font-normal">Dir</th>
+                <th className="text-right font-normal">Quantity</th>
+                <th className="text-right font-normal">Rate</th>
+                <th className="text-right font-normal">Value</th>
+                <th className="text-left font-normal">Provenance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row, index) => (
+                <tr key={index} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                  <td className="text-left">{row.source}</td>
+                  <td className="text-left">{row.direction === 'in' ? '+ in' : '- out'}</td>
+                  <td className="text-right">{formatQty(row.quantity)}</td>
+                  <td className="text-right">{formatQty(row.price_usd)}</td>
+                  <td className="text-right">{formatUsd(row.value_usd)}</td>
+                  <td className="text-left"
+                      style={{ color: row.is_suspect ? 'var(--warning)'
+                                                     : 'var(--text-secondary)' }}>
+                    {PROVENANCE_LABEL[row.provenance]}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+    </div>
+  );
 }
