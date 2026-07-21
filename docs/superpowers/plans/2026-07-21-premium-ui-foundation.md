@@ -1569,39 +1569,65 @@ class SyncRunner:
             return False
         self._queue = asyncio.Queue()
         # get_running_loop, not get_event_loop: the latter is deprecated on
-        # Python 3.12+ and this project runs 3.14.
+        # Python 3.10+ and this project runs 3.12.
         self._task = asyncio.get_running_loop().create_task(self._run())
         return True
 
     async def _run(self) -> None:
-        tracker = get_tracker()
-        cache_path = self._cache_path
-        if cache_path is None:
-            from api.cache import cache_path_for
-            cache_path = cache_path_for(tracker.config_manager)
-
+        loop = asyncio.get_running_loop()
         logger = logging.getLogger(CORE_LOGGER)
-        handler = _QueueHandler(self._queue, asyncio.get_running_loop())
+        handler = _QueueHandler(self._queue, loop)
+        previous_level = logger.level
+        # The core logger has no explicit level, so it inherits root's
+        # WARNING default and INFO-level chunk progress never reaches any
+        # handler. Lower it for the run's duration only, then restore it.
+        logger.setLevel(logging.INFO)
         logger.addHandler(handler)
+
+        def emit(event: dict) -> None:
+            # Chunk fetching runs via asyncio.to_thread, so log records for
+            # "progress" arrive through call_soon_threadsafe from a worker
+            # thread. "complete"/"error" must queue behind any progress
+            # records already scheduled that way, so they go through the
+            # same call_soon_threadsafe path rather than a direct put --
+            # otherwise a same-thread completion can overtake a still-
+            # pending, cross-thread-scheduled progress callback.
+            loop.call_soon_threadsafe(self._queue.put_nowait, event)
+
         try:
-            await self._queue.put({"event": "progress", "message": "Starting sync"})
+            emit({"event": "progress", "message": "Starting sync"})
+            # Tracker construction (and cache-path resolution) happens inside
+            # this try, not before it: CryptoPortfolioTracker.__init__ pings
+            # Binance and can raise NetworkUnavailableError. If that happened
+            # outside the try, the exception would escape _run entirely, no
+            # error event would be enqueued, and an SSE client would block on
+            # the queue forever even though the sync had already died.
+            tracker = get_tracker()
+            cache_path = self._cache_path
+            if cache_path is None:
+                from api.cache import cache_path_for
+                cache_path = cache_path_for(tracker.config_manager)
             # run_full_sync already calls calculate_portfolio_metrics and returns
             # the result (portfolio_tracker.py:330-333). Calling it again would
             # repeat the full Binance + yfinance price enrichment -- the slowest
             # operation in the app -- for no gain.
             metrics = await tracker.run_full_sync()
             MetricsCache(cache_path).write(metrics)
-            await self._queue.put({
+            emit({
                 "event": "complete",
                 "message": "Sync complete",
                 "total_value_usd": float(metrics.get("total_value_usd") or 0.0),
             })
         except Exception as exc:  # surfaced to the UI, never swallowed
-            await self._queue.put({"event": "error", "message": str(exc)})
+            emit({"event": "error", "message": str(exc)})
         finally:
             logger.removeHandler(handler)
+            logger.setLevel(previous_level)
 
     async def events(self) -> AsyncIterator[dict]:
+        # Single-consumer: this drains a shared queue, so two simultaneous
+        # SSE clients split the events between them and each sees only a
+        # partial stream. Acceptable for a single-user local tool.
         while True:
             event = await self._queue.get()
             yield event
