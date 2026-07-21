@@ -15,12 +15,9 @@ async def test_runner_forwards_core_log_records_as_events(mock_tracker, tmp_path
         logging.getLogger("crypto_portfolio_tracker.binance_fetcher").info(
             "Fetching chunk 1 of 3"
         )
-        return True
+        return {"total_value_usd": 57.78, "holdings_df": pd.DataFrame()}
 
     mock_tracker.run_full_sync = fake_sync
-    mock_tracker.calculate_portfolio_metrics = _async_return({
-        "total_value_usd": 57.78, "holdings_df": pd.DataFrame(),
-    })
 
     runner = SyncRunner(cache_path=tmp_path / "metrics.json")
     assert runner.start() is True
@@ -39,12 +36,9 @@ async def test_runner_forwards_core_log_records_as_events(mock_tracker, tmp_path
 async def test_runner_refuses_concurrent_syncs(mock_tracker, tmp_path):
     async def slow_sync():
         await asyncio.sleep(0.2)
-        return True
+        return {"total_value_usd": 1.0, "holdings_df": pd.DataFrame()}
 
     mock_tracker.run_full_sync = slow_sync
-    mock_tracker.calculate_portfolio_metrics = _async_return({
-        "total_value_usd": 1.0, "holdings_df": pd.DataFrame(),
-    })
 
     runner = SyncRunner(cache_path=tmp_path / "metrics.json")
     assert runner.start() is True
@@ -56,12 +50,9 @@ async def test_runner_writes_metrics_cache_on_success(mock_tracker, tmp_path):
     cache_file = tmp_path / "metrics.json"
 
     async def fake_sync():
-        return True
+        return {"total_value_usd": 57.78, "holdings_df": pd.DataFrame()}
 
     mock_tracker.run_full_sync = fake_sync
-    mock_tracker.calculate_portfolio_metrics = _async_return({
-        "total_value_usd": 57.78, "holdings_df": pd.DataFrame(),
-    })
 
     runner = SyncRunner(cache_path=cache_file)
     runner.start()
@@ -109,7 +100,22 @@ def test_post_sync_returns_409_when_already_running(mock_tracker, monkeypatch):
     assert TestClient(app).post("/api/sync").status_code == 409
 
 
-def _async_return(value):
-    async def _inner():
-        return value
-    return _inner
+@pytest.mark.asyncio
+async def test_runner_does_not_recompute_metrics_after_sync(mock_tracker, tmp_path):
+    """run_full_sync already returns the metrics. Calling
+    calculate_portfolio_metrics again repeats the full Binance and yfinance
+    price enrichment for no gain."""
+    from unittest.mock import AsyncMock
+
+    mock_tracker.run_full_sync = AsyncMock(return_value={
+        "total_value_usd": 57.78, "holdings_df": pd.DataFrame(),
+    })
+    mock_tracker.calculate_portfolio_metrics = AsyncMock()
+
+    runner = SyncRunner(cache_path=tmp_path / "metrics.json")
+    runner.start()
+    async for event in runner.events():
+        if event["event"] in ("complete", "error"):
+            break
+
+    mock_tracker.calculate_portfolio_metrics.assert_not_called()

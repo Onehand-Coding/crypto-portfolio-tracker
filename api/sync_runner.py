@@ -78,8 +78,11 @@ class SyncRunner:
 
         try:
             emit({"event": "progress", "message": "Starting sync"})
-            await tracker.run_full_sync()
-            metrics = await tracker.calculate_portfolio_metrics()
+            # run_full_sync already calls calculate_portfolio_metrics and returns
+            # the result (portfolio_tracker.py:330-333). Calling it again would
+            # repeat the full Binance + yfinance price enrichment -- the slowest
+            # operation in the app -- for no gain.
+            metrics = await tracker.run_full_sync()
             MetricsCache(cache_path).write(metrics)
             emit({
                 "event": "complete",
