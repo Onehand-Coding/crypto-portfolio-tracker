@@ -52,6 +52,39 @@ class AssetDetailResponse(BaseModel):
     staleness: Staleness
 
 
+class RealizedGainRow(BaseModel):
+    """One taxable event (a SELL/WITHDRAWAL) priced against its FIFO lots."""
+
+    date: Optional[str]
+    year: Optional[int]
+    symbol: str
+    quantity: Optional[float]
+    proceeds_usd: Optional[float]
+    cost_basis_usd: Optional[float]
+    gain_usd: Optional[float]
+
+
+class RealizedGainSummary(BaseModel):
+    """Per-asset roll-up of realized gains."""
+
+    symbol: str
+    total_gain_usd: Optional[float]
+    total_proceeds_usd: Optional[float]
+    total_cost_basis_usd: Optional[float]
+
+
+class RealizedResponse(BaseModel):
+    # False when there are no transactions at all; has_data True with an empty
+    # rows list is the distinct, legitimate "no taxable events yet" state.
+    has_data: bool
+    rows: list[RealizedGainRow] = []
+    by_asset: list[RealizedGainSummary] = []
+    total_gain_usd: Optional[float] = None
+    total_proceeds_usd: Optional[float] = None
+    total_cost_basis_usd: Optional[float] = None
+    staleness: Staleness
+
+
 class AnalysisState(BaseModel):
     """Wrapper for every live analysis: the result plus how it is doing."""
 

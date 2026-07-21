@@ -98,6 +98,33 @@ export interface OverviewResponse {
   staleness: Staleness;
 }
 
+export interface RealizedGainRow {
+  date: string | null;
+  year: number | null;
+  symbol: string;
+  quantity: number | null;
+  proceeds_usd: number | null;
+  cost_basis_usd: number | null;
+  gain_usd: number | null;
+}
+
+export interface RealizedGainSummary {
+  symbol: string;
+  total_gain_usd: number | null;
+  total_proceeds_usd: number | null;
+  total_cost_basis_usd: number | null;
+}
+
+export interface RealizedResponse {
+  has_data: boolean;
+  rows: RealizedGainRow[];
+  by_asset: RealizedGainSummary[];
+  total_gain_usd: number | null;
+  total_proceeds_usd: number | null;
+  total_cost_basis_usd: number | null;
+  staleness: Staleness;
+}
+
 export interface AssetTransaction {
   timestamp: string | null;
   type: string;

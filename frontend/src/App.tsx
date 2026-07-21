@@ -9,6 +9,7 @@ import { Cockpit } from './screens/Cockpit';
 import { CapitalFlow } from './screens/CapitalFlow';
 import { Sync } from './screens/Sync';
 import { Overview } from './screens/Overview';
+import { Realized } from './screens/Realized';
 import { Wallets } from './screens/Wallets';
 import { AssetDetail } from './screens/AssetDetail';
 import { Rebalance } from './screens/Rebalance';
@@ -175,6 +176,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Cockpit />} />
                 <Route path="/overview" element={<Overview />} />
+                <Route path="/realized" element={<Realized />} />
                 <Route path="/wallets" element={<Wallets />} />
                 <Route path="/capital" element={<CapitalFlow />} />
                 <Route path="/assets/:symbol" element={<AssetDetail />} />

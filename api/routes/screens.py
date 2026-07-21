@@ -18,10 +18,14 @@ from api.schemas.screens import (
     BackupInfo,
     ExportFile,
     OverviewResponse,
+    RealizedGainRow,
+    RealizedGainSummary,
+    RealizedResponse,
     ReportsResponse,
     SnapshotPoint,
     SystemHealthResponse,
 )
+from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
 router = APIRouter(prefix="/api", tags=["screens"])
 
@@ -141,6 +145,74 @@ def reports(ctx=Depends(get_read_context)) -> ReportsResponse:
             )
     files.sort(key=lambda f: f.modified, reverse=True)
     return ReportsResponse(files=files, export_dir=str(export_dir))
+
+
+@router.get("/realized", response_model=RealizedResponse)
+def realized(ctx=Depends(get_read_context)) -> RealizedResponse:
+    """Realized gains by FIFO -- the taxable half of the accounting.
+
+    This wraps the same core function the Streamlit tax report uses
+    (calculate_fifo_realized_gains) so the two agree by construction. Reads
+    only: it computes over the transaction table and never touches the wire.
+    """
+    cache = MetricsCache(cache_path_for(ctx.config_manager))
+    transactions = ctx.db_manager.get_all_transactions()
+
+    if not isinstance(transactions, pd.DataFrame) or transactions.empty:
+        return RealizedResponse(has_data=False, staleness=staleness_for(cache))
+
+    tax_df = calculate_fifo_realized_gains(transactions)
+    if tax_df.empty:
+        # Transactions exist but none of them are taxable events yet. That is a
+        # real, distinct state from "no data" -- has_data stays True.
+        return RealizedResponse(has_data=True, staleness=staleness_for(cache))
+
+    rows: list[RealizedGainRow] = []
+    for record in tax_df.to_dict(orient="records"):
+        date = pd.to_datetime(record.get("date"), errors="coerce")
+        rows.append(
+            RealizedGainRow(
+                date=_str_or_none(date),
+                year=(int(date.year) if pd.notna(date) else None),
+                symbol=str(record.get("symbol")),
+                quantity=opt(record.get("quantity")),
+                proceeds_usd=opt(record.get("proceeds_usd")),
+                cost_basis_usd=opt(record.get("cost_basis_usd")),
+                gain_usd=opt(record.get("gain_usd")),
+            )
+        )
+    # Newest first, matching every other dated table in the app.
+    rows.sort(key=lambda r: r.date or "", reverse=True)
+
+    summary = (
+        tax_df.groupby("symbol")
+        .agg(
+            total_gain_usd=("gain_usd", "sum"),
+            total_proceeds_usd=("proceeds_usd", "sum"),
+            total_cost_basis_usd=("cost_basis_usd", "sum"),
+        )
+        .reset_index()
+    )
+    by_asset = [
+        RealizedGainSummary(
+            symbol=str(record.get("symbol")),
+            total_gain_usd=opt(record.get("total_gain_usd")),
+            total_proceeds_usd=opt(record.get("total_proceeds_usd")),
+            total_cost_basis_usd=opt(record.get("total_cost_basis_usd")),
+        )
+        for record in summary.to_dict(orient="records")
+    ]
+    by_asset.sort(key=lambda s: s.total_gain_usd or 0.0, reverse=True)
+
+    return RealizedResponse(
+        has_data=True,
+        rows=rows,
+        by_asset=by_asset,
+        total_gain_usd=opt(tax_df["gain_usd"].sum()),
+        total_proceeds_usd=opt(tax_df["proceeds_usd"].sum()),
+        total_cost_basis_usd=opt(tax_df["cost_basis_usd"].sum()),
+        staleness=staleness_for(cache),
+    )
 
 
 @router.get("/system/health", response_model=SystemHealthResponse)

@@ -45,6 +45,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/', label: 'Cockpit' },
       { to: '/overview', label: 'Overview' },
+      { to: '/realized', label: 'Realized P/L' },
       { to: '/wallets', label: 'Wallets' },
       { to: '/capital', label: 'Capital Flow' },
     ],
