@@ -22,3 +22,11 @@ def mock_tracker():
     tracker.config_manager.is_testnet_mode = True
     deps.set_tracker_for_testing(tracker)
     return tracker
+
+
+@pytest.fixture
+def mock_read_context():
+    """A ReadContext stand-in wired into the deps singleton."""
+    context = Mock()
+    deps.set_read_context_for_testing(context)
+    return context
