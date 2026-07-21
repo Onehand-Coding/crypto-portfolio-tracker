@@ -4,15 +4,20 @@ from unittest.mock import Mock
 
 import pytest
 
-from api import deps
+from api import deps, sync_runner
 
 
 @pytest.fixture(autouse=True)
 def _reset_singletons():
     """Every test starts with a clean singleton slate."""
     deps.reset_singletons()
+    # The sync runner is a separate module-level singleton. Left over from a
+    # previous test it reports is_running and the next POST /api/sync gets a
+    # 409, so a route test would pass for the wrong reason.
+    sync_runner._runner = None
     yield
     deps.reset_singletons()
+    sync_runner._runner = None
 
 
 @pytest.fixture
