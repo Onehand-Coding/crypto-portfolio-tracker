@@ -60,3 +60,83 @@ describe('CapitalFlow error state', () => {
     expect(screen.getByText(/cannot reach|failed|error|unable/i)).toBeDefined();
   });
 });
+
+describe('CapitalFlow unpriced inflow caption', () => {
+  it('shows "excludes 1 unpriced row" caption on Total in when one inflow row is unpriced', async () => {
+    const payload: CapitalFlowResponse = {
+      rows: [
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 100,
+          price_usd: 0.0179, value_usd: 1.79, provenance: 'computed', is_suspect: false },
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 50,
+          price_usd: 0, value_usd: 0, provenance: 'failed_lookup', is_suspect: true },
+      ],
+      total_in_usd: 1.79,
+      total_out_usd: 0,
+      net_invested_usd: 1.79,
+      suspect_count: 1,
+    };
+    mockFetch(payload);
+    render(<CapitalFlow />);
+    await waitFor(() =>
+      expect(screen.getByText('excludes 1 unpriced row')).toBeDefined());
+  });
+
+  it('shows "excludes 2 unpriced rows" (plural) caption on Total in when two inflow rows are unpriced', async () => {
+    const payload: CapitalFlowResponse = {
+      rows: [
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 100,
+          price_usd: 0.0179, value_usd: 1.79, provenance: 'computed', is_suspect: false },
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 50,
+          price_usd: 0, value_usd: 0, provenance: 'failed_lookup', is_suspect: true },
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 30,
+          price_usd: 0, value_usd: 0, provenance: 'failed_lookup', is_suspect: true },
+      ],
+      total_in_usd: 1.79,
+      total_out_usd: 0,
+      net_invested_usd: 1.79,
+      suspect_count: 2,
+    };
+    mockFetch(payload);
+    render(<CapitalFlow />);
+    await waitFor(() =>
+      expect(screen.getByText('excludes 2 unpriced rows')).toBeDefined());
+  });
+
+  it('does not show unpriced row caption on Total in when no inflow rows are unpriced', async () => {
+    const payload: CapitalFlowResponse = {
+      rows: [
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 100,
+          price_usd: 0.0179, value_usd: 1.79, provenance: 'computed', is_suspect: false },
+      ],
+      total_in_usd: 1.79,
+      total_out_usd: 0,
+      net_invested_usd: 1.79,
+      suspect_count: 0,
+    };
+    mockFetch(payload);
+    render(<CapitalFlow />);
+    await waitFor(() => {
+      expect(screen.queryByText(/excludes.*unpriced row/)).toBeNull();
+    });
+  });
+
+  it('does not show unpriced row caption on Total in when only outflow rows are unpriced', async () => {
+    const payload: CapitalFlowResponse = {
+      rows: [
+        { source: 'Binance P2P Buy', type: 'BUY', direction: 'in', quantity: 100,
+          price_usd: 0.0179, value_usd: 1.79, provenance: 'computed', is_suspect: false },
+        { source: 'Binance Withdrawal', type: 'SELL', direction: 'out', quantity: 50,
+          price_usd: 0, value_usd: 0, provenance: 'failed_lookup', is_suspect: true },
+      ],
+      total_in_usd: 1.79,
+      total_out_usd: 0,
+      net_invested_usd: 1.79,
+      suspect_count: 1,
+    };
+    mockFetch(payload);
+    render(<CapitalFlow />);
+    await waitFor(() => {
+      expect(screen.queryByText(/excludes.*unpriced row/)).toBeNull();
+    });
+  });
+});

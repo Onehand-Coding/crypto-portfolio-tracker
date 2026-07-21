@@ -43,11 +43,21 @@ export function CapitalFlow() {
     );
   }
 
+  const unpricedInflows = data.rows.filter(
+    (row) => row.direction === 'in' && row.is_suspect,
+  ).length;
+
   return (
     <div className="flex flex-col gap-4">
       <Panel title="Capital flow">
         <div className="grid grid-cols-3 gap-8">
-          <Metric label="Total in" value={formatUsd(data.total_in_usd)} />
+          <Metric
+            label="Total in"
+            value={formatUsd(data.total_in_usd)}
+            sub={unpricedInflows > 0
+              ? `excludes ${unpricedInflows} unpriced row${unpricedInflows === 1 ? '' : 's'}`
+              : undefined}
+          />
           <Metric label="Total out" value={formatUsd(data.total_out_usd)} />
           <Metric label="Net invested" value={formatUsd(data.net_invested_usd)} />
         </div>
