@@ -2119,8 +2119,29 @@ import type { Environment } from '../types';
  * Always rendered, in both environments. Testnet uses the warning colour AND
  * the word TESTNET AND the database filename -- three independent signals,
  * because presenting testnet figures as live is the worst failure this UI has.
+ *
+ * When environment is null (still loading, or the API could not be reached),
+ * the banner must never simply be absent -- absence reads as "nothing
+ * unusual". Instead it renders an explicit unknown state using the negative
+ * colour, since an unverifiable environment is a hazard, not a warning.
  */
-export function EnvBanner({ environment }: { environment: Environment }) {
+export function EnvBanner({ environment }: { environment: Environment | null }) {
+  if (!environment) {
+    return (
+      <div
+        className="flex items-center gap-3 border-b px-3 py-1 font-mono text-xs"
+        style={{
+          borderColor: 'var(--border)',
+          background: 'var(--negative)',
+          color: 'var(--surface-0)',
+        }}
+      >
+        <span className="font-bold tracking-wider">ENVIRONMENT UNKNOWN</span>
+        <span>cannot reach API — do not trust displayed figures</span>
+      </div>
+    );
+  }
+
   const isTestnet = environment.is_testnet;
   return (
     <div
@@ -2265,7 +2286,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--surface-0)' }}>
-      {environment && <EnvBanner environment={environment} />}
+      {/* Always rendered. Absence would read as 'nothing unusual'. */}
+      <EnvBanner environment={environment} />
       <div className="flex">
         <nav className="flex w-48 shrink-0 flex-col gap-1 border-r p-3"
              style={{ borderColor: 'var(--border)' }}>
