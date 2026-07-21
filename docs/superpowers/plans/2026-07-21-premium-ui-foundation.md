@@ -126,7 +126,7 @@ values follow the prose and are authoritative for the React build."
 
 **Files:**
 - Create: `api/__init__.py`, `api/deps.py`, `api/main.py`
-- Create: `tests/api/__init__.py`, `tests/api/conftest.py`, `tests/api/test_deps.py`
+- Create: `tests/api/conftest.py`, `tests/api/test_deps.py` (no `__init__.py` — see Step 4)
 - Modify: `pyproject.toml` (add `fastapi`, `uvicorn[standard]`)
 
 **Interfaces:**
@@ -266,7 +266,7 @@ def health() -> dict:
     return {"status": "ok"}
 ```
 
-`tests/api/__init__.py`: empty file.
+Do **not** create `tests/api/__init__.py`. `tests/` has no `__init__.py`, so adding one under `tests/api/` makes pytest import that directory as a top-level package named `api`, colliding with the real `api/` package and breaking collection. Leave `tests/api/` without one.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -286,6 +286,177 @@ Expected: the first command prints nothing; the suite passes.
 ```bash
 git add api/ tests/api/ pyproject.toml uv.lock
 git commit -m "feat: add API package skeleton with core singletons"
+```
+
+---
+
+## Task 2b: Network-free read context
+
+Discovered during Task 2 review. `CryptoPortfolioTracker.__init__` calls `_init_binance_client()`, which performs live network calls — `client.get_server_time()` (`data_synchronizer.py:160`) and `client.ping()` (`data_synchronizer.py:138`) — and raises `NetworkUnavailableError` when the network is down.
+
+Because `get_tracker()` constructs lazily, the first GET request to any endpoint using `Depends(get_tracker)` would block on Binance and could return 500 while offline. That violates the Global Constraint "Reads never block on Binance."
+
+Read endpoints need only three things, none of which touch the network: the `ConfigManager` (for testnet state and paths), the `DatabaseManager` (SQLite), and a `PortfolioAnalyzer` for `calculate_total_invested_capital()`, which reads only `db_manager.get_invested_capital_transactions()` (verified at `portfolio_analyzer.py:51-86`).
+
+So reads get their own dependency. `get_tracker()` remains, reserved for sync — the one path that is *supposed* to reach Binance.
+
+**Files:**
+- Modify: `api/deps.py`
+- Create: `tests/api/test_read_context.py`
+
+**Interfaces:**
+- Produces: `ReadContext` (attributes `.config_manager`, `.db_manager`, `.portfolio_analyzer`) and `get_read_context() -> ReadContext`. Tasks 4 and 5 depend on this instead of `get_tracker`.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/api/test_read_context.py`:
+
+```python
+from unittest.mock import Mock, patch
+
+from api import deps
+
+
+def test_read_context_never_constructs_the_binance_client():
+    """The whole point: reads must not touch the network."""
+    with patch("api.deps.CryptoPortfolioTracker") as tracker_ctor, \
+         patch("api.deps.DatabaseManager"), \
+         patch("api.deps.PortfolioAnalyzer"), \
+         patch("api.deps.ConfigManager"):
+        deps.get_read_context()
+
+    tracker_ctor.assert_not_called()
+
+
+def test_read_context_is_a_singleton():
+    with patch("api.deps.DatabaseManager"), \
+         patch("api.deps.PortfolioAnalyzer"), \
+         patch("api.deps.ConfigManager"):
+        first = deps.get_read_context()
+        second = deps.get_read_context()
+
+    assert first is second
+
+
+def test_read_context_builds_analyzer_in_offline_mode():
+    with patch("api.deps.DatabaseManager"), \
+         patch("api.deps.PortfolioAnalyzer") as analyzer_ctor, \
+         patch("api.deps.ConfigManager"):
+        deps.get_read_context()
+
+    assert analyzer_ctor.call_args.kwargs["offline_mode"] is True
+    assert analyzer_ctor.call_args.kwargs["binance_client"] is None
+    assert analyzer_ctor.call_args.kwargs["fetcher"] is None
+
+
+def test_read_context_uses_the_configured_database_path():
+    with patch("api.deps.DatabaseManager") as db_ctor, \
+         patch("api.deps.PortfolioAnalyzer"), \
+         patch("api.deps.ConfigManager") as cfg_ctor:
+        cfg = Mock()
+        cfg.get_database_path.return_value = "data/testnet_portfolio.db"
+        cfg_ctor.return_value = cfg
+        deps.get_read_context()
+
+    assert db_ctor.call_args.kwargs["db_path"] == "data/testnet_portfolio.db"
+
+
+def test_reset_singletons_clears_the_read_context():
+    with patch("api.deps.DatabaseManager"), \
+         patch("api.deps.PortfolioAnalyzer"), \
+         patch("api.deps.ConfigManager"):
+        first = deps.get_read_context()
+        deps.reset_singletons()
+        second = deps.get_read_context()
+
+    assert first is not second
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `uv run pytest tests/api/test_read_context.py -v`
+Expected: FAIL — `AttributeError: module 'api.deps' has no attribute 'get_read_context'`
+
+- [ ] **Step 3: Implement**
+
+Add to `api/deps.py` (keeping everything already there):
+
+```python
+from dataclasses import dataclass
+
+from crypto_portfolio_tracker.database import DatabaseManager
+from crypto_portfolio_tracker.portfolio_analyzer import PortfolioAnalyzer
+
+
+@dataclass
+class ReadContext:
+    """Everything a read endpoint needs, and nothing that touches the network.
+
+    CryptoPortfolioTracker.__init__ pings Binance and syncs server time, so
+    read paths must not construct it. They get SQLite and an offline analyzer
+    instead. get_tracker() stays reserved for sync.
+    """
+
+    config_manager: ConfigManager
+    db_manager: DatabaseManager
+    portfolio_analyzer: PortfolioAnalyzer
+
+
+_read_context: Optional[ReadContext] = None
+
+
+def get_read_context() -> ReadContext:
+    global _read_context
+    if _read_context is None:
+        config_manager = get_config_manager()
+        db_manager = DatabaseManager(
+            db_path=config_manager.get_database_path(),
+            backup_dir=config_manager.get_backup_dir(),
+        )
+        _read_context = ReadContext(
+            config_manager=config_manager,
+            db_manager=db_manager,
+            portfolio_analyzer=PortfolioAnalyzer(
+                config=config_manager.config,
+                db_manager=db_manager,
+                binance_client=None,
+                fetcher=None,
+                enricher=None,
+                offline_mode=True,
+                config_manager=config_manager,
+            ),
+        )
+    return _read_context
+
+
+def set_read_context_for_testing(context) -> None:
+    global _read_context
+    _read_context = context
+```
+
+Extend the existing `reset_singletons()` to also clear `_read_context`.
+
+Check `DatabaseManager.__init__` at `src/crypto_portfolio_tracker/database.py:29` for its required keyword arguments and pass what it needs. Do not guess the signature — read it.
+
+- [ ] **Step 4: Run it to verify it passes**
+
+Run: `uv run pytest tests/api/ -v`
+Expected: PASS, all tests including Task 2's.
+
+- [ ] **Step 5: Update the shared fixture**
+
+In `tests/api/conftest.py`, add a `mock_read_context` fixture mirroring `mock_tracker`, wiring a `Mock()` through `deps.set_read_context_for_testing`, and have the autouse reset fixture clear it. Tasks 4 and 5 use this fixture.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add api/deps.py tests/api/
+git commit -m "feat: add network-free read context
+
+CryptoPortfolioTracker's constructor pings Binance and syncs server time,
+so lazily constructing it inside a GET would block reads on the network
+and 500 when offline. Read endpoints now get SQLite and an offline
+analyzer; get_tracker stays reserved for sync."
 ```
 
 ---
@@ -525,7 +696,7 @@ Verified sources:
 - Create: `tests/api/test_accounting.py`, `tests/api/test_portfolio_routes.py`
 
 **Interfaces:**
-- Consumes: `MetricsCache`, `cache_path_for`, `get_tracker` (Tasks 2–3).
+- Consumes: `MetricsCache`, `cache_path_for`, `get_read_context` (Tasks 2b–3).
 - Produces: `portfolio_fifo_cost_basis(transactions_df) -> float`, and schemas `Staleness`, `AccountingBasis`, `Holding`, `CockpitResponse`.
 
 - [ ] **Step 1: Write the failing accounting test**
@@ -700,7 +871,7 @@ def _client():
     return TestClient(app)
 
 
-def test_cockpit_returns_empty_state_when_never_synced(mock_tracker, tmp_path, monkeypatch):
+def test_cockpit_returns_empty_state_when_never_synced(mock_read_context, tmp_path, monkeypatch):
     monkeypatch.setattr("api.routes.portfolio.cache_path_for",
                         lambda cm: tmp_path / "metrics.json")
 
@@ -713,7 +884,7 @@ def test_cockpit_returns_empty_state_when_never_synced(mock_tracker, tmp_path, m
     assert body["staleness"]["age_seconds"] is None
 
 
-def test_cockpit_reports_both_bases_distinctly(mock_tracker, tmp_path, monkeypatch):
+def test_cockpit_reports_both_bases_distinctly(mock_read_context, tmp_path, monkeypatch):
     cache_file = tmp_path / "metrics.json"
     monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
 
@@ -727,7 +898,7 @@ def test_cockpit_reports_both_bases_distinctly(mock_tracker, tmp_path, monkeypat
         }]),
     })
 
-    mock_tracker.db_manager.get_all_transactions.return_value = pd.DataFrame([
+    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame([
         {"symbol": "BTC", "timestamp": "2026-01-01", "type": "BUY",
          "quantity": 1.0, "price_usd": 199.75, "fee_usd": 0.0},
     ])
@@ -741,7 +912,7 @@ def test_cockpit_reports_both_bases_distinctly(mock_tracker, tmp_path, monkeypat
     assert body["net_invested"]["pl_usd"] != body["fifo"]["pl_usd"]
 
 
-def test_cockpit_pl_math_matches_the_real_portfolio(mock_tracker, tmp_path, monkeypatch):
+def test_cockpit_pl_math_matches_the_real_portfolio(mock_read_context, tmp_path, monkeypatch):
     """Golden values from spec section 8.1."""
     cache_file = tmp_path / "metrics.json"
     monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
@@ -752,7 +923,7 @@ def test_cockpit_pl_math_matches_the_real_portfolio(mock_tracker, tmp_path, monk
         "total_invested_capital": 76.41,
         "holdings_df": pd.DataFrame(),
     })
-    mock_tracker.db_manager.get_all_transactions.return_value = pd.DataFrame([
+    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame([
         {"symbol": "BTC", "timestamp": "2026-01-01", "type": "BUY",
          "quantity": 1.0, "price_usd": 199.75, "fee_usd": 0.0},
     ])
@@ -765,7 +936,7 @@ def test_cockpit_pl_math_matches_the_real_portfolio(mock_tracker, tmp_path, monk
     assert round(body["fifo"]["pl_percent"], 2) == -71.07
 
 
-def test_cockpit_marks_data_stale_past_threshold(mock_tracker, tmp_path, monkeypatch):
+def test_cockpit_marks_data_stale_past_threshold(mock_read_context, tmp_path, monkeypatch):
     cache_file = tmp_path / "metrics.json"
     monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
 
@@ -775,20 +946,26 @@ def test_cockpit_marks_data_stale_past_threshold(mock_tracker, tmp_path, monkeyp
     stale["_cached_at"] = time.time() - 7200
     cache_file.write_text(__import__("json").dumps(stale))
 
-    mock_tracker.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
     assert body["staleness"]["is_stale"] is True
 
 
-def test_cockpit_never_calls_binance(mock_tracker, tmp_path, monkeypatch):
+def test_cockpit_never_constructs_the_networked_tracker(mock_read_context, tmp_path,
+                                                        monkeypatch):
+    """CryptoPortfolioTracker's constructor pings Binance. A read that reaches
+    for it would block on the network and 500 while offline."""
+    from unittest.mock import patch
+
     monkeypatch.setattr("api.routes.portfolio.cache_path_for",
                         lambda cm: tmp_path / "metrics.json")
 
-    _client().get("/api/portfolio/cockpit")
+    with patch("api.deps.CryptoPortfolioTracker") as tracker_ctor:
+        response = _client().get("/api/portfolio/cockpit")
 
-    mock_tracker.calculate_portfolio_metrics.assert_not_called()
-    mock_tracker.fetch_binance_balances.assert_not_called()
+    assert response.status_code == 200
+    tracker_ctor.assert_not_called()
 ```
 
 - [ ] **Step 7: Run it to verify it fails**
@@ -812,7 +989,7 @@ from fastapi import APIRouter, Depends
 
 from api.accounting import portfolio_fifo_cost_basis
 from api.cache import MetricsCache, cache_path_for
-from api.deps import get_tracker
+from api.deps import get_read_context
 from api.schemas.portfolio import AccountingBasis, CockpitResponse, Holding
 from api.schemas.system import Environment, Staleness
 
@@ -849,10 +1026,10 @@ def _environment(config_manager) -> Environment:
 
 
 @router.get("/cockpit", response_model=CockpitResponse)
-def cockpit(tracker=Depends(get_tracker)) -> CockpitResponse:
-    cache = MetricsCache(cache_path_for(tracker.config_manager))
+def cockpit(ctx=Depends(get_read_context)) -> CockpitResponse:
+    cache = MetricsCache(cache_path_for(ctx.config_manager))
     cached = cache.read()
-    environment = _environment(tracker.config_manager)
+    environment = _environment(ctx.config_manager)
 
     if cached is None:
         empty = _basis("", "", 0.0, 0.0)
@@ -870,7 +1047,7 @@ def cockpit(tracker=Depends(get_tracker)) -> CockpitResponse:
 
     total_value = float(cached.get("total_value_usd") or 0.0)
     net_invested_basis = float(cached.get("total_invested_capital") or 0.0)
-    fifo_basis = portfolio_fifo_cost_basis(tracker.db_manager.get_all_transactions())
+    fifo_basis = portfolio_fifo_cost_basis(ctx.db_manager.get_all_transactions())
 
     holdings = [
         Holding(**{k: v for k, v in row.items() if k in Holding.model_fields})
@@ -938,7 +1115,7 @@ Source: `database.get_invested_capital_transactions() -> pd.DataFrame` with colu
 - Create: `tests/api/test_capital_routes.py`
 
 **Interfaces:**
-- Consumes: `get_tracker`, `Environment` (Tasks 2, 4).
+- Consumes: `get_read_context`, `Environment` (Tasks 2b, 4).
 - Produces: schemas `CapitalFlowRow`, `CapitalFlowResponse`.
 
 - [ ] **Step 1: Write the failing test**
@@ -952,13 +1129,13 @@ from fastapi.testclient import TestClient
 from api.main import app
 
 
-def test_capital_flow_classifies_inflows_and_outflows(mock_tracker):
-    mock_tracker.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
+def test_capital_flow_classifies_inflows_and_outflows(mock_read_context):
+    mock_read_context.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
         {"source": "Binance P2P Buy", "type": "BUY", "quantity": 100.0, "price_usd": 0.9},
         {"source": "Binance P2P Sell", "type": "SELL", "quantity": 20.0, "price_usd": 1.0},
         {"source": "Binance", "type": "WITHDRAWAL", "quantity": 5.0, "price_usd": 2.0},
     ])
-    mock_tracker.portfolio_analyzer.calculate_total_invested_capital.return_value = 60.0
+    mock_read_context.portfolio_analyzer.calculate_total_invested_capital.return_value = 60.0
 
     body = TestClient(app).get("/api/capital/flow").json()
 
@@ -968,11 +1145,11 @@ def test_capital_flow_classifies_inflows_and_outflows(mock_tracker):
     assert body["total_out_usd"] == 30.0
 
 
-def test_capital_flow_flags_peg_fallback_provenance(mock_tracker):
-    mock_tracker.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
+def test_capital_flow_flags_peg_fallback_provenance(mock_read_context):
+    mock_read_context.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
         {"source": "Binance P2P Buy", "type": "BUY", "quantity": 100.0, "price_usd": 1.0},
     ])
-    mock_tracker.portfolio_analyzer.calculate_total_invested_capital.return_value = 100.0
+    mock_read_context.portfolio_analyzer.calculate_total_invested_capital.return_value = 100.0
 
     row = TestClient(app).get("/api/capital/flow").json()["rows"][0]
 
@@ -980,11 +1157,11 @@ def test_capital_flow_flags_peg_fallback_provenance(mock_tracker):
     assert row["is_suspect"] is True
 
 
-def test_capital_flow_flags_zero_price_as_failed_lookup(mock_tracker):
-    mock_tracker.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
+def test_capital_flow_flags_zero_price_as_failed_lookup(mock_read_context):
+    mock_read_context.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
         {"source": "Binance P2P Buy", "type": "BUY", "quantity": 100.0, "price_usd": 0.0},
     ])
-    mock_tracker.portfolio_analyzer.calculate_total_invested_capital.return_value = 0.0
+    mock_read_context.portfolio_analyzer.calculate_total_invested_capital.return_value = 0.0
 
     row = TestClient(app).get("/api/capital/flow").json()["rows"][0]
 
@@ -993,11 +1170,11 @@ def test_capital_flow_flags_zero_price_as_failed_lookup(mock_tracker):
     assert row["value_usd"] == 0.0
 
 
-def test_capital_flow_marks_computed_rates_as_trusted(mock_tracker):
-    mock_tracker.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
+def test_capital_flow_marks_computed_rates_as_trusted(mock_read_context):
+    mock_read_context.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame([
         {"source": "Binance P2P Buy", "type": "BUY", "quantity": 100.0, "price_usd": 0.0179},
     ])
-    mock_tracker.portfolio_analyzer.calculate_total_invested_capital.return_value = 1.79
+    mock_read_context.portfolio_analyzer.calculate_total_invested_capital.return_value = 1.79
 
     row = TestClient(app).get("/api/capital/flow").json()["rows"][0]
 
@@ -1005,9 +1182,9 @@ def test_capital_flow_marks_computed_rates_as_trusted(mock_tracker):
     assert row["is_suspect"] is False
 
 
-def test_capital_flow_empty_when_no_transactions(mock_tracker):
-    mock_tracker.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame()
-    mock_tracker.portfolio_analyzer.calculate_total_invested_capital.return_value = 0.0
+def test_capital_flow_empty_when_no_transactions(mock_read_context):
+    mock_read_context.db_manager.get_invested_capital_transactions.return_value = pd.DataFrame()
+    mock_read_context.portfolio_analyzer.calculate_total_invested_capital.return_value = 0.0
 
     body = TestClient(app).get("/api/capital/flow").json()
 
@@ -1063,7 +1240,7 @@ failure visible in the UI rather than invisible in the total.
 
 from fastapi import APIRouter, Depends
 
-from api.deps import get_tracker
+from api.deps import get_read_context
 from api.schemas.capital import CapitalFlowResponse, CapitalFlowRow
 
 router = APIRouter(prefix="/api/capital", tags=["capital"])
@@ -1081,10 +1258,10 @@ def _provenance(price_usd: float) -> str:
 
 
 @router.get("/flow", response_model=CapitalFlowResponse)
-def capital_flow(tracker=Depends(get_tracker)) -> CapitalFlowResponse:
-    df = tracker.db_manager.get_invested_capital_transactions()
+def capital_flow(ctx=Depends(get_read_context)) -> CapitalFlowResponse:
+    df = ctx.db_manager.get_invested_capital_transactions()
     net_invested = float(
-        tracker.portfolio_analyzer.calculate_total_invested_capital()
+        ctx.portfolio_analyzer.calculate_total_invested_capital()
     )
 
     rows: list[CapitalFlowRow] = []
