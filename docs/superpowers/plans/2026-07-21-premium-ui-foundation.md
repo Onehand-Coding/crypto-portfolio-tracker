@@ -485,10 +485,21 @@ import datetime
 import json
 
 import pandas as pd
-import pytest
 
 from api.cache import MetricsCache
 from api.serialization import df_to_records, jsonable
+
+
+def test_jsonable_converts_missing_timestamps_to_none():
+    """pd.NaT is an instance of datetime.datetime. If the missing-value check
+    runs after the datetime check, a missing timestamp serializes to the
+    string "NaT" and renders in the UI as though it were a real value."""
+    assert jsonable(pd.NaT) is None
+
+
+def test_df_to_records_converts_missing_timestamps_to_none():
+    df = pd.DataFrame({"symbol": ["BTC"], "last_trade": [pd.NaT]})
+    assert df_to_records(df) == [{"symbol": "BTC", "last_trade": None}]
 
 
 def test_df_to_records_converts_nan_to_none():
@@ -567,6 +578,12 @@ import pandas as pd
 
 def jsonable(value: Any) -> Any:
     """Recursively convert a value into something json.dumps accepts."""
+    # Missing values first. pd.NaT IS an instance of datetime.datetime, so if
+    # this check came after the datetime branch, .isoformat() would turn a
+    # missing timestamp into the string "NaT" -- a plausible-looking value
+    # rendered where null belongs.
+    if value is None or value is pd.NaT:
+        return None
     if isinstance(value, pd.DataFrame):
         return df_to_records(value)
     if isinstance(value, (pd.Timestamp, datetime.datetime, datetime.date)):
@@ -578,8 +595,6 @@ def jsonable(value: Any) -> Any:
         return None if math.isnan(as_float) else as_float
     if isinstance(value, np.bool_):
         return bool(value)
-    if value is pd.NaT or value is None:
-        return None
     if isinstance(value, dict):
         return {str(k): jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set, np.ndarray)):
