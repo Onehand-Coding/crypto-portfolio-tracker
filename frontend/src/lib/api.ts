@@ -4,8 +4,15 @@ export class ApiError extends Error {
   }
 }
 
+export class NetworkError extends Error {}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  let response: Response;
+  try {
+    response = await fetch(path, init);
+  } catch {
+    throw new NetworkError('Cannot reach the API server');
+  }
   if (!response.ok) {
     const detail = await response.text();
     throw new ApiError(response.status, detail || response.statusText);

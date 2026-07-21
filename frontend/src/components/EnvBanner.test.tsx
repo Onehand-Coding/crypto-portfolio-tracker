@@ -23,4 +23,10 @@ describe('EnvBanner', () => {
     }} />);
     expect(screen.getByText('LIVE')).toBeDefined();
   });
+
+  it('renders an explicit unknown state instead of disappearing when environment is null', () => {
+    render(<EnvBanner environment={null} />);
+    expect(screen.getByText('ENVIRONMENT UNKNOWN')).toBeDefined();
+    expect(screen.getByText(/cannot reach API/)).toBeDefined();
+  });
 });

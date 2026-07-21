@@ -24,7 +24,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--surface-0)' }}>
-      {environment && <EnvBanner environment={environment} />}
+      <EnvBanner environment={environment} />
       <div className="flex">
         <nav className="flex w-48 shrink-0 flex-col gap-1 border-r p-3"
              style={{ borderColor: 'var(--border)' }}>
