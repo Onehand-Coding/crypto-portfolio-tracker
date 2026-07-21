@@ -55,3 +55,15 @@ def cache_path_for(config_manager) -> Path:
     """
     suffix = "testnet" if config_manager.is_testnet_mode else "live"
     return Path("data") / "api_cache" / f"metrics_{suffix}.json"
+
+
+def analysis_cache_path(config_manager, kind: str) -> Path:
+    """Cache for one kind of live analysis (rebalance, dca, profit, technical).
+
+    These call the core's analysis methods, which need a live Binance client and
+    fetch prices and klines -- far too slow and too failure-prone to run inside a
+    page load. They follow the same contract as the metrics cache: an explicit
+    user action computes and stores; reads are instant and always show the age.
+    """
+    suffix = "testnet" if config_manager.is_testnet_mode else "live"
+    return Path("data") / "api_cache" / f"{kind}_{suffix}.json"

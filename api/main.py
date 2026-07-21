@@ -10,13 +10,18 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from api.routes import capital, portfolio, sync
+from api.routes import capital, portfolio, screens, strategy, sync, wallets
 
 app = FastAPI(title="Crypto Portfolio Tracker API", version="1.0.0")
 
 app.include_router(portfolio.router)
 app.include_router(capital.router)
 app.include_router(sync.router)
+app.include_router(wallets.router)
+app.include_router(strategy.router)
+# Registered last of the API routers: it owns the generic /api/assets/{symbol}
+# path, which must not shadow a more specific route added later.
+app.include_router(screens.router)
 
 
 @app.get("/api/health")
@@ -43,12 +48,14 @@ def _is_api_path(full_path: str) -> bool:
 def _wants_a_file(full_path: str) -> bool:
     """True for requests that name an asset rather than a client-side route.
 
-    Client-side routes are extensionless ("/sync", "/capital"); assets carry an
-    extension or live under assets/. Without this split, a stale or deleted
-    bundle reference falls through to index.html and arrives as HTML with a
-    200, which fails later on MIME type with nothing pointing at the cause.
+    The test is an extension on the last segment, and nothing else. An earlier
+    version also treated everything under "assets/" as a file, which broke the
+    client-side route /assets/:symbol -- the asset-detail page 404'd because it
+    shares a prefix with the bundle directory. Hashed bundles always carry .js
+    or .css, so the extension test alone is enough to make a stale bundle
+    reference 404 honestly instead of arriving as HTML with a 200.
     """
-    return full_path.startswith("assets/") or "." in full_path.rsplit("/", 1)[-1]
+    return "." in full_path.rsplit("/", 1)[-1]
 
 
 def _dist_file(dist: Path, full_path: str) -> Optional[Path]:

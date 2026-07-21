@@ -27,6 +27,13 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
-export function apiPost<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'POST' });
+export function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  if (body === undefined) {
+    return request<T>(path, { method: 'POST' });
+  }
+  return request<T>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }

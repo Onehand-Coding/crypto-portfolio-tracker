@@ -73,6 +73,16 @@ def test_a_missing_asset_404s_rather_than_returning_html(client):
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize("path", ["/assets/BTC", "/assets/ETH", "/sync", "/rebalance"])
+def test_client_side_routes_reach_the_spa(client, path):
+    """/assets/:symbol is a real client route and shares its prefix with the
+    bundle directory. Treating everything under assets/ as a file made the
+    asset-detail page 404 in the browser while every test still passed."""
+    response = client.get(path)
+    assert response.status_code == 200
+    assert "SPA" in response.text
+
+
 def test_unknown_api_path_returns_404_not_the_spa(client):
     response = client.get("/api/does-not-exist")
     assert response.status_code == 404

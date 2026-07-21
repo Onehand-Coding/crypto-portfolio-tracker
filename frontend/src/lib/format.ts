@@ -33,6 +33,16 @@ export function formatPercent(value: number | null | undefined): string {
   return `${sign}${Math.abs(value).toFixed(2)}%`;
 }
 
+/**
+ * A percentage that is a level, not a change: target weights, allocations,
+ * RSI. formatPercent signs its output because a P/L of +2% and -2% must never
+ * be confused; a target allocation of "+35%" is just wrong.
+ */
+export function formatPercentPlain(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH;
+  return `${value.toFixed(2)}%`;
+}
+
 export function formatQty(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return EM_DASH;
   return value.toLocaleString('en-US', { maximumFractionDigits: 8 });

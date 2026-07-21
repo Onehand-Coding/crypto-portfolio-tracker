@@ -65,3 +65,180 @@ export interface CapitalFlowResponse {
   net_invested_usd: number;
   suspect_count: number;
 }
+
+export interface WalletBalance {
+  symbol: string;
+  quantity: number;
+  value_usd: number | null;
+}
+
+export interface WalletsResponse {
+  has_data: boolean;
+  spot_earn_value_usd: number;
+  futures_value_usd: number;
+  funding_value_usd: number;
+  total_value_usd: number;
+  spot_holdings: WalletBalance[];
+  futures_balances: WalletBalance[];
+  funding_balances: WalletBalance[];
+  staleness: Staleness;
+}
+
+export interface SnapshotPoint {
+  timestamp: string | null;
+  total_value_usd: number | null;
+  total_cost_basis_usd: number | null;
+  unrealized_pl_usd: number | null;
+  unrealized_pl_percent: number | null;
+}
+
+export interface OverviewResponse {
+  has_data: boolean;
+  points: SnapshotPoint[];
+  staleness: Staleness;
+}
+
+export interface AssetTransaction {
+  timestamp: string | null;
+  type: string;
+  quantity: number | null;
+  price_usd: number | null;
+  value_usd: number | null;
+  source: string | null;
+  notes: string | null;
+}
+
+export interface AssetDetailResponse {
+  symbol: string;
+  found: boolean;
+  total_quantity: number | null;
+  current_price: number | null;
+  value_usd: number | null;
+  average_cost_basis: number | null;
+  cost_basis_total: number | null;
+  unrealized_pl_usd: number | null;
+  unrealized_pl_percent: number | null;
+  price_unavailable: boolean;
+  is_core: boolean;
+  target_allocation_pct: number | null;
+  transactions: AssetTransaction[];
+  staleness: Staleness;
+}
+
+/** Every live analysis carries its own run state alongside its result. */
+export interface AnalysisState {
+  has_data: boolean;
+  is_running: boolean;
+  error: string | null;
+  staleness: Staleness;
+}
+
+export interface RebalanceSuggestion {
+  symbol: string;
+  action: string | null;
+  current_value_usd: number | null;
+  current_allocation_pct: number | null;
+  target_allocation_pct: number | null;
+  drift_pct: number | null;
+  action_amount_usd: number | null;
+  action_quantity: number | null;
+  reason: string | null;
+  raw: Record<string, unknown>;
+}
+
+export interface RebalanceResponse extends AnalysisState {
+  suggestions: RebalanceSuggestion[];
+}
+
+export interface ProfitOpportunity {
+  symbol: string;
+  unrealized_gain_usd: number | null;
+  unrealized_gain_pct: number | null;
+  opportunity_score: number | null;
+  rsi_score: number | null;
+  pl_score: number | null;
+  resistance_score: number | null;
+  market_context_score: number | null;
+  current_price: number | null;
+  support_level: number | null;
+  resistance_level: number | null;
+  reasons: string[];
+}
+
+export interface ProfitResponse extends AnalysisState {
+  opportunities: ProfitOpportunity[];
+}
+
+export interface DcaResponse extends AnalysisState {
+  available_usdt: number | null;
+  spot_usdt: number | null;
+  earn_usdt: number | null;
+  minimum_trade_usd: number;
+}
+
+export interface DcaAllocation {
+  symbol: string;
+  amount_usd: number;
+  quantity: number | null;
+  current_allocation_pct: number | null;
+  target_allocation_pct: number | null;
+}
+
+export interface DcaPreviewResponse {
+  strategy: string;
+  amount_usd: number;
+  valid: boolean;
+  message: string | null;
+  allocations: DcaAllocation[];
+}
+
+export interface IndicatorRow {
+  symbol: string;
+  price: number | null;
+  rsi: number | null;
+  sma_short: number | null;
+  sma_long: number | null;
+  support: number | null;
+  resistance: number | null;
+  conditions: string[];
+}
+
+export interface TechnicalResponse extends AnalysisState {
+  timeframes: Record<string, IndicatorRow[]>;
+  bear_market: boolean | null;
+}
+
+export interface ExportFile {
+  name: string;
+  path: string;
+  size_bytes: number;
+  modified: string;
+}
+
+export interface ReportsResponse {
+  files: ExportFile[];
+  export_dir: string;
+}
+
+export interface BackupInfo {
+  name: string;
+  size_bytes: number;
+  modified: string;
+}
+
+export interface SystemHealthResponse {
+  environment_label: string;
+  is_testnet: boolean;
+  database_path: string;
+  database_exists: boolean;
+  database_size_bytes: number;
+  transaction_count: number;
+  asset_count: number;
+  snapshot_count: number;
+  live_trading_enabled: boolean;
+  minimum_trade_usd: number;
+  target_allocation: Record<string, number>;
+  backups: BackupInfo[];
+  metrics_cache_age_seconds: number | null;
+  binance_configured: boolean;
+}

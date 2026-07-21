@@ -1,0 +1,111 @@
+import { Panel } from '../components/Panel';
+import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { useApi, usePollWhile } from '../lib/useApi';
+import { apiPost } from '../lib/api';
+import { formatPercent, formatSigned, formatUsd } from '../lib/format';
+import type { ProfitResponse } from '../types';
+
+function scoreTone(score: number | null) {
+  if (score === null) return 'neutral' as const;
+  if (score >= 75) return 'positive' as const;
+  if (score >= 60) return 'warning' as const;
+  return 'neutral' as const;
+}
+
+export function ProfitTaking() {
+  const { data, error, reload } = useApi<ProfitResponse>('/api/strategy/profit');
+  usePollWhile(Boolean(data?.is_running), reload);
+
+  async function run() {
+    try {
+      await apiPost('/api/strategy/profit/run');
+    } finally {
+      reload();
+    }
+  }
+
+  if (error) return <ErrorPanel title="Profit taking" message={`Failed to load: ${error}`} />;
+  if (!data) return <Panel title="Profit taking"><Empty>Loading…</Empty></Panel>;
+
+  return (
+    <>
+      <ScreenHeader title="Profit taking"
+                    subtitle="Positions scoring high enough to consider trimming" />
+
+      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+        <AnalysisBar state={data} onRun={run} label="Profit-taking analysis" />
+
+        <Panel title="Opportunities">
+          {!data.has_data ? (
+            <Empty>No analysis has been run yet.</Empty>
+          ) : data.opportunities.length === 0 ? (
+            <Empty>
+              No position currently meets the profit-taking criteria configured in
+              your settings.
+            </Empty>
+          ) : (
+            <div className="table-scroll">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th className="text-left">Asset</th>
+                    <th className="text-right">Score</th>
+                    <th className="text-right">Unrealized</th>
+                    <th className="text-right">Price</th>
+                    <th className="text-right">Support</th>
+                    <th className="text-right">Resistance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.opportunities.map((o) => (
+                    <tr key={o.symbol}>
+                      <td className="text-left" style={{ fontWeight: 500 }}>{o.symbol}</td>
+                      <td className="text-right">
+                        <Badge
+                          text={o.opportunity_score === null
+                            ? '—' : o.opportunity_score.toFixed(0)}
+                          tone={scoreTone(o.opportunity_score)}
+                        />
+                      </td>
+                      <td className="text-right"
+                          style={{ color: (o.unrealized_gain_usd ?? 0) >= 0
+                            ? 'var(--positive)' : 'var(--negative)' }}>
+                        {formatSigned(o.unrealized_gain_usd)} ({formatPercent(o.unrealized_gain_pct)})
+                      </td>
+                      <td className="text-right">{formatUsd(o.current_price)}</td>
+                      <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                        {formatUsd(o.support_level)}
+                      </td>
+                      <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                        {formatUsd(o.resistance_level)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+
+        {data.opportunities.some((o) => o.reasons.length > 0) && (
+          <Panel title="Why these scored">
+            <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+              {data.opportunities.filter((o) => o.reasons.length > 0).map((o) => (
+                <div key={o.symbol} className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+                  <span className="font-mono" style={{ fontSize: '13px', fontWeight: 500 }}>
+                    {o.symbol}
+                  </span>
+                  <ul className="flex flex-col font-ui"
+                      style={{ gap: '4px', fontSize: '13px', margin: 0,
+                               paddingLeft: 'var(--space-4)', color: 'var(--text-secondary)' }}>
+                    {o.reasons.map((reason, i) => <li key={i}>{reason}</li>)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
+      </div>
+    </>
+  );
+}
