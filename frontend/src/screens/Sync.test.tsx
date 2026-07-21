@@ -8,7 +8,10 @@ class FakeEventSource {
   onerror: (() => void) | null = null;
   closed = false;
 
-  constructor(public url: string) {
+  url: string;
+
+  constructor(url: string) {
+    this.url = url;
     FakeEventSource.instances.push(this);
   }
 

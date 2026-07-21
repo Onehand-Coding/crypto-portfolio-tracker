@@ -1,8 +1,81 @@
 # Crypto Portfolio Tracker - Project Context & State
 
-**Last Updated:** 2026-05-26
+**Last Updated:** 2026-07-21
 **Version:** 2.1.3
 **Project Root:** `/home/kenneth/Coding/projects/crypto-portfolio-tracker`
+
+---
+
+## 🧭 React UI + FastAPI Layer (2026-07-21)
+
+A second front end lives alongside Streamlit. Streamlit is unchanged and still
+runs on its own port; nothing in `src/crypto_portfolio_tracker/**` was modified
+to add this — the API wraps the core rather than rewriting it.
+
+### Layout
+
+```
+api/                  FastAPI app wrapping the core (read-only over src/)
+├── main.py           app, routers, and the SPA catch-all
+├── deps.py           get_tracker() + get_read_context()
+├── cache.py          MetricsCache — the JSON snapshot reads serve from
+├── serialization.py  jsonable() / df_to_records()
+├── accounting.py     portfolio-wide FIFO cost basis
+├── sync_runner.py    background sync + SSE progress
+└── routes/           portfolio.py, capital.py, sync.py
+frontend/             Vite + React 18 + TypeScript + Tailwind v3
+run_ui.py             entry point (uvicorn, 127.0.0.1:8000)
+```
+
+### The rule that shapes everything: reads never touch the network
+
+`CryptoPortfolioTracker.__init__` pings Binance and calls `get_server_time()`,
+so constructing it is a network operation. Every read endpoint therefore depends
+on `get_read_context()` — a `ReadContext` holding a `ConfigManager`,
+`DatabaseManager`, and an **offline-mode** `PortfolioAnalyzer` — and never on
+`get_tracker()`. Only the sync route builds a real tracker.
+
+Read endpoints serve figures from `data/api_cache/metrics_{live|testnet}.json`,
+written at the end of each sync. The cache is per-environment because testnet
+uses a physically separate database (`data/testnet_portfolio.db`); a shared
+cache file would show testnet figures under a live banner. Staleness is exposed
+to the UI via the snapshot's age rather than hidden.
+
+The cache exists because the core's offline branch zeroes `current_price` and no
+per-asset price is persisted anywhere — without the snapshot, an offline read
+would report every holding as worth $0.00.
+
+### Serving
+
+One process, one port. `api/main.py` mounts `/assets` and registers a catch-all
+**after** the routers, so an unmatched `/api/*` path 404s instead of silently
+returning `index.html`; every other path returns the SPA so client-side deep
+links work. In development Vite proxies `/api` to the same app. Neither
+arrangement needs CORS.
+
+### Conventions worth preserving
+
+- Unknown is not zero. A missing figure renders as an em dash, never `0.00`, and
+  an undefined percentage (zero cost basis) is `null`, not `0.0`.
+- Colour is never the sole carrier of meaning — signs are explicit.
+- `pd.NaT` is an instance of `datetime.datetime`; missing-value checks must come
+  **before** any datetime branch or a missing timestamp serializes as `"NaT"`.
+
+### Known gap
+
+A holding whose price lookup fails gets `value_usd == 0.0` from the core and is
+then folded into the UI's "dust positions" aggregate — a real position reads as
+worthless. The root cause is in `portfolio_analyzer.py`; the fix belongs in the
+API layer (flag `current_price == 0.0` as price-unavailable). Undecided.
+
+### Commands
+
+```bash
+npm --prefix frontend run build   # build the bundle first
+uv run python run_ui.py           # then serve on http://127.0.0.1:8000
+
+npm --prefix frontend run dev     # dev: Vite on 5173 proxying /api to 8000
+```
 
 ---
 
@@ -259,9 +332,9 @@ docs/migrate_p2p_sell_schema.py                     (new - migration script)
    - Fund transfers between wallets
 
 **Tech Stack:**
-- **Language:** Python 3.10+
+- **Language:** Python 3.12+ (pandas-ta forces it; pandas pinned `>=2.0,<3`)
 - **Package Manager:** `uv` (lightning-fast)
-- **Web Framework:** Streamlit
+- **Web Frameworks:** Streamlit, plus FastAPI + React (see the React UI section)
 - **Data Processing:** pandas, numpy, pandas_ta
 - **APIs:** python-binance, CoinGecko, yFinance
 - **Database:** SQLite with diskcache caching
@@ -969,9 +1042,12 @@ crypto-portfolio-tracker/
 │   ├── price_enricher.py    # Price fetching & enrichment
 │   ├── trade_executor.py    # Trade execution
 │   └── ... (other modules)
-├── tests/                   # Test suite
+├── api/                     # FastAPI layer over the core (read-only on src/)
+├── frontend/                # React UI (Vite, TypeScript, Tailwind)
+├── run_ui.py                # React UI entry point
+├── tests/                   # Test suite (tests/api/ covers the FastAPI layer)
 ├── config/                  # Runtime configuration
-├── data/                    # Database, cache, exports
+├── data/                    # Database, api_cache/, exports
 ├── logs/                    # Application logs
 └── docs/                    # Documentation
 ```
@@ -981,10 +1057,18 @@ crypto-portfolio-tracker/
 # Development
 uv sync                     # Install dependencies
 uv run python main.py       # Run CLI
-uv run track-portfolio-web  # Run web UI
+uv run track-portfolio-web  # Run Streamlit web UI
+uv run python run_ui.py     # Run React UI (build the frontend first)
 uv run pytest               # Run tests
 uv run ruff check .         # Lint
 uv run ruff format .        # Format
+
+# Frontend
+npm --prefix frontend install
+npm --prefix frontend run build   # tsc -b && vite build
+npm --prefix frontend run dev     # dev server, proxies /api to :8000
+npm --prefix frontend run lint    # oxlint
+cd frontend && npx vitest run     # tests (no `test` script defined yet)
 
 # Database
 python docs/migrate_p2p_sell_schema.py  # Manual schema migration

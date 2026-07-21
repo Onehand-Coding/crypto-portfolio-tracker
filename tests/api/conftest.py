@@ -1,7 +1,8 @@
 """Fixtures for API tests. The core is mocked; no network, no real DB."""
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 from api import deps
 
