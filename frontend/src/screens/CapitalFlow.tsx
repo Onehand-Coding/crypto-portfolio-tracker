@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { Panel } from '../components/Panel';
 import { apiGet } from '../lib/api';
 import { formatQty, formatUsd } from '../lib/format';
@@ -48,19 +48,19 @@ export function CapitalFlow() {
   ).length;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
       <Panel title="Capital flow">
-        <div className="grid grid-cols-3 gap-8">
-          <Metric
+        <KpiBand>
+          <BandMetric emphasis label="Net invested" value={formatUsd(data.net_invested_usd)} />
+          <BandMetric
             label="Total in"
             value={formatUsd(data.total_in_usd)}
             sub={unpricedInflows > 0
               ? `excludes ${unpricedInflows} unpriced row${unpricedInflows === 1 ? '' : 's'}`
               : undefined}
           />
-          <Metric label="Total out" value={formatUsd(data.total_out_usd)} />
-          <Metric label="Net invested" value={formatUsd(data.net_invested_usd)} />
-        </div>
+          <BandMetric label="Total out" value={formatUsd(data.total_out_usd)} />
+        </KpiBand>
         {data.suspect_count > 0 && (
           <p className="mt-3 font-ui text-sm" style={{ color: 'var(--warning)' }}>
             {data.suspect_count} row{data.suspect_count === 1 ? '' : 's'} could not be

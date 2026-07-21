@@ -42,7 +42,7 @@ export function Backtest() {
         subtitle="Simulates the rebalancing strategy over two years, monthly, from $10,000"
       />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <AnalysisBar state={data} onRun={run} label="Backtesting" />
 
         <Panel title="Result">

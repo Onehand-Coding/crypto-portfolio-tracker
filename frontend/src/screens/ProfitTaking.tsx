@@ -32,7 +32,7 @@ export function ProfitTaking() {
       <ScreenHeader title="Profit taking"
                     subtitle="Positions scoring high enough to consider trimming" />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <AnalysisBar state={data} onRun={run} label="Profit-taking analysis" />
 
         <Panel title="Opportunities">

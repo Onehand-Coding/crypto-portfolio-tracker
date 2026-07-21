@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { AnalysisBar, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
@@ -52,16 +52,16 @@ export function Dca() {
       <ScreenHeader title="Dollar cost averaging"
                     subtitle="Preview where new capital would go before committing it" />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <AnalysisBar state={data} onRun={run} label="Checking your USDT balance" />
 
         <Panel title="Available to deploy">
-          <div className="grid grid-cols-4" style={{ gap: 'var(--space-5)' }}>
-            <Metric label="Total USDT" value={formatUsd(data.available_usdt)} />
-            <Metric label="Spot" value={formatUsd(data.spot_usdt)} />
-            <Metric label="Earn" value={formatUsd(data.earn_usdt)} />
-            <Metric label="Minimum trade" value={formatUsd(data.minimum_trade_usd)} />
-          </div>
+          <KpiBand>
+            <BandMetric emphasis label="Total USDT" value={formatUsd(data.available_usdt)} />
+            <BandMetric label="Spot" value={formatUsd(data.spot_usdt)} />
+            <BandMetric label="Earn" value={formatUsd(data.earn_usdt)} />
+            <BandMetric label="Minimum trade" value={formatUsd(data.minimum_trade_usd)} />
+          </KpiBand>
           {!data.has_data && (
             <p className="font-ui text-sm"
                style={{ color: 'var(--text-secondary)', marginTop: 'var(--space-4)' }}>

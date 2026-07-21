@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
+import { BandMetric } from '../components/Band';
 import { HoldingsTable } from '../components/HoldingsTable';
 import { Panel } from '../components/Panel';
 import { Empty, ErrorPanel } from '../components/Screen';
@@ -18,41 +19,6 @@ const RANGES = [
   { id: '1y', label: '1Y', days: 365 },
   { id: 'all', label: 'ALL', days: Infinity },
 ];
-
-/** Compact metric for the KPI band: label above, figure below, no card chrome. */
-function BandMetric({
-  label, value, signal, sub, note,
-}: { label: string; value: string; signal?: number | null; sub?: string; note?: string }) {
-  const colour = signal === undefined || signal === null || signal === 0
-    ? 'var(--text-primary)'
-    : signal > 0 ? 'var(--positive)' : 'var(--negative)';
-  return (
-    <div className="flex flex-col" style={{ gap: '3px', minWidth: 0 }}>
-      <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '10px',
-                                         fontWeight: 700, letterSpacing: '0.06em',
-                                         textTransform: 'uppercase' }}>
-        {label}
-      </span>
-      <span className="font-mono" style={{ fontSize: '18px', lineHeight: '24px',
-                                           letterSpacing: '-0.01em', color: colour }}>
-        {value}
-      </span>
-      {sub && (
-        <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>
-          {sub}
-        </span>
-      )}
-      {/* The plain-language question each basis answers. The two bases differ
-          several fold and their labels alone do not say which is which. */}
-      {note && (
-        <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
-                                           fontStyle: 'italic' }}>
-          {note}
-        </span>
-      )}
-    </div>
-  );
-}
 
 function basisValue(basis: AccountingBasis): string {
   return `${formatSigned(basis.pl_usd)} (${formatPercent(basis.pl_percent)})`;

@@ -42,7 +42,7 @@ export function Market() {
         staleness={cockpit.data.staleness}
       />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         {!technical.data.has_data && (
           <Panel>
             <p className="font-ui text-sm" style={{ color: 'var(--text-secondary)', margin: 0 }}>

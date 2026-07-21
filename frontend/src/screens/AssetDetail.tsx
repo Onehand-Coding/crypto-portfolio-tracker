@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { Panel } from '../components/Panel';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { formatPercent, formatPercentPlain, formatQty, formatSigned, formatUsd } from '../lib/format';
@@ -40,7 +40,7 @@ export function AssetDetail() {
         staleness={data.staleness}
       />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <Panel>
           {data.price_unavailable && (
             <p className="font-ui text-sm"
@@ -49,21 +49,18 @@ export function AssetDetail() {
               unknown — not zero.
             </p>
           )}
-          <div className="grid grid-cols-4" style={{ gap: 'var(--space-5)' }}>
-            <Metric label="Quantity" value={formatQty(data.total_quantity)} />
-            <Metric label="Price" value={formatUsd(data.current_price)} />
-            <Metric label="Value" value={formatUsd(data.value_usd)} />
-            <Metric
+          <KpiBand>
+            <BandMetric emphasis label="Value" value={formatUsd(data.value_usd)} />
+            <BandMetric label="Quantity" value={formatQty(data.total_quantity)} />
+            <BandMetric label="Price" value={formatUsd(data.current_price)} />
+            <BandMetric
               label="Unrealized"
               value={`${formatSigned(data.unrealized_pl_usd)} (${formatPercent(data.unrealized_pl_percent)})`}
               signal={data.unrealized_pl_usd}
             />
-          </div>
-          <div className="grid grid-cols-4"
-               style={{ gap: 'var(--space-5)', marginTop: 'var(--space-5)' }}>
-            <Metric label="Avg cost basis" value={formatUsd(data.average_cost_basis)} />
-            <Metric label="Cost basis total" value={formatUsd(data.cost_basis_total)} />
-          </div>
+            <BandMetric label="Avg cost basis" value={formatUsd(data.average_cost_basis)} />
+            <BandMetric label="Cost basis total" value={formatUsd(data.cost_basis_total)} />
+          </KpiBand>
         </Panel>
 
         <Panel title={`Transactions (${data.transactions.length})`}>

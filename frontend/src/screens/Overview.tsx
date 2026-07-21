@@ -3,7 +3,7 @@ import {
 } from 'recharts';
 import { Panel } from '../components/Panel';
 import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { useApi } from '../lib/useApi';
 import { formatPercent, formatSigned, formatUsd } from '../lib/format';
 import type { OverviewResponse } from '../types';
@@ -59,23 +59,23 @@ export function Overview() {
         staleness={data.staleness}
       />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <Panel>
-          <div className="grid grid-cols-4" style={{ gap: 'var(--space-5)' }}>
-            <Metric label="Latest value" value={formatUsd(latest?.total_value_usd)} />
-            <Metric label="Cost basis" value={formatUsd(latest?.total_cost_basis_usd)} />
-            <Metric
+          <KpiBand>
+            <BandMetric emphasis label="Latest value" value={formatUsd(latest?.total_value_usd)} />
+            <BandMetric label="Cost basis" value={formatUsd(latest?.total_cost_basis_usd)} />
+            <BandMetric
               label="Unrealized"
               value={`${formatSigned(latest?.unrealized_pl_usd)} (${formatPercent(latest?.unrealized_pl_percent)})`}
               signal={latest?.unrealized_pl_usd}
             />
-            <Metric
+            <BandMetric
               label="Change since first snapshot"
               value={formatSigned(change)}
               signal={change}
               sub={first ? `from ${shortDate(first.timestamp)}` : undefined}
             />
-          </div>
+          </KpiBand>
         </Panel>
 
         <Panel title="Value vs cost basis">

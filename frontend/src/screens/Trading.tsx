@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
@@ -43,7 +43,7 @@ export function Trading() {
     <>
       <ScreenHeader title="Trading" subtitle="Review an order and its effect on your allocation" />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <Panel>
           <div className="flex items-center" style={{ gap: 'var(--space-3)' }}>
             <Badge text="REVIEW ONLY" tone="warning" />
@@ -139,20 +139,21 @@ export function Trading() {
 
         {valid && (
           <Panel title="Portfolio impact">
-            <div className="grid grid-cols-4" style={{ gap: 'var(--space-5)' }}>
-              <Metric label="Est. quantity"
-                      value={price ? formatQty(amountUsd / price) : '—'}
-                      sub={price ? `at ${formatUsd(price)}` : 'price unknown'} />
-              <Metric label={`${symbol} value now`} value={formatUsd(currentValue)} />
-              <Metric label={`${symbol} value after`} value={formatUsd(afterValue)} />
-              <Metric
+            <KpiBand>
+              <BandMetric
+                emphasis
                 label="Allocation after"
                 value={afterTotal ? formatPercentPlain((afterValue / afterTotal) * 100) : '—'}
                 sub={health.data.target_allocation[symbol] !== undefined
                   ? `target ${formatPercentPlain(health.data.target_allocation[symbol] * 100)}`
                   : 'not a core asset'}
               />
-            </div>
+              <BandMetric label="Est. quantity"
+                          value={price ? formatQty(amountUsd / price) : '—'}
+                          sub={price ? `at ${formatUsd(price)}` : 'price unknown'} />
+              <BandMetric label={`${symbol} value now`} value={formatUsd(currentValue)} />
+              <BandMetric label={`${symbol} value after`} value={formatUsd(afterValue)} />
+            </KpiBand>
             {side === 'SELL' && amountUsd > currentValue && (
               <p className="font-ui text-sm"
                  style={{ color: 'var(--negative)', marginTop: 'var(--space-4)', marginBottom: 0 }}>

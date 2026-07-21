@@ -93,7 +93,7 @@ export function Technical() {
       <ScreenHeader title="Technical analysis"
                     subtitle="RSI, moving averages and support/resistance by timeframe" />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <AnalysisBar state={data} onRun={run} label="Technical analysis" />
 
         {data.bear_market !== null && (

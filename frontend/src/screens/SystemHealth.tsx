@@ -1,5 +1,5 @@
 import { Panel } from '../components/Panel';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { formatPercentPlain, formatUsd } from '../lib/format';
@@ -32,7 +32,7 @@ export function SystemHealth() {
       <ScreenHeader title="System & settings"
                     subtitle="Environment, database and configuration" />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <Panel title="Environment">
           <div className="flex items-center" style={{ gap: 'var(--space-3)',
                                                       marginBottom: 'var(--space-4)' }}>
@@ -56,14 +56,14 @@ export function SystemHealth() {
         </Panel>
 
         <Panel title="Database">
-          <div className="grid grid-cols-5" style={{ gap: 'var(--space-5)' }}>
-            <Metric label="Transactions" value={data.transaction_count.toLocaleString()} />
-            <Metric label="Assets" value={String(data.asset_count)} />
-            <Metric label="Snapshots" value={String(data.snapshot_count)} />
-            <Metric label="Size" value={humanSize(data.database_size_bytes)} />
-            <Metric label="Metrics cache"
-                    value={humanAge(data.metrics_cache_age_seconds)} />
-          </div>
+          <KpiBand>
+            <BandMetric label="Transactions" value={data.transaction_count.toLocaleString()} />
+            <BandMetric label="Assets" value={String(data.asset_count)} />
+            <BandMetric label="Snapshots" value={String(data.snapshot_count)} />
+            <BandMetric label="Size" value={humanSize(data.database_size_bytes)} />
+            <BandMetric label="Metrics cache"
+                        value={humanAge(data.metrics_cache_age_seconds)} />
+          </KpiBand>
         </Panel>
 
         <Panel title="Target allocation">
@@ -113,9 +113,9 @@ export function SystemHealth() {
         </Panel>
 
         <Panel title="Trading limits">
-          <div className="grid grid-cols-4" style={{ gap: 'var(--space-5)' }}>
-            <Metric label="Minimum trade" value={formatUsd(data.minimum_trade_usd)} />
-          </div>
+          <KpiBand>
+            <BandMetric label="Minimum trade" value={formatUsd(data.minimum_trade_usd)} />
+          </KpiBand>
         </Panel>
 
         <Panel title={`Backups (${data.backups.length})`}>

@@ -55,7 +55,7 @@ export function Rebalance() {
       <ScreenHeader title="Rebalancing"
                     subtitle="Current vs target allocation, with technical context" />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <AnalysisBar state={data} onRun={run} label="Rebalancing analysis" />
 
         <Panel title="Suggestions">

@@ -1,5 +1,5 @@
 import { Panel } from '../components/Panel';
-import { Metric } from '../components/Metric';
+import { BandMetric, KpiBand } from '../components/Band';
 import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { formatQty, formatUsd } from '../lib/format';
@@ -61,14 +61,14 @@ export function Wallets() {
       <ScreenHeader title="Wallets" subtitle="Spot & Earn, Futures, Funding"
                     staleness={data.staleness} />
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <Panel>
-          <div className="grid grid-cols-4" style={{ gap: 'var(--space-5)' }}>
-            <Metric label="Spot & Earn" value={formatUsd(data.spot_earn_value_usd)} />
-            <Metric label="Futures" value={formatUsd(data.futures_value_usd)} />
-            <Metric label="Funding" value={formatUsd(data.funding_value_usd)} />
-            <Metric label="Total" value={formatUsd(data.total_value_usd)} />
-          </div>
+          <KpiBand>
+            <BandMetric emphasis label="Total" value={formatUsd(data.total_value_usd)} />
+            <BandMetric label="Spot & Earn" value={formatUsd(data.spot_earn_value_usd)} />
+            <BandMetric label="Futures" value={formatUsd(data.futures_value_usd)} />
+            <BandMetric label="Funding" value={formatUsd(data.funding_value_usd)} />
+          </KpiBand>
         </Panel>
 
         <Panel title="Spot & Earn">
