@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Panel } from '../components/Panel';
 import { apiPost, ApiError, NetworkError } from '../lib/api';
 
@@ -23,10 +23,23 @@ export function Sync() {
   const [events, setEvents] = useState<SyncEvent[]>([]);
   const [running, setRunning] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
+  // Set when a `complete` or `error` event has been handled and the stream
+  // was closed deliberately. The backend closes the stream after a terminal
+  // event, and closing from this side also fires the browser's onerror --
+  // without this flag that would be reported as a spurious lost connection
+  // right after every successful sync.
+  const terminatedRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      sourceRef.current?.close();
+    };
+  }, []);
 
   async function start() {
     setEvents([]);
     setRunning(true);
+    terminatedRef.current = false;
     try {
       await apiPost('/api/sync');
     } catch (e) {
@@ -38,12 +51,41 @@ export function Sync() {
     const source = new EventSource('/api/sync/stream');
     sourceRef.current = source;
     source.onmessage = (message) => {
-      const parsed: SyncEvent = JSON.parse(message.data);
+      let parsed: SyncEvent;
+      try {
+        parsed = JSON.parse(message.data);
+      } catch {
+        terminatedRef.current = true;
+        source.close();
+        setRunning(false);
+        setEvents((previous) => [
+          ...previous,
+          { event: 'error', message: 'Received an unreadable event from the server.' },
+        ]);
+        return;
+      }
       setEvents((previous) => [...previous, parsed]);
       if (parsed.event === 'complete' || parsed.event === 'error') {
+        terminatedRef.current = true;
         source.close();
         setRunning(false);
       }
+    };
+    source.onerror = () => {
+      if (terminatedRef.current) {
+        return;
+      }
+      terminatedRef.current = true;
+      source.close();
+      setRunning(false);
+      setEvents((previous) => [
+        ...previous,
+        {
+          event: 'error',
+          message:
+            'Lost connection to the sync stream. The sync may still be running on the server -- reload to check.',
+        },
+      ]);
     };
   }
 
