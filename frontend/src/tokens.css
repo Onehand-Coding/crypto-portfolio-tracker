@@ -35,7 +35,7 @@
   /* The widest a content column gets. Without a cap, a table row on a 1920px
      display stretches the eye from the label on the far left to the number on
      the far right. */
-  --content-max: 1240px;
+  --content-max: 1560px;
 
   --font-ui: Inter, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;

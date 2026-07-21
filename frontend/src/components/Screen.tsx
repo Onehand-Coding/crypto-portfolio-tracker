@@ -13,15 +13,17 @@ export function ScreenHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between"
-         style={{ marginBottom: 'var(--space-5)', gap: 'var(--space-5)' }}>
-      <div className="flex flex-col" style={{ gap: 'var(--space-1)' }}>
+    // Compact: the screen name is already in the top-bar tabs, so this is
+    // context for it, not a second announcement of where you are.
+    <div className="flex items-baseline justify-between"
+         style={{ marginBottom: 'var(--space-3)', gap: 'var(--space-4)' }}>
+      <div className="flex flex-wrap items-baseline" style={{ gap: 'var(--space-3)' }}>
         <h1 className="font-ui"
-            style={{ fontSize: '22px', fontWeight: 600, letterSpacing: '-0.01em' }}>
+            style={{ fontSize: '15px', fontWeight: 600, letterSpacing: '-0.01em' }}>
           {title}
         </h1>
         {subtitle && (
-          <p className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+          <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>
             {subtitle}
           </p>
         )}

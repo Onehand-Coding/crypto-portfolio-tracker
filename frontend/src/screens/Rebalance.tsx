@@ -2,7 +2,7 @@ import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatPercentPlain, formatQty, formatSigned, formatUsd } from '../lib/format';
+import { formatPercent, formatPercentPlain, formatQty, formatUsd } from '../lib/format';
 import type { RebalanceResponse, RebalanceSuggestion } from '../types';
 
 function actionTone(action: string | null) {
@@ -98,7 +98,7 @@ export function Rebalance() {
                       <td className="text-right"
                           style={{ color: s.drift_pct === null ? undefined
                                         : s.drift_pct > 0 ? 'var(--positive)' : 'var(--negative)' }}>
-                        {s.drift_pct === null ? '—' : formatSigned(s.drift_pct) + '%'}
+                        {formatPercent(s.drift_pct)}
                       </td>
                       <td className="text-right">{formatUsd(s.current_value_usd)}</td>
                       <td className="text-right">

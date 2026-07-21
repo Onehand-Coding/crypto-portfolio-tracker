@@ -45,8 +45,11 @@ describe('App', () => {
       </MemoryRouter>,
     );
 
+    // Deliberately more than one: the top-bar chip and the persistent bottom
+    // status strip both carry it, because showing testnet figures as live is
+    // the worst failure this UI has.
     await waitFor(() => {
-      expect(screen.getByText('TESTNET')).toBeDefined();
+      expect(screen.getAllByText('TESTNET').length).toBeGreaterThanOrEqual(2);
     });
     expect(screen.getByText(/testnet_portfolio\.db/)).toBeDefined();
   });

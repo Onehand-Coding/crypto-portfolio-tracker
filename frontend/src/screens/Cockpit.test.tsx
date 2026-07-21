@@ -1,7 +1,13 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Cockpit } from './Cockpit';
 import type { CockpitResponse } from '../types';
+
+/** The alert cards link to the screens that resolve them, so the cockpit
+ *  requires router context. */
+const renderCockpit = () =>
+  render(<MemoryRouter><Cockpit /></MemoryRouter>);
 
 const POPULATED: CockpitResponse = {
   total_value_usd: 57.78,
@@ -60,13 +66,13 @@ describe('Cockpit unpriced holdings', () => {
     // Without this the total reads as a confident figure while silently
     // excluding a position of unknown -- possibly dominant -- size.
     mockFetch({ ...POPULATED, unpriced_count: 1 });
-    render(<Cockpit />);
+    renderCockpit();
     expect(await screen.findByText(/could not be priced/)).toBeDefined();
   });
 
   it('shows no caveat when every holding is priced', async () => {
     mockFetch(POPULATED);
-    render(<Cockpit />);
+    renderCockpit();
     await screen.findByText('$57.78');
     expect(screen.queryByText(/could not be priced/)).toBeNull();
   });
@@ -75,7 +81,7 @@ describe('Cockpit unpriced holdings', () => {
 describe('Cockpit populated state', () => {
   it('renders both accounting bases with different values', async () => {
     mockFetch(POPULATED);
-    render(<Cockpit />);
+    renderCockpit();
 
     // Regex, not exact strings: each basis renders its P/L and percent in a
     // single span, e.g. "-$18.63  (-24.38%)".
@@ -86,7 +92,7 @@ describe('Cockpit populated state', () => {
 
   it('labels each basis with the question it answers', async () => {
     mockFetch(POPULATED);
-    render(<Cockpit />);
+    renderCockpit();
 
     await waitFor(() => expect(screen.getByText('did I make money?')).toBeDefined());
     expect(screen.getByText('are my holdings underwater?')).toBeDefined();
@@ -94,7 +100,7 @@ describe('Cockpit populated state', () => {
 
   it('shows each basis denominator so the two are visibly different', async () => {
     mockFetch(POPULATED);
-    render(<Cockpit />);
+    renderCockpit();
 
     await waitFor(() => expect(screen.getByText(/76\.41 net in/)).toBeDefined());
     expect(screen.getByText(/199\.75 cost basis/)).toBeDefined();
@@ -104,7 +110,7 @@ describe('Cockpit populated state', () => {
 describe('Cockpit constrained state', () => {
   it('states plainly that no sync has run rather than showing zeros', async () => {
     mockFetch(EMPTY);
-    render(<Cockpit />);
+    renderCockpit();
 
     await waitFor(() => expect(screen.getByText(/no data yet/i)).toBeDefined());
   });
@@ -114,7 +120,7 @@ describe('Cockpit error state', () => {
   it('renders a visible error message when the fetch rejects, not a blank panel or permanent loading state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 
-    render(<Cockpit />);
+    renderCockpit();
 
     await waitFor(() => {
       expect(screen.queryByText(/loading/i)).toBeNull();

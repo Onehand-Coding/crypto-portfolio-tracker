@@ -9,7 +9,9 @@ export function Panel({ title, children }: { title?: string; children: ReactNode
         borderColor: 'var(--border)',
         borderWidth: '1px',
         borderRadius: 'var(--radius-panel)',
-        padding: 'var(--space-5)',
+        // 16px, not 24px: this is a control room, and the density target is
+        // "everything above the fold" rather than "airy".
+        padding: 'var(--space-4)',
       }}
     >
       {title && (
@@ -21,7 +23,7 @@ export function Panel({ title, children }: { title?: string; children: ReactNode
             fontWeight: 500,
             letterSpacing: '0.08em',
             textTransform: 'uppercase',
-            marginBottom: 'var(--space-4)',
+            marginBottom: 'var(--space-3)',
           }}
         >
           {title}
