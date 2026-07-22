@@ -92,7 +92,10 @@ export const NAV_SECTIONS: NavSection[] = [
     label: 'System',
     icon: <Icon><circle cx="8" cy="8" r="2.5" />
       <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M12.9 3.1l-1.4 1.4M4.5 11.5l-1.4 1.4" /></Icon>,
-    items: [{ to: '/system', label: 'System' }],
+    items: [
+      { to: '/system', label: 'System' },
+      { to: '/settings', label: 'Settings' },
+    ],
   },
 ];
 

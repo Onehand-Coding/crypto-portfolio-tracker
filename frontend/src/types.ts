@@ -303,6 +303,23 @@ export interface TargetAllocationResponse {
   sums_to_one: boolean;
 }
 
+export interface ProfitTakingSettings {
+  enabled: boolean;
+  min_opportunity_score: number;
+  min_unrealized_gain_pct: number;
+  min_unrealized_gain_usd: number;
+  max_gain_take_pct: number;
+  default_take_percentage: number;
+}
+
+export interface SettingsResponse {
+  minimum_trade_usd: number;
+  profit_taking: ProfitTakingSettings;
+  p2p_fiat_currency: string;
+  crypto_quotes: string[];
+  stablecoin_symbols: string[];
+}
+
 export interface SystemHealthResponse {
   environment_label: string;
   is_testnet: boolean;

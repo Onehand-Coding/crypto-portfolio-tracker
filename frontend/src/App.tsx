@@ -22,6 +22,7 @@ import { Trading } from './screens/Trading';
 import { Reports } from './screens/Reports';
 import { TradeLog } from './screens/TradeLog';
 import { SystemHealth } from './screens/SystemHealth';
+import { Settings } from './screens/Settings';
 
 /** The rail: six sections, fixed, never scrolls at any window height. */
 function Rail() {
@@ -192,6 +193,7 @@ export default function App() {
                 <Route path="/sync" element={<Sync />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/system" element={<SystemHealth />} />
+                <Route path="/settings" element={<Settings />} />
               </Routes>
             </div>
           </main>

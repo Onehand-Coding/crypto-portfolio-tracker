@@ -20,10 +20,13 @@ from api.schemas.screens import (
     BackupInfo,
     ExportFile,
     OverviewResponse,
+    ProfitTakingSettings,
     RealizedGainRow,
     RealizedGainSummary,
     RealizedResponse,
     ReportsResponse,
+    SettingsResponse,
+    SettingsUpdate,
     SnapshotPoint,
     SystemHealthResponse,
     TargetAllocationRequest,
@@ -34,6 +37,24 @@ from api.schemas.screens import (
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
 router = APIRouter(prefix="/api", tags=["screens"])
+
+
+def _save_config_preserving_secrets(cm) -> None:
+    """Persist config, then restore the secrets save_config() strips.
+
+    save_config() deletes main_api_keys and the coingecko key from the *live*
+    config dict before writing (so they never reach disk -- correct). But that
+    dict is the process-wide singleton the tracker also holds, so the keys are
+    put straight back afterwards, leaving the file clean and the running
+    process intact.
+    """
+    try:
+        cm.save_config()
+    finally:
+        cm.config["main_api_keys"] = getattr(cm, "main_api_keys", None)
+        cm.config.setdefault("apis", {}).setdefault("coingecko", {})[
+            "api_key"
+        ] = os.getenv("COINGECKO_API_KEY")
 
 
 def _str_or_none(value):
@@ -368,18 +389,78 @@ def set_target_allocation(
 
     cm = ctx.config_manager
     cm.config["target_allocation"] = cleaned
-    try:
-        cm.save_config()
-    finally:
-        # save_config() strips these two secrets out of the *live* dict before
-        # writing. Because that dict is shared with the tracker, they are put
-        # back so a later Binance operation is not left without its keys.
-        cm.config["main_api_keys"] = getattr(cm, "main_api_keys", None)
-        cm.config.setdefault("apis", {}).setdefault("coingecko", {})[
-            "api_key"
-        ] = os.getenv("COINGECKO_API_KEY")
+    _save_config_preserving_secrets(cm)
 
     total = sum(cleaned.values())
     return TargetAllocationResponse(
         allocation=cleaned, sum=total, sums_to_one=abs(total - 1.0) <= 0.001
     )
+
+
+def _read_settings(config) -> SettingsResponse:
+    portfolio = config.get("portfolio", {}) or {}
+    pt = config.get("profit_taking", {}) or {}
+    return SettingsResponse(
+        minimum_trade_usd=num(portfolio.get("minimum_trade_usd"), 5.0),
+        profit_taking=ProfitTakingSettings(
+            enabled=bool(pt.get("enabled", False)),
+            min_opportunity_score=num(pt.get("min_opportunity_score")),
+            min_unrealized_gain_pct=num(pt.get("min_unrealized_gain_pct")),
+            min_unrealized_gain_usd=num(pt.get("min_unrealized_gain_usd")),
+            max_gain_take_pct=num(pt.get("max_gain_take_pct")),
+            default_take_percentage=num(pt.get("default_take_percentage")),
+        ),
+        p2p_fiat_currency=str(portfolio.get("p2p_fiat_currency", "") or ""),
+        crypto_quotes=[str(x) for x in (portfolio.get("crypto_quotes") or [])],
+        stablecoin_symbols=[str(x) for x in (portfolio.get("stablecoin_symbols") or [])],
+    )
+
+
+@router.get("/system/settings", response_model=SettingsResponse)
+def get_settings(ctx=Depends(get_read_context)) -> SettingsResponse:
+    """The subset of config the UI can edit. Reads only."""
+    return _read_settings(ctx.config_manager.config)
+
+
+@router.put("/system/settings", response_model=SettingsResponse)
+def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> SettingsResponse:
+    """Apply a partial settings patch and persist it. Only present fields change."""
+    cm = ctx.config_manager
+    config = cm.config
+    portfolio = config.setdefault("portfolio", {})
+
+    if payload.minimum_trade_usd is not None:
+        if not payload.minimum_trade_usd > 0:
+            raise HTTPException(status_code=422, detail="Minimum trade must be positive.")
+        portfolio["minimum_trade_usd"] = float(payload.minimum_trade_usd)
+
+    if payload.profit_taking is not None:
+        pt = payload.profit_taking
+        for label, value, hi in (
+            ("default_take_percentage", pt.default_take_percentage, 100.0),
+            ("max_gain_take_pct", pt.max_gain_take_pct, 100.0),
+            ("min_opportunity_score", pt.min_opportunity_score, 100.0),
+        ):
+            if not 0 <= value <= hi:
+                raise HTTPException(
+                    status_code=422, detail=f"{label} must be between 0 and {hi:g}."
+                )
+        if pt.min_unrealized_gain_pct < 0 or pt.min_unrealized_gain_usd < 0:
+            raise HTTPException(
+                status_code=422, detail="Minimum unrealized gain cannot be negative."
+            )
+        config["profit_taking"] = pt.model_dump()
+
+    if payload.p2p_fiat_currency is not None:
+        portfolio["p2p_fiat_currency"] = payload.p2p_fiat_currency.strip().upper()
+    if payload.crypto_quotes is not None:
+        portfolio["crypto_quotes"] = [
+            s.strip().upper() for s in payload.crypto_quotes if s.strip()
+        ]
+    if payload.stablecoin_symbols is not None:
+        portfolio["stablecoin_symbols"] = [
+            s.strip().upper() for s in payload.stablecoin_symbols if s.strip()
+        ]
+
+    _save_config_preserving_secrets(cm)
+    return _read_settings(cm.config)

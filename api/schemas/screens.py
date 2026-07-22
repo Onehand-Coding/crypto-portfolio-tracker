@@ -240,6 +240,33 @@ class BackupCreateResponse(BaseModel):
     error: Optional[str] = None
 
 
+class ProfitTakingSettings(BaseModel):
+    enabled: bool
+    min_opportunity_score: float
+    min_unrealized_gain_pct: float
+    min_unrealized_gain_usd: float
+    max_gain_take_pct: float
+    default_take_percentage: float
+
+
+class SettingsResponse(BaseModel):
+    minimum_trade_usd: float
+    profit_taking: ProfitTakingSettings
+    p2p_fiat_currency: str
+    crypto_quotes: list[str]
+    stablecoin_symbols: list[str]
+
+
+class SettingsUpdate(BaseModel):
+    # A partial patch: only the fields present are changed. Every value is
+    # validated before it touches the config.
+    minimum_trade_usd: Optional[float] = None
+    profit_taking: Optional[ProfitTakingSettings] = None
+    p2p_fiat_currency: Optional[str] = None
+    crypto_quotes: Optional[list[str]] = None
+    stablecoin_symbols: Optional[list[str]] = None
+
+
 class TargetAllocationRequest(BaseModel):
     # Weights are fractions (0.35 == 35%), matching how the config stores them
     # and how GET /system/health returns them. The UI edits percentages and
