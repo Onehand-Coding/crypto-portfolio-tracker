@@ -409,6 +409,17 @@ sync can still be missing data.
 redirects to the testnet database, and read-only API keys are recommended unless
 trading is actually needed.
 
+**React execute layer honours the two config switches (not testnet-only).**
+`api/routes/execute.py` used to hard-refuse (403) outside testnet and force
+`is_live=True`. It now mirrors the CLI/Streamlit path: every route passes
+`cm.is_live` (from `live_trading_enabled`) to the core, and `testnet_mode` only
+selects the endpoint. So live trading off = dry run on either endpoint; on =
+real orders. Both `testnet_mode` and `live_trading_enabled` are editable from the
+React Settings screen (Trading mode panel) and every execution screen shows the
+three-cell `TradingStatusBanner`. A `testnet_mode` flip needs a server restart to
+take full effect (the running process caches the tracker/DB path). The typed
+`EXECUTE` confirmation gate is unchanged.
+
 ---
 
 ## 15. AI Collaboration Notes

@@ -304,6 +304,7 @@ export interface GenerateExportResponse {
 
 export interface ExecutionStatus {
   testnet: boolean;
+  is_live: boolean;
 }
 
 export interface TradeExecuteResponse {
@@ -344,6 +345,8 @@ export interface TrendAnalyzerSettings {
 
 export interface SettingsResponse {
   minimum_trade_usd: number;
+  testnet_mode: boolean;
+  live_trading_enabled: boolean;
   profit_taking: ProfitTakingSettings;
   p2p_fiat_currency: string;
   crypto_quotes: string[];

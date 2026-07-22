@@ -24,6 +24,43 @@ function Field({ label, hint, children }: {
   );
 }
 
+/** A labelled on/off switch. The track colours to `accent` when on. */
+function Toggle({ checked, onChange, label, hint, accent }: {
+  checked: boolean; onChange: (v: boolean) => void;
+  label: string; hint?: string; accent: string;
+}) {
+  return (
+    <label className="flex items-start" style={{ gap: 'var(--space-3)', cursor: 'pointer' }}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className="shrink-0 transition-colors"
+        style={{
+          position: 'relative', width: '38px', height: '22px', marginTop: '1px',
+          borderRadius: '999px', border: '1px solid var(--border-strong)',
+          background: checked ? accent : 'var(--surface-0)',
+        }}
+      >
+        <span style={{
+          position: 'absolute', top: '2px', left: checked ? '18px' : '2px',
+          width: '16px', height: '16px', borderRadius: '50%',
+          background: '#fff', transition: 'left 120ms ease',
+        }} />
+      </button>
+      <span className="flex flex-col" style={{ gap: '2px' }}>
+        <span className="font-ui text-sm" style={{ color: 'var(--text-primary)' }}>{label}</span>
+        {hint && (
+          <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>
+            {hint}
+          </span>
+        )}
+      </span>
+    </label>
+  );
+}
+
 const inputStyle = {
   background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
   borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
@@ -70,6 +107,8 @@ export function Settings() {
     try {
       const result = await apiPut<SettingsResponse>('/api/system/settings', {
         minimum_trade_usd: Number(form!.minimum_trade_usd),
+        testnet_mode: form!.testnet_mode,
+        live_trading_enabled: form!.live_trading_enabled,
         profit_taking: {
           enabled: form!.profit_taking.enabled,
           min_opportunity_score: Number(form!.profit_taking.min_opportunity_score),
@@ -106,6 +145,31 @@ export function Settings() {
       <ScreenHeader title="Settings" subtitle="Trading, profit-taking and currency configuration" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+        <Panel title="Trading mode">
+          <p className="font-ui text-sm"
+             style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-4) 0' }}>
+            Two independent switches, the same the CLI and Streamlit use. Testnet
+            selects the exchange endpoint; live trading arms real orders. With
+            live trading off, every screen still works but orders are simulated.
+          </p>
+          <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+            <Toggle
+              checked={form.testnet_mode}
+              onChange={(v) => setForm((f) => f && { ...f, testnet_mode: v })}
+              label="🧪 Binance testnet mode"
+              hint="Switches between mainnet and testnet. Takes full effect after a server restart."
+              accent="var(--warning)"
+            />
+            <Toggle
+              checked={form.live_trading_enabled}
+              onChange={(v) => setForm((f) => f && { ...f, live_trading_enabled: v })}
+              label="🔴 Enable live trading"
+              hint="On: real orders are placed. Off: trades are simulated (dry run)."
+              accent="var(--negative)"
+            />
+          </div>
+        </Panel>
+
         <Panel title="Trading">
           <Field label="Minimum trade (USD)"
                  hint="Trades below this size are suppressed across rebalancing and DCA.">

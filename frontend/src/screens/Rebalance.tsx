@@ -1,6 +1,7 @@
 import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
+import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatPercentPlain, formatQty, formatUsd } from '../lib/format';
@@ -60,6 +61,7 @@ export function Rebalance() {
                     subtitle="Current vs target allocation, with technical context" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+        <TradingStatusBanner status={status.data ?? null} />
         <AnalysisBar state={data} onRun={run} label="Rebalancing analysis" />
 
         <Panel title="Suggestions">
@@ -142,15 +144,17 @@ export function Rebalance() {
           </Panel>
         )}
 
-        {status.data?.testnet && (() => {
+        {status.data && (() => {
           const actionable = data.suggestions.filter(
             (s) => s.action && /BUY|SELL/i.test(s.action),
           ).length;
           if (actionable === 0) return null;
+          const live = status.data.is_live;
+          const net = status.data.testnet ? 'testnet' : 'mainnet';
           return (
             <ExecutePanel
-              title="Execute rebalance on testnet"
-              description={`This places ${actionable} market order${actionable === 1 ? '' : 's'} — every BUY and SELL suggestion above — on the Binance testnet.`}
+              title={`${live ? 'Execute' : 'Simulate'} rebalance`}
+              description={`This ${live ? 'places' : 'simulates'} ${actionable} market order${actionable === 1 ? '' : 's'} — every BUY and SELL suggestion above — on the Binance ${net}${live ? '' : ' (live trading is off, so no orders are sent)'}.`}
               execute={async () => {
                 const res = await apiPost<TradeExecuteResponse>(
                   '/api/execute/rebalance', { confirm: true });

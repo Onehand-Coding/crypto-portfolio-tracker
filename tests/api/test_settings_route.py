@@ -57,6 +57,26 @@ def test_restores_secrets_after_save(mock_read_context):
     assert cm.config["main_api_keys"] == {"api_key": "SECRET"}
 
 
+def test_trading_mode_toggles_persist(mock_read_context):
+    cm = _cm(mock_read_context)
+    body = TestClient(app).put(
+        "/api/system/settings",
+        json={"testnet_mode": False, "live_trading_enabled": True},
+    ).json()
+    assert body["testnet_mode"] is False
+    assert body["live_trading_enabled"] is True
+    assert cm.config["portfolio"]["testnet_mode"] is False
+    assert cm.config["portfolio"]["live_trading_enabled"] is True
+    cm.save_config.assert_called_once()
+
+
+def test_toggles_default_false_when_absent(mock_read_context):
+    _cm(mock_read_context)
+    body = TestClient(app).get("/api/system/settings").json()
+    assert body["testnet_mode"] is False
+    assert body["live_trading_enabled"] is False
+
+
 def test_rejects_non_positive_minimum_trade(mock_read_context):
     cm = _cm(mock_read_context)
     resp = TestClient(app).put("/api/system/settings", json={"minimum_trade_usd": 0})

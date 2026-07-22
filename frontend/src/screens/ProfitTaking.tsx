@@ -1,6 +1,7 @@
 import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
+import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatSigned, formatUsd } from '../lib/format';
@@ -35,6 +36,7 @@ export function ProfitTaking() {
                     subtitle="Positions scoring high enough to consider trimming" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+        <TradingStatusBanner status={status.data ?? null} />
         <AnalysisBar state={data} onRun={run} label="Profit-taking analysis" />
 
         <Panel title="Opportunities">
@@ -108,10 +110,10 @@ export function ProfitTaking() {
           </Panel>
         )}
 
-        {status.data?.testnet && data.has_data && data.opportunities.length > 0 && (
+        {status.data && data.has_data && data.opportunities.length > 0 && (
           <ExecutePanel
-            title="Execute profit-taking on testnet"
-            description={`This trims ${data.opportunities.length} scoring position${data.opportunities.length === 1 ? '' : 's'} — selling the configured share of each gain — as market sells on the Binance testnet.`}
+            title={`${status.data.is_live ? 'Execute' : 'Simulate'} profit-taking`}
+            description={`This ${status.data.is_live ? 'trims' : 'simulates trimming'} ${data.opportunities.length} scoring position${data.opportunities.length === 1 ? '' : 's'} — selling the configured share of each gain — as market sells on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
             execute={async () => {
               const res = await apiPost<TradeExecuteResponse>('/api/execute/profit', { confirm: true });
               reload();

@@ -258,6 +258,8 @@ class TrendAnalyzerSettings(BaseModel):
 
 class SettingsResponse(BaseModel):
     minimum_trade_usd: float
+    testnet_mode: bool
+    live_trading_enabled: bool
     profit_taking: ProfitTakingSettings
     p2p_fiat_currency: str
     crypto_quotes: list[str]
@@ -270,6 +272,8 @@ class SettingsUpdate(BaseModel):
     # A partial patch: only the fields present are changed. Every value is
     # validated before it touches the config.
     minimum_trade_usd: Optional[float] = None
+    testnet_mode: Optional[bool] = None
+    live_trading_enabled: Optional[bool] = None
     profit_taking: Optional[ProfitTakingSettings] = None
     p2p_fiat_currency: Optional[str] = None
     crypto_quotes: Optional[list[str]] = None

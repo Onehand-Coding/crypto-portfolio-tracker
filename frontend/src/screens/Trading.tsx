@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
@@ -10,11 +11,12 @@ import type {
 } from '../types';
 
 /**
- * Order review with portfolio-impact preview, and testnet execution.
+ * Order review with portfolio-impact preview and execution.
  *
- * Placing an order is irreversible, so execution is hard-gated: the button only
- * appears in testnet mode (the API returns 403 otherwise), and it still demands
- * a typed confirmation. Outside testnet this stays a review-only screen.
+ * Placing an order is irreversible, so it stays behind a typed confirmation and
+ * the posture strip is always in view. Whether the order is real or simulated is
+ * decided by the live-trading switch (Settings), exactly as in the CLI: with it
+ * off the order is a dry run on whichever endpoint testnet mode selects.
  */
 export function Trading() {
   const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
@@ -45,6 +47,7 @@ export function Trading() {
   const price = holding?.current_price ?? null;
 
   const testnet = status.data?.testnet ?? false;
+  const isLive = status.data?.is_live ?? false;
 
   async function execute() {
     setExecuting(true);
@@ -67,31 +70,10 @@ export function Trading() {
   return (
     <>
       <ScreenHeader title="Trading"
-                    subtitle={testnet ? 'Review an order, then execute it on testnet'
-                                      : 'Review an order and its effect on your allocation'} />
+                    subtitle="Review an order, then execute it — live or simulated per your settings" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
-        <Panel>
-          <div className="flex items-center" style={{ gap: 'var(--space-3)' }}>
-            {testnet ? (
-              <>
-                <Badge text="TESTNET EXECUTION" tone="action" />
-                <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  Orders placed here go to the Binance testnet with fake money. Live
-                  execution stays disabled until you switch the environment.
-                </span>
-              </>
-            ) : (
-              <>
-                <Badge text="REVIEW ONLY" tone="warning" />
-                <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  Execution is disabled outside testnet mode. This screen previews the
-                  order's impact; enable testnet to place it.
-                </span>
-              </>
-            )}
-          </div>
-        </Panel>
+        <TradingStatusBanner status={status.data ?? null} />
 
         <Panel title="Order">
           <div className="flex items-end" style={{ gap: 'var(--space-4)', flexWrap: 'wrap' }}>
@@ -203,12 +185,14 @@ export function Trading() {
           </Panel>
         )}
 
-        {valid && testnet && (
-          <Panel title="Execute (testnet)">
+        {valid && (
+          <Panel title={isLive ? 'Execute' : 'Execute (simulated)'}>
             <p className="font-ui text-sm"
                style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-3) 0' }}>
-              This places a market {side} of {formatUsd(amountUsd)} {symbol} on the Binance
-              testnet. To confirm, type <span className="font-mono"
+              This {isLive ? 'places' : 'simulates'} a market {side} of {formatUsd(amountUsd)} {symbol} on
+              the Binance {testnet ? 'testnet' : 'mainnet'}
+              {isLive ? '' : ' (live trading is off, so no order is sent)'}. To confirm,
+              type <span className="font-mono"
               style={{ color: 'var(--text-primary)' }}>EXECUTE</span> below.
             </p>
             <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)' }}>
@@ -222,7 +206,8 @@ export function Trading() {
                          padding: 'var(--space-2) var(--space-3)', width: '160px', fontSize: '14px' }}
               />
               <Button onClick={execute} disabled={executing || confirmText.trim() !== 'EXECUTE'}>
-                {executing ? 'Placing…' : `Execute ${side} on testnet`}
+                {executing ? 'Placing…'
+                           : `${isLive ? 'Execute' : 'Simulate'} ${side} on ${testnet ? 'testnet' : 'mainnet'}`}
               </Button>
             </div>
 

@@ -3,6 +3,7 @@ import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
+import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatQty, formatUsd } from '../lib/format';
@@ -21,20 +22,21 @@ const control = {
   padding: 'var(--space-2) var(--space-3)', fontSize: '14px',
 } as const;
 
-/** Move an asset between Spot / Funding / Futures on testnet. */
-function TransferWidget() {
+/** Move an asset between Spot / Funding / Futures. */
+function TransferWidget({ status }: { status: ExecutionStatus }) {
   const [asset, setAsset] = useState('USDT');
   const [amount, setAmount] = useState('10');
   const [from, setFrom] = useState('SPOT');
   const [to, setTo] = useState('FUNDING');
   const amt = Number(amount);
   const valid = Number.isFinite(amt) && amt > 0 && from !== to;
+  const net = status.testnet ? 'testnet' : 'mainnet';
   return (
     <ExecutePanel
-      title="Transfer (testnet)"
+      title={status.is_live ? 'Transfer' : 'Transfer (simulated)'}
       disabled={!valid}
       description={valid
-        ? `This moves ${amt} ${asset.toUpperCase()} from ${from} to ${to} on the testnet.`
+        ? `This ${status.is_live ? 'moves' : 'simulates moving'} ${amt} ${asset.toUpperCase()} from ${from} to ${to} on the Binance ${net}${status.is_live ? '' : ' (live trading is off — nothing is sent)'}.`
         : 'Choose a positive amount and two different wallets.'}
       execute={() => apiPost<TradeExecuteResponse>('/api/execute/transfer', {
         confirm: true, asset: asset.toUpperCase(), amount: amt,
@@ -71,18 +73,19 @@ function TransferWidget() {
   );
 }
 
-/** Redeem an asset from Simple Earn back to Spot on testnet. */
-function RedeemWidget() {
+/** Redeem an asset from Simple Earn back to Spot. */
+function RedeemWidget({ status }: { status: ExecutionStatus }) {
   const [asset, setAsset] = useState('USDT');
   const [amount, setAmount] = useState('10');
   const amt = Number(amount);
   const valid = Number.isFinite(amt) && amt > 0;
+  const net = status.testnet ? 'testnet' : 'mainnet';
   return (
     <ExecutePanel
-      title="Redeem from Earn (testnet)"
+      title={status.is_live ? 'Redeem from Earn' : 'Redeem from Earn (simulated)'}
       disabled={!valid}
       description={valid
-        ? `This redeems ${amt} ${asset.toUpperCase()} from Simple Earn back to Spot on the testnet.`
+        ? `This ${status.is_live ? 'redeems' : 'simulates redeeming'} ${amt} ${asset.toUpperCase()} from Simple Earn back to Spot on the Binance ${net}${status.is_live ? '' : ' (live trading is off — nothing is sent)'}.`
         : 'Choose a positive amount.'}
       execute={() => apiPost<TradeExecuteResponse>('/api/execute/redeem', {
         confirm: true, asset: asset.toUpperCase(), amount: amt,
@@ -181,12 +184,15 @@ export function Wallets() {
           <BalanceTable rows={data.funding_balances} emptyText="No funding balances." />
         </Panel>
 
-        {status.data?.testnet && (
-          <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-                                         gap: 'var(--space-3)' }}>
-            <TransferWidget />
-            <RedeemWidget />
-          </div>
+        {status.data && (
+          <>
+            <TradingStatusBanner status={status.data} />
+            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                                           gap: 'var(--space-3)' }}>
+              <TransferWidget status={status.data} />
+              <RedeemWidget status={status.data} />
+            </div>
+          </>
         )}
       </div>
     </>

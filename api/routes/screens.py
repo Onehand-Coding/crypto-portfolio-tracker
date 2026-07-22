@@ -616,6 +616,8 @@ def _read_settings(config) -> SettingsResponse:
     database = config.get("database", {}) or {}
     return SettingsResponse(
         minimum_trade_usd=num(portfolio.get("minimum_trade_usd"), 5.0),
+        testnet_mode=bool(portfolio.get("testnet_mode", False)),
+        live_trading_enabled=bool(portfolio.get("live_trading_enabled", False)),
         profit_taking=ProfitTakingSettings(
             enabled=bool(pt.get("enabled", False)),
             min_opportunity_score=num(pt.get("min_opportunity_score")),
@@ -654,6 +656,14 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         if not payload.minimum_trade_usd > 0:
             raise HTTPException(status_code=422, detail="Minimum trade must be positive.")
         portfolio["minimum_trade_usd"] = float(payload.minimum_trade_usd)
+
+    # The two exchange switches, mirroring the CLI/Streamlit trading-mode block.
+    # testnet_mode selects the endpoint (and DB); a running server keeps its
+    # cached tracker, so a flip here needs a restart to take full effect.
+    if payload.testnet_mode is not None:
+        portfolio["testnet_mode"] = bool(payload.testnet_mode)
+    if payload.live_trading_enabled is not None:
+        portfolio["live_trading_enabled"] = bool(payload.live_trading_enabled)
 
     if payload.profit_taking is not None:
         pt = payload.profit_taking

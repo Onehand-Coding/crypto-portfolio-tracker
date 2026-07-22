@@ -3,6 +3,7 @@ import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { AnalysisBar, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
+import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
@@ -57,6 +58,7 @@ export function Dca() {
                     subtitle="Preview where new capital would go before committing it" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+        <TradingStatusBanner status={status.data ?? null} />
         <AnalysisBar state={data} onRun={run} label="Checking your USDT balance" />
 
         <Panel title="Available to deploy">
@@ -176,10 +178,10 @@ export function Dca() {
           </Panel>
         )}
 
-        {status.data?.testnet && preview?.valid && preview.allocations.length > 0 && (
+        {status.data && preview?.valid && preview.allocations.length > 0 && (
           <ExecutePanel
-            title="Execute DCA on testnet"
-            description={`This deploys ${formatUsd(preview.amount_usd)} across ${preview.allocations.length} asset${preview.allocations.length === 1 ? '' : 's'} as market buys on the Binance testnet.`}
+            title={`${status.data.is_live ? 'Execute' : 'Simulate'} DCA`}
+            description={`This ${status.data.is_live ? 'deploys' : 'simulates deploying'} ${formatUsd(preview.amount_usd)} across ${preview.allocations.length} asset${preview.allocations.length === 1 ? '' : 's'} as market buys on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
             execute={() => apiPost<TradeExecuteResponse>('/api/execute/dca', {
               confirm: true,
               strategy,
