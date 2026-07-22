@@ -297,6 +297,12 @@ export interface BackupCreateResponse {
   error: string | null;
 }
 
+export interface TargetAllocationResponse {
+  allocation: Record<string, number>;
+  sum: number;
+  sums_to_one: boolean;
+}
+
 export interface SystemHealthResponse {
   environment_label: string;
   is_testnet: boolean;

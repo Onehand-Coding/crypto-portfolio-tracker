@@ -4,10 +4,11 @@ All offline: cached metrics plus SQLite. None of these construct a tracker.
 """
 
 import datetime
+import os
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from api.cache import MetricsCache, cache_path_for
 from api.deps import get_read_context
@@ -25,6 +26,8 @@ from api.schemas.screens import (
     ReportsResponse,
     SnapshotPoint,
     SystemHealthResponse,
+    TargetAllocationRequest,
+    TargetAllocationResponse,
     TransactionRow,
     TransactionsResponse,
 )
@@ -330,3 +333,53 @@ def create_backup(ctx=Depends(get_read_context)) -> BackupCreateResponse:
             error="Backup could not be created -- the database file may be missing.",
         )
     return BackupCreateResponse(created=True, name=Path(path).name, path=path)
+
+
+@router.put("/system/target-allocation", response_model=TargetAllocationResponse)
+def set_target_allocation(
+    payload: TargetAllocationRequest, ctx=Depends(get_read_context)
+) -> TargetAllocationResponse:
+    """Replace the target allocation and persist it to the config file.
+
+    The config manager is a process-wide singleton shared by the read context,
+    the analyzer and the tracker, all holding the same config dict -- so
+    mutating it in place makes the change live everywhere at once, and
+    save_config() writes it to disk.
+    """
+    cleaned: dict[str, float] = {}
+    for symbol, weight in payload.allocation.items():
+        name = str(symbol).strip().upper()
+        if not name:
+            raise HTTPException(status_code=422, detail="An asset symbol was blank.")
+        try:
+            value = float(weight)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=422, detail=f"Weight for {name} is not a number."
+            )
+        # Fractions: a weight below 0 or above 1 (100%) is a data-entry error,
+        # not a valid allocation.
+        if value < 0 or value > 1.0001:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Weight for {name} must be between 0 and 1 (got {value}).",
+            )
+        cleaned[name] = value
+
+    cm = ctx.config_manager
+    cm.config["target_allocation"] = cleaned
+    try:
+        cm.save_config()
+    finally:
+        # save_config() strips these two secrets out of the *live* dict before
+        # writing. Because that dict is shared with the tracker, they are put
+        # back so a later Binance operation is not left without its keys.
+        cm.config["main_api_keys"] = getattr(cm, "main_api_keys", None)
+        cm.config.setdefault("apis", {}).setdefault("coingecko", {})[
+            "api_key"
+        ] = os.getenv("COINGECKO_API_KEY")
+
+    total = sum(cleaned.values())
+    return TargetAllocationResponse(
+        allocation=cleaned, sum=total, sums_to_one=abs(total - 1.0) <= 0.001
+    )

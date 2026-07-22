@@ -240,6 +240,21 @@ class BackupCreateResponse(BaseModel):
     error: Optional[str] = None
 
 
+class TargetAllocationRequest(BaseModel):
+    # Weights are fractions (0.35 == 35%), matching how the config stores them
+    # and how GET /system/health returns them. The UI edits percentages and
+    # converts on the way in.
+    allocation: dict[str, float]
+
+
+class TargetAllocationResponse(BaseModel):
+    allocation: dict[str, float]
+    sum: float
+    # A target that does not sum to 1.0 skews every rebalance, so it is flagged
+    # rather than silently accepted.
+    sums_to_one: bool
+
+
 class SystemHealthResponse(BaseModel):
     environment_label: str
     is_testnet: bool

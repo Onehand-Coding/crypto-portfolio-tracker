@@ -3,9 +3,169 @@ import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
-import { apiPost } from '../lib/api';
+import { apiPost, apiPut } from '../lib/api';
 import { formatPercentPlain, formatUsd } from '../lib/format';
-import type { BackupCreateResponse, SystemHealthResponse } from '../types';
+import type {
+  BackupCreateResponse, SystemHealthResponse, TargetAllocationResponse,
+} from '../types';
+
+interface DraftRow { symbol: string; pct: string }
+
+/** Editable target allocation. Reads fractions, edits percentages, writes back. */
+function TargetAllocationPanel({
+  allocation, onSaved,
+}: { allocation: Record<string, number>; onSaved: () => void }) {
+  const entries = Object.entries(allocation).sort((a, b) => b[1] - a[1]);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<DraftRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  function begin() {
+    setDraft(entries.map(([symbol, weight]) => ({
+      symbol, pct: String(+(weight * 100).toFixed(4)),
+    })));
+    setMessage(null);
+    setEditing(true);
+  }
+
+  const draftSum = draft.reduce((sum, r) => sum + (Number(r.pct) || 0), 0);
+  const valid = draft.every((r) => r.symbol.trim() && Number.isFinite(Number(r.pct))
+    && Number(r.pct) >= 0);
+
+  async function save() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const payload: Record<string, number> = {};
+      for (const row of draft) payload[row.symbol.trim().toUpperCase()] = Number(row.pct) / 100;
+      const result = await apiPut<TargetAllocationResponse>(
+        '/api/system/target-allocation', { allocation: payload },
+      );
+      setEditing(false);
+      setMessage(result.sums_to_one
+        ? 'Target allocation saved.'
+        : `Saved, but weights sum to ${formatPercentPlain(result.sum * 100)}, not 100%.`);
+      onSaved();
+    } catch (e) {
+      setMessage(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Panel title="Target allocation">
+      <div className="flex flex-wrap items-center justify-between"
+           style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+        <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+          {message ?? 'Drives rebalancing, DCA and every drift figure. Weights are percentages.'}
+        </span>
+        {!editing && <Button variant="secondary" onClick={begin}>Edit allocation</Button>}
+      </div>
+
+      {!editing ? (
+        entries.length === 0 ? (
+          <Empty>No target allocation configured. Use “Edit allocation” to set one.</Empty>
+        ) : (
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th className="text-left">Asset</th>
+                  <th className="text-right">Target</th>
+                  <th className="text-left">Weight</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(([symbol, weight]) => (
+                  <tr key={symbol}>
+                    <td className="text-left" style={{ fontWeight: 500 }}>{symbol}</td>
+                    <td className="text-right">{formatPercentPlain(weight * 100)}</td>
+                    <td className="text-left">
+                      <div style={{ height: '8px', width: '200px', background: 'var(--surface-2)',
+                                    borderRadius: '2px' }}>
+                        <div style={{ height: '100%', width: `${weight * 100 * 2}%`,
+                                      maxWidth: '100%', background: 'var(--action)',
+                                      borderRadius: '2px' }} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          {draft.map((row, i) => (
+            <div key={i} className="flex items-center" style={{ gap: 'var(--space-3)' }}>
+              <input
+                value={row.symbol}
+                onChange={(e) => setDraft((d) => d.map((r, j) =>
+                  j === i ? { ...r, symbol: e.target.value } : r))}
+                placeholder="SYMBOL"
+                className="font-mono"
+                style={{ background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+                         borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                         padding: 'var(--space-1) var(--space-3)', width: '120px', fontSize: '13px',
+                         textTransform: 'uppercase' }}
+              />
+              <input
+                value={row.pct}
+                onChange={(e) => setDraft((d) => d.map((r, j) =>
+                  j === i ? { ...r, pct: e.target.value } : r))}
+                inputMode="decimal"
+                className="font-mono"
+                style={{ background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+                         borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                         padding: 'var(--space-1) var(--space-3)', width: '90px', fontSize: '13px',
+                         textAlign: 'right' }}
+              />
+              <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>%</span>
+              <button
+                onClick={() => setDraft((d) => d.filter((_, j) => j !== i))}
+                className="font-ui transition-colors"
+                style={{ background: 'transparent', color: 'var(--text-tertiary)',
+                         border: '1px solid var(--border)', borderRadius: 'var(--radius-control)',
+                         padding: 'var(--space-1) var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+
+          <div className="flex items-center justify-between"
+               style={{ gap: 'var(--space-3)', marginTop: 'var(--space-2)' }}>
+            <button
+              onClick={() => setDraft((d) => [...d, { symbol: '', pct: '0' }])}
+              className="font-ui transition-colors"
+              style={{ background: 'transparent', color: 'var(--text-secondary)',
+                       border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-control)',
+                       padding: 'var(--space-1) var(--space-3)', fontSize: '13px', cursor: 'pointer' }}
+            >
+              + Add asset
+            </button>
+            <span className="font-mono" style={{ fontSize: '13px',
+                     color: Math.abs(draftSum - 100) < 0.01 ? 'var(--positive)' : 'var(--warning)' }}>
+              Sum: {draftSum.toFixed(2)}%
+            </span>
+          </div>
+
+          <div className="flex items-center" style={{ gap: 'var(--space-3)',
+                                                      marginTop: 'var(--space-3)' }}>
+            <Button onClick={save} disabled={saving || !valid}>
+              {saving ? 'Saving…' : 'Save allocation'}
+            </Button>
+            <Button variant="secondary" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 function humanSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -42,9 +202,6 @@ export function SystemHealth() {
 
   if (error) return <ErrorPanel title="System" message={`Failed to load system health: ${error}`} />;
   if (!data) return <Panel title="System"><Empty>Loading…</Empty></Panel>;
-
-  const allocation = Object.entries(data.target_allocation);
-  const allocationTotal = allocation.reduce((sum, [, weight]) => sum + weight, 0);
 
   return (
     <>
@@ -85,51 +242,7 @@ export function SystemHealth() {
           </KpiBand>
         </Panel>
 
-        <Panel title="Target allocation">
-          {allocation.length === 0 ? (
-            <Empty>No target allocation configured.</Empty>
-          ) : (
-            <>
-              <div className="table-scroll">
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th className="text-left">Asset</th>
-                      <th className="text-right">Target</th>
-                      <th className="text-left">Weight</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allocation.map(([symbol, weight]) => (
-                      <tr key={symbol}>
-                        <td className="text-left" style={{ fontWeight: 500 }}>{symbol}</td>
-                        <td className="text-right">{formatPercentPlain(weight * 100)}</td>
-                        <td className="text-left">
-                          <div style={{ height: '8px', width: '200px',
-                                        background: 'var(--surface-2)', borderRadius: '2px' }}>
-                            <div style={{ height: '100%', width: `${weight * 100 * 2}%`,
-                                          maxWidth: '100%', background: 'var(--action)',
-                                          borderRadius: '2px' }} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {/* A target allocation that does not sum to 100% silently distorts
-                  every rebalance suggestion, so it is called out rather than
-                  left for the user to add up. */}
-              {Math.abs(allocationTotal - 1) > 0.001 && (
-                <p className="font-ui text-sm"
-                   style={{ color: 'var(--warning)', marginTop: 'var(--space-4)', marginBottom: 0 }}>
-                  Target weights sum to {formatPercentPlain(allocationTotal * 100)}, not 100%.
-                  Rebalancing will be skewed until this is corrected.
-                </p>
-              )}
-            </>
-          )}
-        </Panel>
+        <TargetAllocationPanel allocation={data.target_allocation} onSaved={reload} />
 
         <Panel title="Trading limits">
           <KpiBand>
