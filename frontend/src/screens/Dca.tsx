@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { AnalysisBar, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { ExecutePanel } from '../components/ExecutePanel';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
-import type { DcaPreviewResponse, DcaResponse } from '../types';
+import type {
+  DcaPreviewResponse, DcaResponse, ExecutionStatus, TradeExecuteResponse,
+} from '../types';
 
 const STRATEGIES = [
   { id: 'target_weight', label: 'Target weight',
@@ -16,6 +19,7 @@ const STRATEGIES = [
 
 export function Dca() {
   const { data, error, reload } = useApi<DcaResponse>('/api/strategy/dca');
+  const status = useApi<ExecutionStatus>('/api/execute/status');
   usePollWhile(Boolean(data?.is_running), reload);
 
   const [amount, setAmount] = useState('50');
@@ -170,6 +174,18 @@ export function Dca() {
               </div>
             )}
           </Panel>
+        )}
+
+        {status.data?.testnet && preview?.valid && preview.allocations.length > 0 && (
+          <ExecutePanel
+            title="Execute DCA on testnet"
+            description={`This deploys ${formatUsd(preview.amount_usd)} across ${preview.allocations.length} asset${preview.allocations.length === 1 ? '' : 's'} as market buys on the Binance testnet.`}
+            execute={() => apiPost<TradeExecuteResponse>('/api/execute/dca', {
+              confirm: true,
+              strategy,
+              trades: preview.allocations.map((a) => ({ asset: a.symbol, amount: a.amount_usd })),
+            })}
+          />
         )}
       </div>
     </>

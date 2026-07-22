@@ -284,6 +284,33 @@ class TradeExecuteResponse(BaseModel):
     errors: list[str] = []
 
 
+class ExecuteSelectionRequest(BaseModel):
+    confirm: bool = False
+    # The subset of symbols to act on. None or empty means every actionable row.
+    symbols: Optional[list[str]] = None
+
+
+class DcaExecuteRequest(BaseModel):
+    confirm: bool = False
+    strategy: str = "target_weight"
+    # Each trade: {"asset": symbol, "amount": usd}. Built from the DCA preview.
+    trades: list[dict] = []
+
+
+class TransferRequest(BaseModel):
+    confirm: bool = False
+    asset: str
+    amount: float
+    from_wallet: str
+    to_wallet: str
+
+
+class RedeemRequest(BaseModel):
+    confirm: bool = False
+    asset: str
+    amount: float
+
+
 class RestoreRequest(BaseModel):
     name: str
 

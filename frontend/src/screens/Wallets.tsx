@@ -1,9 +1,108 @@
+import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { ExecutePanel } from '../components/ExecutePanel';
 import { useApi } from '../lib/useApi';
+import { apiPost } from '../lib/api';
 import { formatQty, formatUsd } from '../lib/format';
-import type { WalletBalance, WalletsResponse } from '../types';
+import type {
+  ExecutionStatus, TradeExecuteResponse, WalletBalance, WalletsResponse,
+} from '../types';
+
+const WALLETS = ['SPOT', 'FUNDING', 'FUTURES'];
+const fieldLabel = {
+  color: 'var(--text-tertiary)', fontSize: '11px',
+  letterSpacing: '0.08em', textTransform: 'uppercase' as const,
+};
+const control = {
+  background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+  padding: 'var(--space-2) var(--space-3)', fontSize: '14px',
+} as const;
+
+/** Move an asset between Spot / Funding / Futures on testnet. */
+function TransferWidget() {
+  const [asset, setAsset] = useState('USDT');
+  const [amount, setAmount] = useState('10');
+  const [from, setFrom] = useState('SPOT');
+  const [to, setTo] = useState('FUNDING');
+  const amt = Number(amount);
+  const valid = Number.isFinite(amt) && amt > 0 && from !== to;
+  return (
+    <ExecutePanel
+      title="Transfer (testnet)"
+      disabled={!valid}
+      description={valid
+        ? `This moves ${amt} ${asset.toUpperCase()} from ${from} to ${to} on the testnet.`
+        : 'Choose a positive amount and two different wallets.'}
+      execute={() => apiPost<TradeExecuteResponse>('/api/execute/transfer', {
+        confirm: true, asset: asset.toUpperCase(), amount: amt,
+        from_wallet: from, to_wallet: to,
+      })}
+    >
+      <div className="flex flex-wrap items-end" style={{ gap: 'var(--space-4)' }}>
+        <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          <span className="font-ui" style={fieldLabel}>Asset</span>
+          <input value={asset} onChange={(e) => setAsset(e.target.value)}
+                 className="font-mono" style={{ ...control, width: '100px', textTransform: 'uppercase' }} />
+        </label>
+        <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          <span className="font-ui" style={fieldLabel}>Amount</span>
+          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal"
+                 className="font-mono" style={{ ...control, width: '120px' }} />
+        </label>
+        <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          <span className="font-ui" style={fieldLabel}>From</span>
+          <select value={from} onChange={(e) => setFrom(e.target.value)}
+                  className="font-mono" style={{ ...control, minWidth: '110px' }}>
+            {WALLETS.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          <span className="font-ui" style={fieldLabel}>To</span>
+          <select value={to} onChange={(e) => setTo(e.target.value)}
+                  className="font-mono" style={{ ...control, minWidth: '110px' }}>
+            {WALLETS.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </label>
+      </div>
+    </ExecutePanel>
+  );
+}
+
+/** Redeem an asset from Simple Earn back to Spot on testnet. */
+function RedeemWidget() {
+  const [asset, setAsset] = useState('USDT');
+  const [amount, setAmount] = useState('10');
+  const amt = Number(amount);
+  const valid = Number.isFinite(amt) && amt > 0;
+  return (
+    <ExecutePanel
+      title="Redeem from Earn (testnet)"
+      disabled={!valid}
+      description={valid
+        ? `This redeems ${amt} ${asset.toUpperCase()} from Simple Earn back to Spot on the testnet.`
+        : 'Choose a positive amount.'}
+      execute={() => apiPost<TradeExecuteResponse>('/api/execute/redeem', {
+        confirm: true, asset: asset.toUpperCase(), amount: amt,
+      })}
+    >
+      <div className="flex flex-wrap items-end" style={{ gap: 'var(--space-4)' }}>
+        <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          <span className="font-ui" style={fieldLabel}>Asset</span>
+          <input value={asset} onChange={(e) => setAsset(e.target.value)}
+                 className="font-mono" style={{ ...control, width: '100px', textTransform: 'uppercase' }} />
+        </label>
+        <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+          <span className="font-ui" style={fieldLabel}>Amount</span>
+          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal"
+                 className="font-mono" style={{ ...control, width: '120px' }} />
+        </label>
+      </div>
+    </ExecutePanel>
+  );
+}
 
 function BalanceTable({ rows, emptyText }: { rows: WalletBalance[]; emptyText: string }) {
   if (rows.length === 0) return <Empty>{emptyText}</Empty>;
@@ -39,6 +138,7 @@ function BalanceTable({ rows, emptyText }: { rows: WalletBalance[]; emptyText: s
 
 export function Wallets() {
   const { data, error } = useApi<WalletsResponse>('/api/wallets');
+  const status = useApi<ExecutionStatus>('/api/execute/status');
 
   if (error) return <ErrorPanel title="Wallets" message={`Failed to load wallets: ${error}`} />;
   if (!data) return <Panel title="Wallets"><Empty>Loading…</Empty></Panel>;
@@ -80,6 +180,14 @@ export function Wallets() {
         <Panel title="Funding">
           <BalanceTable rows={data.funding_balances} emptyText="No funding balances." />
         </Panel>
+
+        {status.data?.testnet && (
+          <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                                         gap: 'var(--space-3)' }}>
+            <TransferWidget />
+            <RedeemWidget />
+          </div>
+        )}
       </div>
     </>
   );

@@ -1,9 +1,12 @@
 import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { ExecutePanel } from '../components/ExecutePanel';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatPercentPlain, formatQty, formatUsd } from '../lib/format';
-import type { RebalanceResponse, RebalanceSuggestion } from '../types';
+import type {
+  ExecutionStatus, RebalanceResponse, RebalanceSuggestion, TradeExecuteResponse,
+} from '../types';
 
 function actionTone(action: string | null) {
   if (!action) return 'neutral' as const;
@@ -37,6 +40,7 @@ function DriftBar({ suggestion }: { suggestion: RebalanceSuggestion }) {
 
 export function Rebalance() {
   const { data, error, reload } = useApi<RebalanceResponse>('/api/strategy/rebalance');
+  const status = useApi<ExecutionStatus>('/api/execute/status');
   usePollWhile(Boolean(data?.is_running), reload);
 
   async function run() {
@@ -137,6 +141,25 @@ export function Rebalance() {
             </ul>
           </Panel>
         )}
+
+        {status.data?.testnet && (() => {
+          const actionable = data.suggestions.filter(
+            (s) => s.action && /BUY|SELL/i.test(s.action),
+          ).length;
+          if (actionable === 0) return null;
+          return (
+            <ExecutePanel
+              title="Execute rebalance on testnet"
+              description={`This places ${actionable} market order${actionable === 1 ? '' : 's'} — every BUY and SELL suggestion above — on the Binance testnet.`}
+              execute={async () => {
+                const res = await apiPost<TradeExecuteResponse>(
+                  '/api/execute/rebalance', { confirm: true });
+                reload();
+                return res;
+              }}
+            />
+          );
+        })()}
       </div>
     </>
   );

@@ -1,9 +1,10 @@
 import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { ExecutePanel } from '../components/ExecutePanel';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatSigned, formatUsd } from '../lib/format';
-import type { ProfitResponse } from '../types';
+import type { ExecutionStatus, ProfitResponse, TradeExecuteResponse } from '../types';
 
 function scoreTone(score: number | null) {
   if (score === null) return 'neutral' as const;
@@ -14,6 +15,7 @@ function scoreTone(score: number | null) {
 
 export function ProfitTaking() {
   const { data, error, reload } = useApi<ProfitResponse>('/api/strategy/profit');
+  const status = useApi<ExecutionStatus>('/api/execute/status');
   usePollWhile(Boolean(data?.is_running), reload);
 
   async function run() {
@@ -104,6 +106,18 @@ export function ProfitTaking() {
               ))}
             </div>
           </Panel>
+        )}
+
+        {status.data?.testnet && data.has_data && data.opportunities.length > 0 && (
+          <ExecutePanel
+            title="Execute profit-taking on testnet"
+            description={`This trims ${data.opportunities.length} scoring position${data.opportunities.length === 1 ? '' : 's'} — selling the configured share of each gain — as market sells on the Binance testnet.`}
+            execute={async () => {
+              const res = await apiPost<TradeExecuteResponse>('/api/execute/profit', { confirm: true });
+              reload();
+              return res;
+            }}
+          />
         )}
       </div>
     </>
