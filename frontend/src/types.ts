@@ -335,12 +335,57 @@ export interface ProfitTakingSettings {
   default_take_percentage: number;
 }
 
+export interface TrendAnalyzerSettings {
+  rsi_period: number;
+  rsi_oversold: number;
+  rsi_overbought: number;
+  cryptocurrencies: string[];
+}
+
 export interface SettingsResponse {
   minimum_trade_usd: number;
   profit_taking: ProfitTakingSettings;
   p2p_fiat_currency: string;
   crypto_quotes: string[];
   stablecoin_symbols: string[];
+  trend_analyzer: TrendAnalyzerSettings;
+  cleanup_days: number;
+}
+
+export interface SnapshotRow {
+  timestamp: string | null;
+  total_value_usd: number | null;
+  total_cost_basis_usd: number | null;
+  unrealized_pl_usd: number | null;
+  unrealized_pl_percent: number | null;
+}
+
+export interface SnapshotsResponse {
+  count: number;
+  rows: SnapshotRow[];
+}
+
+export interface SnapshotDeleteResponse {
+  deleted: number;
+  error: string | null;
+}
+
+export interface CleanupStatsResponse {
+  cleanup_days: number;
+  enabled: boolean;
+  stats: Record<string, string | number | boolean | null>;
+}
+
+export interface CleanupResponse {
+  success: boolean;
+  message: string | null;
+  error: string | null;
+}
+
+export interface ImportResponse {
+  success: boolean;
+  rows_affected: number;
+  error: string | null;
 }
 
 export interface SystemHealthResponse {

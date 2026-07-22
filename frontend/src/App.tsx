@@ -17,10 +17,12 @@ import { Dca } from './screens/Dca';
 import { ProfitTaking } from './screens/ProfitTaking';
 import { Technical } from './screens/Technical';
 import { Market } from './screens/Market';
+import { Allocation } from './screens/Allocation';
 import { Backtest } from './screens/Backtest';
 import { Trading } from './screens/Trading';
 import { Reports } from './screens/Reports';
 import { TradeLog } from './screens/TradeLog';
+import { DataManage } from './screens/DataManage';
 import { SystemHealth } from './screens/SystemHealth';
 import { Settings } from './screens/Settings';
 
@@ -182,6 +184,7 @@ export default function App() {
                 <Route path="/wallets" element={<Wallets />} />
                 <Route path="/capital" element={<CapitalFlow />} />
                 <Route path="/assets/:symbol" element={<AssetDetail />} />
+                <Route path="/allocation" element={<Allocation />} />
                 <Route path="/market" element={<Market />} />
                 <Route path="/technical" element={<Technical />} />
                 <Route path="/rebalance" element={<Rebalance />} />
@@ -192,6 +195,7 @@ export default function App() {
                 <Route path="/transactions" element={<TradeLog />} />
                 <Route path="/sync" element={<Sync />} />
                 <Route path="/reports" element={<Reports />} />
+                <Route path="/manage" element={<DataManage />} />
                 <Route path="/system" element={<SystemHealth />} />
                 <Route path="/settings" element={<Settings />} />
               </Routes>

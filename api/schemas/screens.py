@@ -249,12 +249,21 @@ class ProfitTakingSettings(BaseModel):
     default_take_percentage: float
 
 
+class TrendAnalyzerSettings(BaseModel):
+    rsi_period: int
+    rsi_oversold: float
+    rsi_overbought: float
+    cryptocurrencies: list[str]
+
+
 class SettingsResponse(BaseModel):
     minimum_trade_usd: float
     profit_taking: ProfitTakingSettings
     p2p_fiat_currency: str
     crypto_quotes: list[str]
     stablecoin_symbols: list[str]
+    trend_analyzer: TrendAnalyzerSettings
+    cleanup_days: int
 
 
 class SettingsUpdate(BaseModel):
@@ -265,6 +274,8 @@ class SettingsUpdate(BaseModel):
     p2p_fiat_currency: Optional[str] = None
     crypto_quotes: Optional[list[str]] = None
     stablecoin_symbols: Optional[list[str]] = None
+    trend_analyzer: Optional[TrendAnalyzerSettings] = None
+    cleanup_days: Optional[int] = None
 
 
 class GenerateExportRequest(BaseModel):
@@ -319,6 +330,55 @@ class RedeemRequest(BaseModel):
     confirm: bool = False
     asset: str
     amount: float
+
+
+class SnapshotRow(BaseModel):
+    timestamp: Optional[str]
+    total_value_usd: Optional[float]
+    total_cost_basis_usd: Optional[float]
+    unrealized_pl_usd: Optional[float]
+    unrealized_pl_percent: Optional[float]
+
+
+class SnapshotsResponse(BaseModel):
+    count: int
+    rows: list[SnapshotRow] = []
+
+
+class SnapshotDeleteRequest(BaseModel):
+    confirm: bool = False
+    timestamp: Optional[str] = None
+    total_value_usd: Optional[float] = None
+    total_cost_basis_usd: Optional[float] = None
+    unrealized_pl_usd: Optional[float] = None
+    unrealized_pl_percent: Optional[float] = None
+
+
+class SnapshotDeleteResponse(BaseModel):
+    deleted: int
+    error: Optional[str] = None
+
+
+class CleanupStatsResponse(BaseModel):
+    cleanup_days: int
+    enabled: bool
+    stats: dict = {}
+
+
+class CleanupRequest(BaseModel):
+    confirm: bool = False
+
+
+class CleanupResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ImportResponse(BaseModel):
+    success: bool
+    rows_affected: int = 0
+    error: Optional[str] = None
 
 
 class RestoreRequest(BaseModel):

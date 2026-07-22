@@ -57,6 +57,13 @@ export function Settings() {
     setForm((f) => f && { ...f, profit_taking: { ...f.profit_taking, [key]: value } });
   }
 
+  const ta = form.trend_analyzer;
+  function setTa<K extends keyof SettingsResponse['trend_analyzer']>(
+    key: K, value: SettingsResponse['trend_analyzer'][K],
+  ) {
+    setForm((f) => f && { ...f, trend_analyzer: { ...f.trend_analyzer, [key]: value } });
+  }
+
   async function save() {
     setSaving(true);
     setMessage(null);
@@ -74,6 +81,13 @@ export function Settings() {
         p2p_fiat_currency: form!.p2p_fiat_currency,
         crypto_quotes: form!.crypto_quotes,
         stablecoin_symbols: form!.stablecoin_symbols,
+        trend_analyzer: {
+          rsi_period: Number(form!.trend_analyzer.rsi_period),
+          rsi_oversold: Number(form!.trend_analyzer.rsi_oversold),
+          rsi_overbought: Number(form!.trend_analyzer.rsi_overbought),
+          cryptocurrencies: form!.trend_analyzer.cryptocurrencies,
+        },
+        cleanup_days: Number(form!.cleanup_days),
       });
       setForm(structuredClone(result));
       setMessage('Settings saved.');
@@ -151,6 +165,38 @@ export function Settings() {
                      className="font-mono" style={inputStyle} />
             </Field>
           </div>
+        </Panel>
+
+        <Panel title="Trend analyzer">
+          <div className="grid grid-cols-3" style={{ gap: 'var(--space-5)',
+                                                     marginBottom: 'var(--space-4)' }}>
+            <Field label="RSI period">
+              <NumberInput width={120} value={String(ta.rsi_period)}
+                           onChange={(v) => setTa('rsi_period', v as unknown as number)} />
+            </Field>
+            <Field label="RSI oversold" hint="0–100">
+              <NumberInput width={120} value={String(ta.rsi_oversold)}
+                           onChange={(v) => setTa('rsi_oversold', v as unknown as number)} />
+            </Field>
+            <Field label="RSI overbought" hint="0–100">
+              <NumberInput width={120} value={String(ta.rsi_overbought)}
+                           onChange={(v) => setTa('rsi_overbought', v as unknown as number)} />
+            </Field>
+          </div>
+          <Field label="Cryptocurrencies" hint="Comma-separated tickers analysed for trend, e.g. BTC-USD, ETH-USD.">
+            <input value={ta.cryptocurrencies.join(', ')}
+                   onChange={(e) => setTa('cryptocurrencies',
+                     e.target.value.split(',').map((s) => s.trim()).filter(Boolean) as unknown as string[])}
+                   className="font-mono" style={{ ...inputStyle, width: '100%' }} />
+          </Field>
+        </Panel>
+
+        <Panel title="Data retention">
+          <Field label="Cleanup days"
+                 hint="Age beyond which snapshots are eligible for cleanup. 0 disables it.">
+            <NumberInput value={String(form.cleanup_days)}
+                         onChange={(v) => setForm((f) => f && { ...f, cleanup_days: v as unknown as number })} />
+          </Field>
         </Panel>
 
         <div className="flex items-center" style={{ gap: 'var(--space-4)' }}>

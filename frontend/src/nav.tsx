@@ -55,6 +55,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: 'Analyze',
     icon: <Icon><path d="M2 13V8M6 13V4M10 13v-6M14 13V2" /></Icon>,
     items: [
+      { to: '/allocation', label: 'Allocation' },
       { to: '/market', label: 'Market' },
       { to: '/technical', label: 'Technical' },
     ],
@@ -85,6 +86,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/transactions', label: 'Trade Log' },
       { to: '/sync', label: 'Sync' },
       { to: '/reports', label: 'Reports' },
+      { to: '/manage', label: 'Manage' },
     ],
   },
   {

@@ -4,11 +4,12 @@ All offline: cached metrics plus SQLite. None of these construct a tracker.
 """
 
 import datetime
+import io
 import os
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from api.cache import MetricsCache, cache_path_for
@@ -19,9 +20,13 @@ from api.schemas.screens import (
     AssetTransaction,
     BackupCreateResponse,
     BackupInfo,
+    CleanupRequest,
+    CleanupResponse,
+    CleanupStatsResponse,
     ExportFile,
     GenerateExportRequest,
     GenerateExportResponse,
+    ImportResponse,
     OverviewResponse,
     ProfitTakingSettings,
     RealizedGainRow,
@@ -32,12 +37,17 @@ from api.schemas.screens import (
     RestoreResponse,
     SettingsResponse,
     SettingsUpdate,
+    SnapshotDeleteRequest,
+    SnapshotDeleteResponse,
     SnapshotPoint,
+    SnapshotRow,
+    SnapshotsResponse,
     SystemHealthResponse,
     TargetAllocationRequest,
     TargetAllocationResponse,
     TransactionRow,
     TransactionsResponse,
+    TrendAnalyzerSettings,
 )
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
@@ -452,6 +462,112 @@ def restore_backup(
     )
 
 
+@router.get("/system/snapshots", response_model=SnapshotsResponse)
+def list_snapshots(ctx=Depends(get_read_context)) -> SnapshotsResponse:
+    """Every portfolio snapshot, newest first, with the fields delete needs."""
+    snaps = ctx.db_manager.get_all_snapshots()
+    rows: list[SnapshotRow] = []
+    if isinstance(snaps, pd.DataFrame) and not snaps.empty:
+        for r in snaps.to_dict(orient="records"):
+            rows.append(SnapshotRow(
+                timestamp=_str_or_none(r.get("timestamp")),
+                total_value_usd=opt(r.get("total_value_usd")),
+                total_cost_basis_usd=opt(r.get("total_cost_basis_usd")),
+                unrealized_pl_usd=opt(r.get("unrealized_pl_usd")),
+                unrealized_pl_percent=opt(r.get("unrealized_pl_percent")),
+            ))
+    rows.sort(key=lambda r: r.timestamp or "", reverse=True)
+    return SnapshotsResponse(count=len(rows), rows=rows)
+
+
+@router.post("/system/snapshots/delete", response_model=SnapshotDeleteResponse)
+def delete_snapshot(
+    payload: SnapshotDeleteRequest, ctx=Depends(get_read_context)
+) -> SnapshotDeleteResponse:
+    """Delete one snapshot, matched on its exact values. Confirmation required."""
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Deletion requires explicit confirmation.")
+    try:
+        deleted = ctx.db_manager.delete_snapshot(
+            payload.timestamp, payload.total_value_usd, payload.total_cost_basis_usd,
+            payload.unrealized_pl_usd, payload.unrealized_pl_percent,
+        )
+    except Exception as exc:  # a failed delete must report, not 500
+        return SnapshotDeleteResponse(deleted=0, error=str(exc))
+    return SnapshotDeleteResponse(deleted=int(deleted or 0))
+
+
+@router.get("/system/cleanup", response_model=CleanupStatsResponse)
+def cleanup_stats(ctx=Depends(get_read_context)) -> CleanupStatsResponse:
+    database = ctx.config_manager.config.get("database", {}) or {}
+    days = int(num(database.get("cleanup_days"), 90))
+    try:
+        raw = ctx.db_manager.get_cleanup_statistics() or {}
+    except Exception:  # stats are diagnostic; never fail the page for them
+        raw = {}
+    # Coerce to JSON-safe scalars (timestamps etc. become strings).
+    stats = {k: (v if isinstance(v, (int, float, str, bool)) or v is None else str(v))
+             for k, v in raw.items()}
+    return CleanupStatsResponse(cleanup_days=days, enabled=days > 0, stats=stats)
+
+
+@router.post("/system/cleanup", response_model=CleanupResponse)
+def run_cleanup(payload: CleanupRequest, ctx=Depends(get_read_context)) -> CleanupResponse:
+    """Delete data older than the configured retention. Confirmation required.
+
+    The core snapshots the database inside cleanup_old_data, so this is
+    recoverable from the pre-cleanup backup.
+    """
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Cleanup requires explicit confirmation.")
+    try:
+        result = ctx.db_manager.cleanup_old_data()
+    except Exception as exc:
+        return CleanupResponse(success=False, error=str(exc))
+    message = "Cleanup complete."
+    if isinstance(result, (int, str)):
+        message = f"Cleanup complete: {result}"
+    return CleanupResponse(success=True, message=message)
+
+
+@router.post("/system/import/{data_type}", response_model=ImportResponse)
+async def import_data(
+    data_type: str, file: UploadFile = File(...), ctx=Depends(get_read_context)
+) -> ImportResponse:
+    """Import transactions or holdings from a CSV/Excel file.
+
+    Reversible: a pre-import backup is taken before anything is written (the
+    core does this for transactions; it is done explicitly for holdings too).
+    """
+    kind = data_type.strip().lower()
+    if kind not in ("transactions", "holdings"):
+        raise HTTPException(status_code=422, detail="data_type must be transactions or holdings.")
+
+    content = await file.read()
+    name = (file.filename or "").lower()
+    try:
+        if name.endswith((".xlsx", ".xls")):
+            frame = pd.read_excel(io.BytesIO(content))
+        else:
+            frame = pd.read_csv(io.BytesIO(content))
+    except Exception as exc:
+        return ImportResponse(success=False, error=f"Could not parse file: {exc}")
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return ImportResponse(success=False, error="The file has no rows.")
+
+    try:
+        if kind == "transactions":
+            # bulk_insert_transactions takes its own backup first.
+            affected = ctx.db_manager.bulk_insert_transactions(frame.to_dict(orient="records"))
+        else:
+            ctx.db_manager.backup_database(reason="pre_import", force=True)
+            ctx.db_manager.update_holdings(frame)
+            affected = len(frame)
+    except Exception as exc:
+        return ImportResponse(success=False, error=str(exc))
+    return ImportResponse(success=True, rows_affected=int(affected or 0))
+
+
 @router.put("/system/target-allocation", response_model=TargetAllocationResponse)
 def set_target_allocation(
     payload: TargetAllocationRequest, ctx=Depends(get_read_context)
@@ -496,6 +612,8 @@ def set_target_allocation(
 def _read_settings(config) -> SettingsResponse:
     portfolio = config.get("portfolio", {}) or {}
     pt = config.get("profit_taking", {}) or {}
+    ta = config.get("trend_analyzer", {}) or {}
+    database = config.get("database", {}) or {}
     return SettingsResponse(
         minimum_trade_usd=num(portfolio.get("minimum_trade_usd"), 5.0),
         profit_taking=ProfitTakingSettings(
@@ -509,6 +627,13 @@ def _read_settings(config) -> SettingsResponse:
         p2p_fiat_currency=str(portfolio.get("p2p_fiat_currency", "") or ""),
         crypto_quotes=[str(x) for x in (portfolio.get("crypto_quotes") or [])],
         stablecoin_symbols=[str(x) for x in (portfolio.get("stablecoin_symbols") or [])],
+        trend_analyzer=TrendAnalyzerSettings(
+            rsi_period=int(num(ta.get("rsi_period"), 14)),
+            rsi_oversold=num(ta.get("rsi_oversold"), 30),
+            rsi_overbought=num(ta.get("rsi_overbought"), 70),
+            cryptocurrencies=[str(x) for x in (ta.get("cryptocurrencies") or [])],
+        ),
+        cleanup_days=int(num(database.get("cleanup_days"), 90)),
     )
 
 
@@ -557,6 +682,25 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         portfolio["stablecoin_symbols"] = [
             s.strip().upper() for s in payload.stablecoin_symbols if s.strip()
         ]
+
+    if payload.trend_analyzer is not None:
+        ta = payload.trend_analyzer
+        if ta.rsi_period < 1:
+            raise HTTPException(status_code=422, detail="RSI period must be at least 1.")
+        for label, value in (("rsi_oversold", ta.rsi_oversold),
+                             ("rsi_overbought", ta.rsi_overbought)):
+            if not 0 <= value <= 100:
+                raise HTTPException(status_code=422, detail=f"{label} must be between 0 and 100.")
+        tacfg = config.setdefault("trend_analyzer", {})
+        tacfg["rsi_period"] = int(ta.rsi_period)
+        tacfg["rsi_oversold"] = float(ta.rsi_oversold)
+        tacfg["rsi_overbought"] = float(ta.rsi_overbought)
+        tacfg["cryptocurrencies"] = [s.strip().upper() for s in ta.cryptocurrencies if s.strip()]
+
+    if payload.cleanup_days is not None:
+        if payload.cleanup_days < 0:
+            raise HTTPException(status_code=422, detail="Cleanup days cannot be negative.")
+        config.setdefault("database", {})["cleanup_days"] = int(payload.cleanup_days)
 
     _save_config_preserving_secrets(cm)
     return _read_settings(cm.config)
