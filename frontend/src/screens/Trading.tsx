@@ -1,27 +1,32 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
-import type { CockpitResponse, SystemHealthResponse } from '../types';
+import type {
+  CockpitResponse, ExecutionStatus, SystemHealthResponse, TradeExecuteResponse,
+} from '../types';
 
 /**
- * Order review with portfolio-impact preview.
+ * Order review with portfolio-impact preview, and testnet execution.
  *
- * Execution is deliberately not wired. Placing a real order is irreversible and
- * spends real money, and this screen has not been through the review that the
- * accounting paths got. The impact preview below is the useful, safe half; use
- * the CLI or Streamlit to actually place the order until execution here has
- * been reviewed as carefully as the figures were.
+ * Placing an order is irreversible, so execution is hard-gated: the button only
+ * appears in testnet mode (the API returns 403 otherwise), and it still demands
+ * a typed confirmation. Outside testnet this stays a review-only screen.
  */
 export function Trading() {
   const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
   const health = useApi<SystemHealthResponse>('/api/system/health');
+  const status = useApi<ExecutionStatus>('/api/execute/status');
 
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [symbol, setSymbol] = useState('BTC');
   const [amount, setAmount] = useState('50');
+  const [confirmText, setConfirmText] = useState('');
+  const [executing, setExecuting] = useState(false);
+  const [result, setResult] = useState<TradeExecuteResponse | null>(null);
 
   const error = cockpit.error ?? health.error;
   if (error) return <ErrorPanel title="Trading" message={`Failed to load: ${error}`} />;
@@ -39,18 +44,52 @@ export function Trading() {
   const afterTotal = side === 'BUY' ? total + amountUsd : total;
   const price = holding?.current_price ?? null;
 
+  const testnet = status.data?.testnet ?? false;
+
+  async function execute() {
+    setExecuting(true);
+    setResult(null);
+    try {
+      const res = await apiPost<TradeExecuteResponse>('/api/execute/trade', {
+        trade_type: side, symbol: symbol.toUpperCase(), amount: amountUsd,
+        is_quote_qty: true, confirm: true,
+      });
+      setResult(res);
+      setConfirmText('');
+    } catch (e) {
+      setResult({ success: false, testnet, messages: [],
+                  errors: [e instanceof Error ? e.message : String(e)] });
+    } finally {
+      setExecuting(false);
+    }
+  }
+
   return (
     <>
-      <ScreenHeader title="Trading" subtitle="Review an order and its effect on your allocation" />
+      <ScreenHeader title="Trading"
+                    subtitle={testnet ? 'Review an order, then execute it on testnet'
+                                      : 'Review an order and its effect on your allocation'} />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <Panel>
           <div className="flex items-center" style={{ gap: 'var(--space-3)' }}>
-            <Badge text="REVIEW ONLY" tone="warning" />
-            <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
-              This screen never places an order. Execution is intentionally not wired here —
-              use the CLI or Streamlit to trade.
-            </span>
+            {testnet ? (
+              <>
+                <Badge text="TESTNET EXECUTION" tone="action" />
+                <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
+                  Orders placed here go to the Binance testnet with fake money. Live
+                  execution stays disabled until you switch the environment.
+                </span>
+              </>
+            ) : (
+              <>
+                <Badge text="REVIEW ONLY" tone="warning" />
+                <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
+                  Execution is disabled outside testnet mode. This screen previews the
+                  order's impact; enable testnet to place it.
+                </span>
+              </>
+            )}
           </div>
         </Panel>
 
@@ -160,6 +199,49 @@ export function Trading() {
                 You hold {formatUsd(currentValue)} of {symbol} — this sell is larger than
                 the position.
               </p>
+            )}
+          </Panel>
+        )}
+
+        {valid && testnet && (
+          <Panel title="Execute (testnet)">
+            <p className="font-ui text-sm"
+               style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-3) 0' }}>
+              This places a market {side} of {formatUsd(amountUsd)} {symbol} on the Binance
+              testnet. To confirm, type <span className="font-mono"
+              style={{ color: 'var(--text-primary)' }}>EXECUTE</span> below.
+            </p>
+            <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)' }}>
+              <input
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="EXECUTE"
+                className="font-mono"
+                style={{ background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+                         borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                         padding: 'var(--space-2) var(--space-3)', width: '160px', fontSize: '14px' }}
+              />
+              <Button onClick={execute} disabled={executing || confirmText.trim() !== 'EXECUTE'}>
+                {executing ? 'Placing…' : `Execute ${side} on testnet`}
+              </Button>
+            </div>
+
+            {result && (
+              <div style={{ marginTop: 'var(--space-4)' }}>
+                <Badge text={result.success ? 'ORDER PLACED' : 'ORDER FAILED'}
+                       tone={result.success ? 'positive' : 'negative'} />
+                <ul className="flex flex-col font-mono"
+                    style={{ gap: '4px', fontSize: '12px', margin: 'var(--space-3) 0 0 0',
+                             padding: 0, listStyle: 'none' }}>
+                  {result.messages.map((m, i) => (
+                    <li key={`m${i}`} style={{ color: 'var(--text-secondary)',
+                                               wordBreak: 'break-all' }}>{m}</li>
+                  ))}
+                  {result.errors.map((m, i) => (
+                    <li key={`e${i}`} style={{ color: 'var(--negative)' }}>{m}</li>
+                  ))}
+                </ul>
+              </div>
             )}
           </Panel>
         )}

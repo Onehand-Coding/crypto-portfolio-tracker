@@ -297,6 +297,17 @@ export interface BackupCreateResponse {
   error: string | null;
 }
 
+export interface ExecutionStatus {
+  testnet: boolean;
+}
+
+export interface TradeExecuteResponse {
+  success: boolean;
+  testnet: boolean;
+  messages: string[];
+  errors: string[];
+}
+
 export interface RestoreResponse {
   restored: boolean;
   name: string;

@@ -267,6 +267,23 @@ class SettingsUpdate(BaseModel):
     stablecoin_symbols: Optional[list[str]] = None
 
 
+class TradeExecuteRequest(BaseModel):
+    trade_type: str  # BUY or SELL
+    symbol: str
+    amount: float
+    # True: amount is USDT to spend/receive. False: amount is the base coin qty.
+    is_quote_qty: bool = True
+    # Belt-and-suspenders on top of the testnet gate: the caller must say yes.
+    confirm: bool = False
+
+
+class TradeExecuteResponse(BaseModel):
+    success: bool
+    testnet: bool
+    messages: list[str] = []
+    errors: list[str] = []
+
+
 class RestoreRequest(BaseModel):
     name: str
 

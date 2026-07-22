@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from api.routes import capital, portfolio, screens, strategy, sync, wallets
+from api.routes import capital, execute, portfolio, screens, strategy, sync, wallets
 
 app = FastAPI(title="Crypto Portfolio Tracker API", version="1.0.0")
 
@@ -19,6 +19,7 @@ app.include_router(capital.router)
 app.include_router(sync.router)
 app.include_router(wallets.router)
 app.include_router(strategy.router)
+app.include_router(execute.router)
 # Registered last of the API routers: it owns the generic /api/assets/{symbol}
 # path, which must not shadow a more specific route added later.
 app.include_router(screens.router)
