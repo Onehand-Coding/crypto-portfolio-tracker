@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from api.cache import MetricsCache, cache_path_for
 from api.deps import get_read_context
@@ -19,6 +20,8 @@ from api.schemas.screens import (
     BackupCreateResponse,
     BackupInfo,
     ExportFile,
+    GenerateExportRequest,
+    GenerateExportResponse,
     OverviewResponse,
     ProfitTakingSettings,
     RealizedGainRow,
@@ -153,11 +156,15 @@ def asset_detail(symbol: str, ctx=Depends(get_read_context)) -> AssetDetailRespo
     )
 
 
-@router.get("/reports", response_model=ReportsResponse)
-def reports(ctx=Depends(get_read_context)) -> ReportsResponse:
-    export_dir = Path(
+def _export_dir(ctx) -> Path:
+    return Path(
         (ctx.config_manager.config.get("paths", {}) or {}).get("export_dir", "data/exports")
     )
+
+
+@router.get("/reports", response_model=ReportsResponse)
+def reports(ctx=Depends(get_read_context)) -> ReportsResponse:
+    export_dir = _export_dir(ctx)
     files: list[ExportFile] = []
     if export_dir.is_dir():
         for path in sorted(export_dir.iterdir(), key=lambda p: p.name):
@@ -174,6 +181,60 @@ def reports(ctx=Depends(get_read_context)) -> ReportsResponse:
             )
     files.sort(key=lambda f: f.modified, reverse=True)
     return ReportsResponse(files=files, export_dir=str(export_dir))
+
+
+@router.post("/reports/generate", response_model=GenerateExportResponse)
+def generate_export(
+    payload: GenerateExportRequest, ctx=Depends(get_read_context)
+) -> GenerateExportResponse:
+    """Write a CSV/Excel export of transactions or holdings. Offline: it reads
+    SQLite and writes to the export dir, no tracker and no network."""
+    data_type = payload.data_type.strip().lower()
+    fmt = payload.format.strip().lower()
+    if data_type not in ("transactions", "holdings"):
+        raise HTTPException(status_code=422, detail="data_type must be transactions or holdings.")
+    if fmt not in ("csv", "excel"):
+        raise HTTPException(status_code=422, detail="format must be csv or excel.")
+
+    if data_type == "transactions":
+        frame = ctx.db_manager.get_all_transactions()
+    else:
+        frame = ctx.db_manager.get_holdings()
+    if not isinstance(frame, pd.DataFrame):
+        frame = pd.DataFrame()
+
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    ext = "csv" if fmt == "csv" else "xlsx"
+    name = f"{data_type}_{stamp}.{ext}"
+    path = export_dir / name
+    try:
+        if fmt == "csv":
+            frame.to_csv(path, index=False)
+        else:
+            # Excel cannot store timezone-aware datetimes, so any such column is
+            # made naive first rather than letting the write 500.
+            safe = frame.copy()
+            for col in safe.columns:
+                if isinstance(safe[col].dtype, pd.DatetimeTZDtype):
+                    safe[col] = safe[col].dt.tz_localize(None)
+            safe.to_excel(path, index=False)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
+    return GenerateExportResponse(name=name, path=str(path))
+
+
+@router.get("/reports/download")
+def download_report(name: str, ctx=Depends(get_read_context)) -> FileResponse:
+    """Serve a generated export. The name must be a plain filename that exists
+    in the export dir -- no path separators, so this cannot escape it."""
+    if name != Path(name).name:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    target = _export_dir(ctx) / name
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"No such export: {name}")
+    return FileResponse(target, filename=name)
 
 
 @router.get("/transactions", response_model=TransactionsResponse)

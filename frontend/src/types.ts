@@ -297,6 +297,11 @@ export interface BackupCreateResponse {
   error: string | null;
 }
 
+export interface GenerateExportResponse {
+  name: string;
+  path: string;
+}
+
 export interface ExecutionStatus {
   testnet: boolean;
 }

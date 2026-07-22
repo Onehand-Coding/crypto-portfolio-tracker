@@ -267,6 +267,16 @@ class SettingsUpdate(BaseModel):
     stablecoin_symbols: Optional[list[str]] = None
 
 
+class GenerateExportRequest(BaseModel):
+    data_type: str  # transactions | holdings
+    format: str  # csv | excel
+
+
+class GenerateExportResponse(BaseModel):
+    name: str
+    path: str
+
+
 class TradeExecuteRequest(BaseModel):
     trade_type: str  # BUY or SELL
     symbol: str
