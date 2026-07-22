@@ -6,7 +6,7 @@ import { useApi } from '../lib/useApi';
 import { apiPost, apiPut } from '../lib/api';
 import { formatPercentPlain, formatUsd } from '../lib/format';
 import type {
-  BackupCreateResponse, SystemHealthResponse, TargetAllocationResponse,
+  BackupCreateResponse, RestoreResponse, SystemHealthResponse, TargetAllocationResponse,
 } from '../types';
 
 interface DraftRow { symbol: string; pct: string }
@@ -184,6 +184,26 @@ export function SystemHealth() {
   const { data, error, reload } = useApi<SystemHealthResponse>('/api/system/health');
   const [backingUp, setBackingUp] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
+
+  async function restore(name: string) {
+    setRestoring(true);
+    setRestoreMsg(null);
+    try {
+      const result = await apiPost<RestoreResponse>('/api/system/restore', { name });
+      setRestoreMsg(result.restored
+        ? `Restored from ${name}. The prior database was saved as ${result.safety_backup}.`
+        : `Restore failed: ${result.error ?? 'unknown error'}`);
+      setConfirmRestore(null);
+      if (result.restored) reload();
+    } catch (e) {
+      setRestoreMsg(`Restore failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRestoring(false);
+    }
+  }
 
   async function createBackup() {
     setBackingUp(true);
@@ -261,6 +281,14 @@ export function SystemHealth() {
               {backingUp ? 'Creating…' : 'Create backup'}
             </Button>
           </div>
+          {restoreMsg && (
+            <p className="font-ui" style={{ fontSize: '13px', marginTop: 0,
+                     marginBottom: 'var(--space-3)',
+                     color: restoreMsg.startsWith('Restore failed')
+                       ? 'var(--negative)' : 'var(--text-secondary)' }}>
+              {restoreMsg}
+            </p>
+          )}
           {data.backups.length === 0 ? (
             <Empty>No database backups found.</Empty>
           ) : (
@@ -271,6 +299,7 @@ export function SystemHealth() {
                     <th className="text-left">Name</th>
                     <th className="text-right">Size</th>
                     <th className="text-left">Created</th>
+                    <th className="text-right">Restore</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -282,6 +311,49 @@ export function SystemHealth() {
                       </td>
                       <td className="text-left" style={{ color: 'var(--text-tertiary)' }}>
                         {backup.modified.slice(0, 16).replace('T', ' ')}
+                      </td>
+                      <td className="text-right">
+                        {confirmRestore === backup.name ? (
+                          // Restore overwrites the live database, so it is a
+                          // deliberate two-step: the current DB is snapshotted
+                          // first, but the confirm is still explicit.
+                          <span className="flex items-center justify-end" style={{ gap: 'var(--space-2)' }}>
+                            <span className="font-ui" style={{ color: 'var(--warning)', fontSize: '11px' }}>
+                              Overwrite current DB?
+                            </span>
+                            <button
+                              onClick={() => restore(backup.name)}
+                              disabled={restoring}
+                              className="font-ui transition-colors"
+                              style={{ background: 'color-mix(in srgb, var(--negative) 18%, transparent)',
+                                       color: 'var(--negative)',
+                                       border: '1px solid color-mix(in srgb, var(--negative) 35%, transparent)',
+                                       borderRadius: 'var(--radius-control)',
+                                       padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+                            >
+                              {restoring ? 'Restoring…' : 'Confirm'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmRestore(null)}
+                              className="font-ui transition-colors"
+                              style={{ background: 'transparent', color: 'var(--text-tertiary)',
+                                       border: '1px solid var(--border)', borderRadius: 'var(--radius-control)',
+                                       padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => { setConfirmRestore(backup.name); setRestoreMsg(null); }}
+                            className="font-ui transition-colors"
+                            style={{ background: 'transparent', color: 'var(--text-secondary)',
+                                     border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-control)',
+                                     padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+                          >
+                            Restore
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

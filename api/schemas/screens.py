@@ -267,6 +267,18 @@ class SettingsUpdate(BaseModel):
     stablecoin_symbols: Optional[list[str]] = None
 
 
+class RestoreRequest(BaseModel):
+    name: str
+
+
+class RestoreResponse(BaseModel):
+    restored: bool
+    name: str
+    # The snapshot of the pre-restore database, so the operation is reversible.
+    safety_backup: Optional[str] = None
+    error: Optional[str] = None
+
+
 class TargetAllocationRequest(BaseModel):
     # Weights are fractions (0.35 == 35%), matching how the config stores them
     # and how GET /system/health returns them. The UI edits percentages and

@@ -25,6 +25,8 @@ from api.schemas.screens import (
     RealizedGainSummary,
     RealizedResponse,
     ReportsResponse,
+    RestoreRequest,
+    RestoreResponse,
     SettingsResponse,
     SettingsUpdate,
     SnapshotPoint,
@@ -354,6 +356,39 @@ def create_backup(ctx=Depends(get_read_context)) -> BackupCreateResponse:
             error="Backup could not be created -- the database file may be missing.",
         )
     return BackupCreateResponse(created=True, name=Path(path).name, path=path)
+
+
+@router.post("/system/restore", response_model=RestoreResponse)
+def restore_backup(
+    payload: RestoreRequest, ctx=Depends(get_read_context)
+) -> RestoreResponse:
+    """Restore the database from a named backup. Destructive, but reversible.
+
+    Only a file already listed by the core counts, which keeps this from
+    touching anything outside the backup directory. Before overwriting, the
+    current database is itself backed up, so a mistaken restore can be undone.
+    """
+    backups = ctx.db_manager.list_backups() or []
+    match = next((p for p in backups if Path(p).name == payload.name), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"No such backup: {payload.name}")
+
+    safety = None
+    try:
+        safety_path = ctx.db_manager.backup_database(reason="pre_restore", force=True)
+        safety = Path(safety_path).name if safety_path else None
+        restored = ctx.db_manager.restore_from_backup(Path(match))
+    except Exception as exc:  # a failed restore must report, not 500 the page
+        return RestoreResponse(
+            restored=False, name=payload.name, safety_backup=safety, error=str(exc)
+        )
+
+    return RestoreResponse(
+        restored=bool(restored),
+        name=payload.name,
+        safety_backup=safety,
+        error=None if restored else "Restore failed -- see server logs.",
+    )
 
 
 @router.put("/system/target-allocation", response_model=TargetAllocationResponse)

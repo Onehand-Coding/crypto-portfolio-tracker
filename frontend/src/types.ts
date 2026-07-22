@@ -297,6 +297,13 @@ export interface BackupCreateResponse {
   error: string | null;
 }
 
+export interface RestoreResponse {
+  restored: boolean;
+  name: string;
+  safety_backup: string | null;
+  error: string | null;
+}
+
 export interface TargetAllocationResponse {
   allocation: Record<string, number>;
   sum: number;
