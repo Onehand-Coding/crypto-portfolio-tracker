@@ -36,7 +36,39 @@ def test_summary_export_writes_file(summary_ctx, fmt, ext):
     response = TestClient(app).post("/api/reports/summary", json={"format": fmt})
 
     assert response.status_code == 200
-    assert response.json()["name"].endswith(ext)
+    body = response.json()
+    assert body["name"].endswith(ext)
+    assert (summary_ctx / body["name"]).is_file()
+
+
+def test_summary_export_csv_content(summary_ctx):
+    # Core CsvExporter writes a Metric,Value summary (holdings_df becomes
+    # "See separate file"), so there is no per-symbol row and no BTC here.
+    response = TestClient(app).post("/api/reports/summary", json={"format": "csv"})
+
+    assert response.status_code == 200
+    path = summary_ctx / response.json()["name"]
+    text = path.read_text(errors="replace")
+    assert "metric" in text.splitlines()[0].lower()
+    assert "holdings_df" in text
+
+
+def test_summary_export_excel_nonempty(summary_ctx):
+    response = TestClient(app).post("/api/reports/summary", json={"format": "excel"})
+
+    assert response.status_code == 200
+    path = summary_ctx / response.json()["name"]
+    assert path.stat().st_size > 0
+
+
+def test_summary_export_html_content(summary_ctx):
+    response = TestClient(app).post("/api/reports/summary", json={"format": "html"})
+
+    assert response.status_code == 200
+    path = summary_ctx / response.json()["name"]
+    text = path.read_text(errors="replace")
+    assert "<html" in text.lower()
+    assert "BTC" in text
 
 
 def test_summary_export_rejects_bad_format(summary_ctx):

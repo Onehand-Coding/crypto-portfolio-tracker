@@ -308,18 +308,19 @@ def export_trend(
     fmt = payload.format.strip().lower()
     if fmt not in ("csv", "json", "html"):
         raise HTTPException(status_code=422, detail="format must be csv, json or html.")
+    timeframe = payload.timeframe.strip().lower()
     cache = MetricsCache(analysis_cache_path(ctx.config_manager, "technical"))
     reports = (cache.read() or {}).get("reports") or {}
-    report = reports.get(payload.timeframe)
+    report = reports.get(timeframe)
     if not isinstance(report, dict) or "coin_analyses" not in report:
         raise HTTPException(
             status_code=422,
-            detail=f"No {payload.timeframe} technical report cached -- run the analysis first.")
+            detail=f"No {timeframe} technical report cached -- run the analysis first.")
     export_dir = _export_dir(ctx)
     export_dir.mkdir(parents=True, exist_ok=True)
     before = {p.name for p in export_dir.iterdir() if p.is_file()}
     try:
-        _report_generator(ctx, export_dir).export_trend_report(report, payload.timeframe, fmt.upper())
+        _report_generator(ctx, export_dir).export_trend_report(report, timeframe, fmt.upper())
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
     fresh = _new_files_since(export_dir, before)

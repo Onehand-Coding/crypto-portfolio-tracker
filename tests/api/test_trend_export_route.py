@@ -37,7 +37,42 @@ def test_trend_export_writes_file(trend_ctx, fmt, ext):
         "/api/reports/trend", json={"timeframe": "swing", "format": fmt})
 
     assert response.status_code == 200
-    assert response.json()["name"].endswith(ext)
+    body = response.json()
+    assert body["name"].endswith(ext)
+    assert (trend_ctx / body["name"]).is_file()
+
+
+def test_trend_export_csv_content(trend_ctx):
+    response = TestClient(app).post(
+        "/api/reports/trend", json={"timeframe": "swing", "format": "csv"})
+
+    assert response.status_code == 200
+    text = (trend_ctx / response.json()["name"]).read_text(errors="replace")
+    assert "Symbol" in text
+    assert "BTC" in text
+
+
+def test_trend_export_json_content(trend_ctx):
+    response = TestClient(app).post(
+        "/api/reports/trend", json={"timeframe": "swing", "format": "json"})
+
+    assert response.status_code == 200
+    path = trend_ctx / response.json()["name"]
+    text = path.read_text(errors="replace")
+    data = json.loads(text)
+    assert "coin_analyses" in data
+    assert "BTC" in data["coin_analyses"]
+    assert "BTC" in text
+
+
+def test_trend_export_html_content(trend_ctx):
+    response = TestClient(app).post(
+        "/api/reports/trend", json={"timeframe": "swing", "format": "html"})
+
+    assert response.status_code == 200
+    path = trend_ctx / response.json()["name"]
+    assert path.is_file()
+    assert "<html" in path.read_text(errors="replace").lower()
 
 
 def test_trend_export_unknown_timeframe_is_422(trend_ctx):
