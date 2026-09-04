@@ -466,3 +466,14 @@ class SystemHealthResponse(BaseModel):
     backups: list[BackupInfo] = []
     metrics_cache_age_seconds: Optional[float] = None
     binance_configured: bool
+
+
+class BackupDeleteRequest(BaseModel):
+    name: str
+    confirm: bool = False
+
+
+class BackupDeleteResponse(BaseModel):
+    deleted: bool
+    name: Optional[str] = None
+    error: Optional[str] = None

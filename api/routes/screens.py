@@ -19,6 +19,8 @@ from api.schemas.screens import (
     AssetDetailResponse,
     AssetTransaction,
     BackupCreateResponse,
+    BackupDeleteRequest,
+    BackupDeleteResponse,
     BackupInfo,
     CleanupRequest,
     CleanupResponse,
@@ -502,6 +504,40 @@ def restore_backup(
         safety_backup=safety,
         error=None if restored else "Restore failed -- see server logs.",
     )
+
+
+def _match_backup(ctx, name: str) -> Path:
+    """A listed backup path by plain filename, else 404. Same trust model
+    as restore: only files the core already reports can be touched."""
+    if name != Path(name).name:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    backups = ctx.db_manager.list_backups() or []
+    match = next((p for p in backups if Path(p).name == name), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"No such backup: {name}")
+    return Path(match)
+
+
+@router.get("/system/backup/download")
+def download_backup(name: str, ctx=Depends(get_read_context)) -> FileResponse:
+    """Serve a listed database backup for download."""
+    target = _match_backup(ctx, name)
+    return FileResponse(target, filename=target.name)
+
+
+@router.post("/system/backup/delete", response_model=BackupDeleteResponse)
+def delete_backup(
+    payload: BackupDeleteRequest, ctx=Depends(get_read_context)
+) -> BackupDeleteResponse:
+    """Delete a listed database backup. Confirmation required."""
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Deletion requires explicit confirmation.")
+    target = _match_backup(ctx, payload.name)
+    try:
+        target.unlink()
+    except OSError as exc:
+        return BackupDeleteResponse(deleted=False, name=payload.name, error=str(exc))
+    return BackupDeleteResponse(deleted=True, name=payload.name)
 
 
 @router.get("/system/snapshots", response_model=SnapshotsResponse)
