@@ -1,19 +1,23 @@
 """Overview, Asset Detail, Reports and System Health.
 
-All offline: cached metrics plus SQLite. None of these construct a tracker.
+Mostly offline: cached metrics plus SQLite. The connection probe is the one
+exception -- it constructs a tracker and touches the network, so it is POST
+like sync and execute, never GET.
 """
 
 import datetime
 import io
 import os
+import platform
 from pathlib import Path
 
 import pandas as pd
+import psutil
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from api.cache import MetricsCache, analysis_cache_path, cache_path_for
-from api.deps import get_read_context
+from api.deps import get_read_context, get_tracker
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
     AssetDetailResponse,
@@ -25,6 +29,8 @@ from api.schemas.screens import (
     CleanupRequest,
     CleanupResponse,
     CleanupStatsResponse,
+    ConnectionsResponse,
+    ConnectionStatus,
     DeleteExportRequest,
     DeleteExportResponse,
     ExportFile,
@@ -39,6 +45,7 @@ from api.schemas.screens import (
     RealizedGainSummary,
     RealizedResponse,
     ReportsResponse,
+    ResourcesResponse,
     RestoreRequest,
     RestoreResponse,
     SettingsResponse,
@@ -47,6 +54,7 @@ from api.schemas.screens import (
     SnapshotDeleteResponse,
     SnapshotPoint,
     SnapshotRow,
+    SnapshotSaveResponse,
     SnapshotsResponse,
     SummaryExportRequest,
     SystemHealthResponse,
@@ -968,3 +976,103 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
 
     _save_config_preserving_secrets(cm)
     return _read_settings(cm.config)
+
+
+@router.post("/system/snapshot/save", response_model=SnapshotSaveResponse)
+def save_snapshot(ctx=Depends(get_read_context)) -> SnapshotSaveResponse:
+    """Persist the cached metrics as a portfolio snapshot (same row the CLI writes after a sync)."""
+    metrics = MetricsCache(cache_path_for(ctx.config_manager)).read()
+    if not metrics or opt(metrics.get("total_value_usd")) is None:
+        raise HTTPException(status_code=422, detail="No synced metrics yet -- run a sync first.")
+    # Fresh stamp, not the metrics' own: this records when the snapshot was
+    # taken, the same way the core stamps its post-sync row with now.
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    try:
+        # Keyword names mirror DatabaseManager.save_portfolio_snapshot exactly;
+        # the remaining figures default to 0.0 just like the core's own save.
+        ctx.db_manager.save_portfolio_snapshot(
+            timestamp=timestamp,
+            total_value=num(metrics.get("total_value_usd"), 0.0),
+            total_cost_basis=num(metrics.get("total_cost_basis_usd"), 0.0),
+            unrealized_pl=num(metrics.get("unrealized_pl_usd"), 0.0),
+            unrealized_pl_percent=num(metrics.get("unrealized_pl_percent"), 0.0),
+        )
+    except Exception as exc:  # a failed save must report, not 500 the page
+        return SnapshotSaveResponse(saved=False, error=str(exc))
+    return SnapshotSaveResponse(saved=True, timestamp=timestamp)
+
+
+@router.get("/system/resources", response_model=ResourcesResponse)
+def system_resources(ctx=Depends(get_read_context)) -> ResourcesResponse:
+    """App + host figures. Any single psutil failure nulls that field, never 500s."""
+    try:
+        python_version = platform.python_version()
+    except Exception:
+        python_version = ""
+    try:
+        # Blocks ~1s by design: cpu_percent measures usage over the interval,
+        # same as the Streamlit status tab.
+        cpu_percent = opt(psutil.cpu_percent(interval=1))
+    except Exception:
+        cpu_percent = None
+    try:
+        ram = psutil.virtual_memory()
+        ram_percent = opt(ram.percent)
+        ram_used_gb = opt(ram.used / (1024 ** 3))
+    except Exception:
+        ram_percent = None
+        ram_used_gb = None
+    try:
+        disk_percent = opt(psutil.disk_usage("/").percent)
+    except Exception:
+        disk_percent = None
+
+    version = ctx.config_manager.config.get("version")
+    return ResourcesResponse(
+        app_version=str(version) if version else None,
+        python_version=python_version,
+        cpu_percent=cpu_percent,
+        ram_percent=ram_percent,
+        ram_used_gb=ram_used_gb,
+        disk_percent=disk_percent,
+    )
+
+
+@router.post("/system/connections", response_model=ConnectionsResponse)
+async def test_connections() -> ConnectionsResponse:
+    """Live connectivity probe (Binance ping + CoinGecko BTC price). POST because
+    it touches the network -- same rule as sync and execute."""
+    try:
+        tracker = get_tracker()
+    except Exception as exc:
+        return ConnectionsResponse(
+            binance=ConnectionStatus(ok=False, detail=f"No client: {exc}"),
+            coingecko=ConnectionStatus(ok=False, detail="Skipped without tracker."))
+    # Mirrors the CLI test_connections: ping when a client exists, skip when
+    # there are no keys, then a BTC price as the CoinGecko probe.
+    client = getattr(tracker, "binance_client", None)
+    if client is None:
+        binance = ConnectionStatus(
+            ok=False, detail="SKIPPED (No API keys or client init failed)")
+    else:
+        try:
+            client.ping()
+            binance = ConnectionStatus(ok=True, detail="SUCCESS")
+        except Exception as exc:
+            binance = ConnectionStatus(ok=False, detail=f"FAILED ({exc})")
+    btc_price_usd = None
+    try:
+        prices = await tracker.enricher.get_current_prices(["BTC"])
+        raw = prices.get("BTC") if isinstance(prices, dict) else None
+        btc_price_usd = opt(raw)
+        if btc_price_usd is None:
+            coingecko = ConnectionStatus(
+                ok=False, detail="FAILED (No price data returned)")
+        else:
+            coingecko = ConnectionStatus(
+                ok=True, detail=f"SUCCESS (BTC price: ${btc_price_usd})")
+    except Exception as exc:
+        btc_price_usd = None
+        coingecko = ConnectionStatus(ok=False, detail=f"FAILED ({exc})")
+    return ConnectionsResponse(
+        binance=binance, coingecko=coingecko, btc_price_usd=btc_price_usd)

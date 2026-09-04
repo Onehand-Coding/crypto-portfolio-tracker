@@ -490,3 +490,29 @@ class BackupDeleteResponse(BaseModel):
     deleted: bool
     name: Optional[str] = None
     error: Optional[str] = None
+
+
+class SnapshotSaveResponse(BaseModel):
+    saved: bool
+    timestamp: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ResourcesResponse(BaseModel):
+    app_version: Optional[str] = None
+    python_version: str = ""
+    cpu_percent: Optional[float] = None
+    ram_percent: Optional[float] = None
+    ram_used_gb: Optional[float] = None
+    disk_percent: Optional[float] = None
+
+
+class ConnectionStatus(BaseModel):
+    ok: bool
+    detail: Optional[str] = None
+
+
+class ConnectionsResponse(BaseModel):
+    binance: ConnectionStatus
+    coingecko: ConnectionStatus
+    btc_price_usd: Optional[float] = None
