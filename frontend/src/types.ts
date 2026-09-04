@@ -289,6 +289,23 @@ export interface TechnicalResponse extends AnalysisState {
   bear_market: boolean | null;
 }
 
+export interface IndicatorPoint {
+  date: string;
+  close: number | null;
+  sma_short: number | null;
+  sma_long: number | null;
+  rsi: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  macd_hist: number | null;
+}
+
+export interface IndicatorsResponse extends AnalysisState {
+  symbol: string;
+  timeframe: string;
+  points: IndicatorPoint[];
+}
+
 export interface ExportFile {
   name: string;
   path: string;
