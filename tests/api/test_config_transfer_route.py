@@ -126,3 +126,34 @@ def test_log_preview_lines_clamped(mock_read_context, tmp_path, monkeypatch):
     assert len(body["lines"]) == 100
     assert body["truncated"] is False
     assert body["total_lines"] == 100
+
+
+def test_import_partial_apis_deep_merges(mock_read_context, tmp_path, monkeypatch):
+    cm = _seed(mock_read_context, tmp_path, monkeypatch)
+    assert cm.config["apis"]["yfinance"] == {"request_delay_ms": 1000}
+    assert cm.config["apis"]["binance"]["recv_window"] == 20000
+    assert cm.config["apis"]["coingecko"]["api_key"] == "CGSECRET"
+    payload = json.dumps({"apis": {"coingecko": {"timeout": 5}}}).encode()
+    body = TestClient(app).post(
+        "/api/system/config/import",
+        files={"file": ("partial.json", payload, "application/json")},
+    ).json()
+    assert body["apis"]["coingecko_timeout"] == 5
+    assert cm.config["apis"]["coingecko"]["timeout"] == 5
+    assert cm.config["apis"]["yfinance"] == {"request_delay_ms": 1000}
+    assert cm.config["apis"]["binance"]["recv_window"] == 20000
+    assert cm.config["apis"]["coingecko"]["api_key"] == "CGSECRET"
+
+
+def test_log_preview_large_file_returns_true_tail(mock_read_context, tmp_path, monkeypatch):
+    cm = _seed(mock_read_context, tmp_path, monkeypatch)
+    log_path = tmp_path / "big.log"
+    total = 3000
+    all_lines = [f"line {i:05d} " + "x" * 100 for i in range(total)]
+    log_path.write_text("\n".join(all_lines) + "\n")
+    assert log_path.stat().st_size > 200_000
+    cm.config["logging"]["file_config"]["path"] = str(log_path)
+    body = TestClient(app).get(
+        "/api/system/logs/preview", params={"lines": 10}).json()
+    assert body["lines"] == all_lines[-10:]
+    assert body["truncated"] is True

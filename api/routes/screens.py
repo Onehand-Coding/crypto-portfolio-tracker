@@ -1100,14 +1100,15 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
             if not new_path:
                 raise HTTPException(
                     status_code=422, detail="Log file path cannot be empty.")
-            # Mirror the Streamlit save: the directory must exist and be
-            # writable before the path is accepted.
-            try:
-                Path(new_path).parent.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                raise HTTPException(
-                    status_code=422, detail=f"Cannot create log directory: {exc}")
-            if not os.access(Path(new_path).parent, os.W_OK):
+            # Validate writability without creating anything: a later block
+            # (e.g. trend windows) can still reject the request, and that
+            # rejection must not leave a created directory behind.
+            ancestor = Path(new_path).parent
+            while not ancestor.exists():
+                if ancestor.parent == ancestor:
+                    break
+                ancestor = ancestor.parent
+            if not os.access(ancestor, os.W_OK):
                 raise HTTPException(
                     status_code=422, detail="Log file directory is not writable.")
         log_cfg = config.setdefault("logging", {})
@@ -1142,6 +1143,23 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
             slot = tf_cfg.setdefault(name, {})
             slot["sma_short_window"] = int(group.sma_short_window)
             slot["sma_long_window"] = int(group.sma_long_window)
+
+    # Deferred side effect: the log directory is created only after every
+    # validation branch passed, using the final configured path.
+    if payload.logging is not None:
+        if "file_path" in payload.logging.model_dump(exclude_unset=True):
+            final_path = str(
+                ((config.get("logging", {}) or {}).get("file_config", {}) or {}).get(
+                    "path", "") or "")
+            if final_path:
+                try:
+                    Path(final_path).parent.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=422, detail=f"Cannot create log directory: {exc}")
+                if not os.access(Path(final_path).parent, os.W_OK):
+                    raise HTTPException(
+                        status_code=422, detail="Log file directory is not writable.")
 
     _save_config_preserving_secrets(cm)
     return _read_settings(cm.config)
@@ -1183,6 +1201,18 @@ def export_config(ctx=Depends(get_read_context)) -> FileResponse:
     return FileResponse(path, filename=name, media_type="application/json")
 
 
+def _deep_merge_live(base: dict, incoming: dict) -> dict:
+    """Recursive merge for config import: dict-vs-dict merges, everything
+    else overwrites. Unmentioned nested keys (e.g. apis.yfinance) survive
+    a partial import instead of being silently dropped."""
+    for key, value in incoming.items():
+        if (isinstance(value, dict) and isinstance(base.get(key), dict)):
+            _deep_merge_live(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 @router.post("/system/config/import", response_model=SettingsResponse)
 async def import_config(
     file: UploadFile = File(...), ctx=Depends(get_read_context)
@@ -1222,8 +1252,7 @@ async def import_config(
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not write backup: {exc}")
 
-    # Shallow top-level merge, like the Streamlit apply path.
-    cm.config.update(new_config)
+    _deep_merge_live(cm.config, new_config)
     _save_config_preserving_secrets(cm)
     return _read_settings(cm.config)
 
@@ -1244,11 +1273,13 @@ def log_preview(
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"No log file at {path_str}")
     try:
-        text = target.read_text(errors="replace")
+        with open(target, "rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 200_000))
+            text = handle.read().decode(errors="replace")
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not read log file: {exc}")
-    if len(text) > 200_000:
-        text = text[:200_000]
     all_lines = text.splitlines()
     total = len(all_lines)
     return LogPreviewResponse(
