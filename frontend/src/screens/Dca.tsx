@@ -8,7 +8,7 @@ import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
 import type {
-  DcaPreviewResponse, DcaResponse, ExecutionStatus, TradeExecuteResponse,
+  CompletionResponse, DcaPreviewResponse, DcaResponse, ExecutionStatus, TradeExecuteResponse,
 } from '../types';
 
 const STRATEGIES = [
@@ -21,6 +21,8 @@ const STRATEGIES = [
 export function Dca() {
   const { data, error, reload } = useApi<DcaResponse>('/api/strategy/dca');
   const status = useApi<ExecutionStatus>('/api/execute/status');
+  const completion = useApi<CompletionResponse>('/api/strategy/completion');
+  const [showCompletion, setShowCompletion] = useState(false);
   usePollWhile(Boolean(data?.is_running), reload);
 
   const [amount, setAmount] = useState('50');
@@ -74,6 +76,60 @@ export function Dca() {
               Balances are unknown until you run the check above. The preview below works
               without them — it allocates against your configured target weights.
             </p>
+          )}
+        </Panel>
+
+        <Panel title="Completion plan">
+          <p className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: 0 }}>
+            How much of each asset is still needed to finish your targets without
+            selling anything. {completion.data?.valid && completion.data.anchor_symbol
+              ? `Anchored by ${completion.data.anchor_symbol} at ${formatUsd(completion.data.implied_total_usd)} implied total.`
+              : 'The money needed is the output.'}
+          </p>
+          <Button onClick={() => setShowCompletion((v) => !v)}>
+            {showCompletion ? 'Hide completion plan' : 'Show completion plan'}
+          </Button>
+          {showCompletion && !completion.data && !completion.error && (
+            <p className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>Loading…</p>
+          )}
+          {showCompletion && completion.error && (
+            <p className="font-mono text-sm" style={{ color: 'var(--negative)', marginBottom: 0 }}>
+              Completion plan unavailable: {completion.error}
+            </p>
+          )}
+          {showCompletion && completion.data && !completion.data.valid && (
+            <p className="font-ui text-sm" style={{ color: 'var(--warning)', marginBottom: 0 }}>
+              {completion.data.message ?? 'No holdings to anchor from yet.'}
+            </p>
+          )}
+          {showCompletion && completion.data?.valid && (
+            <div className="table-scroll">
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th className="text-left">Asset</th>
+                    <th className="text-right">Target</th>
+                    <th className="text-right">Target value</th>
+                    <th className="text-right">Current</th>
+                    <th className="text-right">Still to buy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {completion.data.rows.map((r) => (
+                    <tr key={r.symbol}>
+                      <td className="text-left" style={{ fontWeight: 500 }}>{r.symbol}</td>
+                      <td className="text-right">{formatPercentPlain(r.target_allocation_pct)}</td>
+                      <td className="text-right">{formatUsd(r.target_value_usd)}</td>
+                      <td className="text-right">{formatUsd(r.current_value_usd)}</td>
+                      <td className="text-right">{formatUsd(r.need_usd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="font-ui text-sm" style={{ marginBottom: 0 }}>
+                Additional cash needed: {formatUsd(completion.data.additional_total_usd)}
+              </p>
+            </div>
           )}
         </Panel>
 

@@ -256,6 +256,23 @@ export interface DcaPreviewResponse {
   allocations: DcaAllocation[];
 }
 
+export interface CompletionRow {
+  symbol: string;
+  target_allocation_pct: number;
+  target_value_usd: number;
+  current_value_usd: number | null;
+  need_usd: number;
+}
+
+export interface CompletionResponse {
+  valid: boolean;
+  message: string | null;
+  anchor_symbol: string | null;
+  implied_total_usd: number | null;
+  additional_total_usd: number;
+  rows: CompletionRow[];
+}
+
 export interface IndicatorRow {
   symbol: string;
   price: number | null;
