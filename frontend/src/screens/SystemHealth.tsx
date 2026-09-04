@@ -16,6 +16,105 @@ interface BackupDeleteResponse {
   error: string | null;
 }
 
+/** App + host figures. Local: the shared types file is out of scope. */
+interface ResourcesResponse {
+  app_version: string | null;
+  python_version: string;
+  cpu_percent: number | null;
+  ram_percent: number | null;
+  ram_used_gb: number | null;
+  disk_percent: number | null;
+}
+
+interface ConnectionStatus {
+  ok: boolean;
+  detail: string | null;
+}
+
+interface ConnectionsResponse {
+  binance: ConnectionStatus;
+  coingecko: ConnectionStatus;
+  btc_price_usd: number | null;
+}
+
+function formatPct1(value: number | null): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return `${value.toFixed(1)}%`;
+}
+
+/** Host figures behind GET /system/resources. Nulls render as em dashes. */
+function ResourcesPanel() {
+  const { data } = useApi<ResourcesResponse>('/api/system/resources');
+  return (
+    <Panel title="Resources">
+      {!data ? <Empty>Loading…</Empty> : (
+        <KpiBand>
+          <BandMetric label="App version" value={data.app_version || '—'} />
+          <BandMetric label="Python" value={data.python_version || '—'} />
+          <BandMetric label="CPU" value={formatPct1(data.cpu_percent)} />
+          <BandMetric label="RAM" value={formatPct1(data.ram_percent)} />
+          <BandMetric label="RAM used"
+                      value={data.ram_used_gb === null ? '—' : `${data.ram_used_gb.toFixed(1)} GB`} />
+          <BandMetric label="Disk" value={formatPct1(data.disk_percent)} />
+        </KpiBand>
+      )}
+    </Panel>
+  );
+}
+
+/** Live Binance + CoinGecko probe. POST: it touches the network. */
+function ConnectionsPanel() {
+  const [result, setResult] = useState<ConnectionsResponse | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function run() {
+    setTesting(true);
+    setMessage(null);
+    try {
+      setResult(await apiPost<ConnectionsResponse>('/api/system/connections'));
+    } catch (e) {
+      setMessage(`Connection test failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Panel title="Connections">
+      <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)',
+                                                             marginBottom: 'var(--space-3)' }}>
+        <span className="font-ui" style={{ color: message ? 'var(--negative)' : 'var(--text-secondary)',
+                                           fontSize: '13px' }}>
+          {message ?? 'Probe Binance and CoinGecko over the network.'}
+        </span>
+        <Button variant="secondary" onClick={run} disabled={testing}>
+          {testing ? 'Testing…' : 'Run connection test'}
+        </Button>
+      </div>
+      {result && (
+        <>
+          <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)' }}>
+            <Badge text={result.binance.ok ? 'BINANCE OK' : 'BINANCE FAILED'}
+                   tone={result.binance.ok ? 'positive' : 'negative'} />
+            <Badge text={result.coingecko.ok ? 'COINGECKO OK' : 'COINGECKO FAILED'}
+                   tone={result.coingecko.ok ? 'positive' : 'negative'} />
+            <span className="font-mono" style={{ fontSize: '13px' }}>
+              BTC {formatUsd(result.btc_price_usd)}
+            </span>
+          </div>
+          {[result.binance.detail, result.coingecko.detail].some(Boolean) && (
+            <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
+                                            marginBottom: 0 }}>
+              {[result.binance.detail, result.coingecko.detail].filter(Boolean).join(' · ')}
+            </p>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 interface DraftRow { symbol: string; pct: string }
 
 /** Editable target allocation. Reads fractions, edits percentages, writes back. */
@@ -289,6 +388,10 @@ export function SystemHealth() {
         </Panel>
 
         <TargetAllocationPanel allocation={data.target_allocation} onSaved={reload} />
+
+        <ResourcesPanel />
+
+        <ConnectionsPanel />
 
         <Panel title="Trading limits">
           <KpiBand>

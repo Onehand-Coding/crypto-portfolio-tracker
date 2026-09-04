@@ -15,6 +15,13 @@ const control = {
   padding: 'var(--space-2) var(--space-3)', fontSize: '13px',
 } as const;
 
+/** Persisted-snapshot outcome. Local: the shared types file is out of scope. */
+interface SnapshotSaveResponse {
+  saved: boolean;
+  timestamp: string | null;
+  error: string | null;
+}
+
 /** Import transactions or holdings from a CSV/Excel file. */
 function ImportPanel({ onDone }: { onDone: () => void }) {
   const [kind, setKind] = useState('transactions');
@@ -106,7 +113,24 @@ function SnapshotsPanel() {
   const { data, reload } = useApi<SnapshotsResponse>('/api/system/snapshots');
   const [confirm, setConfirm] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  async function save() {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await apiPost<SnapshotSaveResponse>('/api/system/snapshot/save');
+      setMessage(res.saved
+        ? `Snapshot saved${res.timestamp ? ` at ${res.timestamp.slice(0, 19).replace('T', ' ')}` : ''}.`
+        : `Save failed${res.error ? `: ${res.error}` : '.'}`);
+      if (res.saved) reload();
+    } catch (e) {
+      setMessage(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function del(row: SnapshotRow) {
     setBusy(true);
@@ -130,7 +154,8 @@ function SnapshotsPanel() {
     <Panel title={`Snapshots (${data?.count ?? 0})`}>
       {message && (
         <p className="font-ui" style={{ fontSize: '13px', margin: '0 0 var(--space-3) 0',
-                 color: message.startsWith('Delete failed') ? 'var(--negative)' : 'var(--text-secondary)' }}>
+                 color: (message.startsWith('Delete failed') || message.startsWith('Save failed'))
+                   ? 'var(--negative)' : 'var(--text-secondary)' }}>
           {message}
         </p>
       )}
@@ -140,6 +165,9 @@ function SnapshotsPanel() {
         <>
           <div className="flex items-center justify-end"
                style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+            <Button onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save snapshot'}
+            </Button>
             <Button variant="secondary" onClick={() => exportSnapshots(data.rows)}>
               Export CSV
             </Button>

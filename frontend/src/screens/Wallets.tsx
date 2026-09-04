@@ -107,7 +107,17 @@ function RedeemWidget({ status }: { status: ExecutionStatus }) {
   );
 }
 
-function BalanceTable({ rows, emptyText }: { rows: WalletBalance[]; emptyText: string }) {
+/** Each wallet's share of total value, one decimal. No total (or an
+    unpriced balance) renders an em dash, never a confident 0.0%. */
+function shareOf(value: number | null, total: number | null): string {
+  if (value === null || value === undefined || total === null
+      || total === undefined || !(total > 0)) return '—';
+  return `${((value / total) * 100).toFixed(1)}%`;
+}
+
+function BalanceTable({ rows, total, emptyText }: {
+  rows: WalletBalance[]; total: number | null; emptyText: string;
+}) {
   if (rows.length === 0) return <Empty>{emptyText}</Empty>;
   return (
     <div className="table-scroll">
@@ -117,6 +127,7 @@ function BalanceTable({ rows, emptyText }: { rows: WalletBalance[]; emptyText: s
             <th className="text-left">Asset</th>
             <th className="text-right">Quantity</th>
             <th className="text-right">Value</th>
+            <th className="text-right">Share</th>
           </tr>
         </thead>
         <tbody>
@@ -130,6 +141,9 @@ function BalanceTable({ rows, emptyText }: { rows: WalletBalance[]; emptyText: s
                   style={{ color: row.value_usd === null ? 'var(--warning)' : undefined }}>
                 {/* An unpriced balance shows an em dash, never $0.00. */}
                 {formatUsd(row.value_usd)}
+              </td>
+              <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                {shareOf(row.value_usd, total)}
               </td>
             </tr>
           ))}
@@ -175,13 +189,16 @@ export function Wallets() {
         </Panel>
 
         <Panel title="Spot & Earn">
-          <BalanceTable rows={data.spot_holdings} emptyText="No spot or earn balances." />
+          <BalanceTable rows={data.spot_holdings} total={data.total_value_usd}
+                        emptyText="No spot or earn balances." />
         </Panel>
         <Panel title="Futures">
-          <BalanceTable rows={data.futures_balances} emptyText="No futures balances." />
+          <BalanceTable rows={data.futures_balances} total={data.total_value_usd}
+                        emptyText="No futures balances." />
         </Panel>
         <Panel title="Funding">
-          <BalanceTable rows={data.funding_balances} emptyText="No funding balances." />
+          <BalanceTable rows={data.funding_balances} total={data.total_value_usd}
+                        emptyText="No funding balances." />
         </Panel>
 
         {status.data && (
