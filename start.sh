@@ -12,6 +12,9 @@
 
 set -uo pipefail
 
+# Headless matplotlib: no display on a server
+export MPLBACKEND=Agg
+
 DEV=false
 SKIP_BUILD=false
 for arg in "$@"; do

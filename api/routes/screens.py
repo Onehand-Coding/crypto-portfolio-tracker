@@ -199,7 +199,8 @@ def _report_generator(ctx, export_dir: Path):
     )
     from crypto_portfolio_tracker.report_generator import ReportGenerator
     config = dict(ctx.config_manager.config or {})
-    config["exports"] = {"path": str(export_dir)}
+    exports = (ctx.config_manager.config or {}).get("exports", {}) or {}
+    config["exports"] = {**exports, "path": str(export_dir)}
     return ReportGenerator(
         config=config,
         db_manager=ctx.db_manager,
@@ -303,11 +304,9 @@ def export_summary(
 @router.post("/reports/charts", response_model=GenerateExportResponse)
 def export_charts(ctx=Depends(get_read_context)) -> GenerateExportResponse:
     """All portfolio charts as PNGs via the core visualizer (same files as the CLI chart menu)."""
-    import matplotlib
-
-    # Headless: the server has no display, and pyplot's default backend would
-    # try to use one (Tk aborts the process on teardown in tests).
-    matplotlib.use("Agg")
+    # Headless backend (Agg) is pinned at process start via MPLBACKEND -- never
+    # switch it per request: use() only works pre-import and pyplot is already
+    # imported by then via deps -> portfolio_tracker -> visualizations.
     from crypto_portfolio_tracker.visualizations import Visualizer
 
     metrics = MetricsCache(cache_path_for(ctx.config_manager)).read()
@@ -322,7 +321,8 @@ def export_charts(ctx=Depends(get_read_context)) -> GenerateExportResponse:
     charts_dir.mkdir(parents=True, exist_ok=True)
     before = {p.name for p in charts_dir.iterdir() if p.is_file()}
     config = dict(ctx.config_manager.config or {})
-    config["exports"] = {"path": str(export_dir)}
+    exports = (ctx.config_manager.config or {}).get("exports", {}) or {}
+    config["exports"] = {**exports, "path": str(export_dir)}
     full = dict(metrics)
     full["holdings_df"] = holdings
     snapshots = ctx.db_manager.get_all_snapshots()
@@ -340,11 +340,15 @@ def export_charts(ctx=Depends(get_read_context)) -> GenerateExportResponse:
     fresh = [p for p in fresh if p.suffix == ".png"]
     if not fresh:
         raise HTTPException(status_code=500, detail="Chart generation wrote no file.")
-    # The visualizer timestamps its filenames, so these cannot collide with
-    # anything already at the export root; the move keeps PNGs alongside the
-    # other generated files where the existing list and download links find them.
-    for path in fresh:
-        path.rename(export_dir / path.name)
+    # Filenames carry second-resolution stamps, so a same-second regeneration
+    # overwrites the same name -- harmless because the output is regenerable.
+    # The move keeps PNGs alongside the other generated files where the
+    # existing list and download links find them.
+    try:
+        for path in fresh:
+            path.rename(export_dir / path.name)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
     newest = export_dir / fresh[0].name
     return GenerateExportResponse(name=newest.name, path=str(newest))
 

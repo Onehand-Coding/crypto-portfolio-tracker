@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -17,6 +18,12 @@ def charts_ctx(mock_read_context, tmp_path, monkeypatch):
         "target_allocation": {"BTC": 0.6, "ETH": 0.4},
     }
     monkeypatch.chdir(tmp_path)
+    # The endpoint reads snapshots via ctx.db_manager.get_all_snapshots(); the
+    # value-history chart needs a non-empty frame with total_value_usd.
+    mock_read_context.db_manager.get_all_snapshots.return_value = pd.DataFrame([
+        {"timestamp": "2026-01-01T00:00:00", "total_value_usd": 9000.0},
+        {"timestamp": "2026-02-01T00:00:00", "total_value_usd": 10000.0},
+    ])
     cache = Path("data") / "api_cache" / "metrics_testnet.json"
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps({
@@ -50,6 +57,8 @@ def test_charts_export_writes_png(charts_ctx):
     body = response.json()
     assert body["name"].endswith(".png")
     assert (charts_ctx / body["name"]).is_file()
+    # Lower bound, not exact: robust to future chart additions.
+    assert len([p for p in charts_ctx.rglob("*.png") if p.is_file()]) >= 3
 
 
 def test_charts_export_without_metrics_is_422(charts_ctx):

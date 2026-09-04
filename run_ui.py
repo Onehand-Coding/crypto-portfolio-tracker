@@ -4,6 +4,12 @@ Run from the project root: the config resolves data/ relative to the working
 directory, so launching from elsewhere reads a different (empty) cache.
 """
 
+import os
+
+# Headless matplotlib: pin the backend before any local import pulls in
+# pyplot (api -> visualizations imports it at module scope).
+os.environ.setdefault("MPLBACKEND", "Agg")
+
 import uvicorn
 
 from api.main import FRONTEND_DIST
