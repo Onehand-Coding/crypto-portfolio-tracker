@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Dca } from './Dca';
 import type { CompletionResponse } from '../types';
@@ -64,5 +64,65 @@ describe('Dca completion plan', () => {
     screen.getByRole('button', { name: /completion plan/i }).click();
     await waitFor(() =>
       expect(screen.getByText(/no holdings to anchor/i)).toBeDefined());
+  });
+});
+
+describe('Dca per-trade selection', () => {
+  const PREVIEW = {
+    strategy: 'target_weight', amount_usd: 50, valid: true, message: null,
+    allocations: [
+      { symbol: 'BTC', amount_usd: 30, quantity: 0.0003,
+        current_allocation_pct: 10, target_allocation_pct: 35 },
+      { symbol: 'ETH', amount_usd: 20, quantity: 0.01,
+        current_allocation_pct: 5, target_allocation_pct: 30 },
+    ],
+  };
+
+  function stubFetchWithExecute(captured: { body?: Record<string, unknown> }) {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { body?: unknown }) => {
+      const path = String(url);
+      if (path.includes('/api/execute/dca')) {
+        if (typeof init?.body === 'string') captured.body = JSON.parse(init.body);
+        return { ok: true, json: async () => ({ success: true, testnet: true, messages: [], errors: [] }) };
+      }
+      if (path.includes('/api/strategy/dca/preview')) {
+        return { ok: true, json: async () => PREVIEW };
+      }
+      const payload = path.includes('/api/strategy/completion') ? COMPLETION
+        : path.includes('/api/execute/status') ? STATUS : DCA_STATE;
+      return { ok: true, json: async () => payload };
+    }));
+  }
+
+  async function renderWithPreview(captured: { body?: Record<string, unknown> }) {
+    stubFetchWithExecute(captured);
+    render(<Dca />);
+    fireEvent.click(await screen.findByRole('button', { name: /preview allocation/i }));
+    await screen.findByRole('checkbox', { name: 'Include BTC' });
+  }
+
+  it('checks every allocation by default and sends only checked trades', async () => {
+    const captured: { body?: Record<string, unknown> } = {};
+    await renderWithPreview(captured);
+    const btc = screen.getByRole('checkbox', { name: 'Include BTC' });
+    const eth = screen.getByRole('checkbox', { name: 'Include ETH' });
+    expect(btc).toBeChecked();
+    expect(eth).toBeChecked();
+    fireEvent.click(eth);
+    expect(eth).not.toBeChecked();
+    fireEvent.change(screen.getByPlaceholderText('EXECUTE'), { target: { value: 'EXECUTE' } });
+    fireEvent.click(screen.getByRole('button', { name: /simulate dca/i }));
+    await waitFor(() => expect(captured.body).toBeDefined());
+    expect(captured.body?.trades).toEqual([{ asset: 'BTC', amount: 30 }]);
+  });
+
+  it('disables execution and hints when nothing is selected', async () => {
+    const captured: { body?: Record<string, unknown> } = {};
+    await renderWithPreview(captured);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include BTC' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include ETH' }));
+    expect(await screen.findByText(/select at least one trade/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: /simulate dca/i })).toBeDisabled();
+    expect(captured.body).toBeUndefined();
   });
 });

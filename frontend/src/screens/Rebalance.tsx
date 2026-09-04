@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
@@ -43,6 +44,10 @@ export function Rebalance() {
   const { data, error, reload } = useApi<RebalanceResponse>('/api/strategy/rebalance');
   const status = useApi<ExecutionStatus>('/api/execute/status');
   usePollWhile(Boolean(data?.is_running), reload);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const isChecked = (s: string) => selected[s] ?? true;
+  const toggle = (s: string) =>
+    setSelected((prev) => ({ ...prev, [s]: !(prev[s] ?? true) }));
 
   async function run() {
     try {
@@ -147,21 +152,46 @@ export function Rebalance() {
         {status.data && (() => {
           const actionable = data.suggestions.filter(
             (s) => s.action && /BUY|SELL/i.test(s.action),
-          ).length;
-          if (actionable === 0) return null;
+          );
+          if (actionable.length === 0) return null;
+          const checked = actionable.filter((r) => isChecked(r.symbol));
           const live = status.data.is_live;
           const net = status.data.testnet ? 'testnet' : 'mainnet';
           return (
             <ExecutePanel
               title={`${live ? 'Execute' : 'Simulate'} rebalance`}
-              description={`This ${live ? 'places' : 'simulates'} ${actionable} market order${actionable === 1 ? '' : 's'} — every BUY and SELL suggestion above — on the Binance ${net}${live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+              description={`This ${live ? 'places' : 'simulates'} ${checked.length} market order${checked.length === 1 ? '' : 's'} — the selected suggestion${checked.length === 1 ? '' : 's'} above — on the Binance ${net}${live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+              disabled={checked.length === 0}
               execute={async () => {
                 const res = await apiPost<TradeExecuteResponse>(
-                  '/api/execute/rebalance', { confirm: true });
+                  '/api/execute/rebalance',
+                  { confirm: true, symbols: checked.map((r) => r.symbol) });
                 reload();
                 return res;
               }}
-            />
+            >
+              <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+                {actionable.map((r) => (
+                  <label key={r.symbol} className="font-ui"
+                         style={{ display: 'flex', alignItems: 'center',
+                                  gap: 'var(--space-2)', fontSize: '13px',
+                                  color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Include ${r.symbol}`}
+                      checked={isChecked(r.symbol)}
+                      onChange={() => toggle(r.symbol)}
+                    />
+                    {r.symbol}
+                  </label>
+                ))}
+                {checked.length === 0 && (
+                  <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
+                    Select at least one trade.
+                  </p>
+                )}
+              </div>
+            </ExecutePanel>
           );
         })()}
       </div>

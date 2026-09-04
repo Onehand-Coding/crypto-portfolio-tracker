@@ -29,6 +29,10 @@ export function Dca() {
   const [strategy, setStrategy] = useState('target_weight');
   const [preview, setPreview] = useState<DcaPreviewResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const isChecked = (s: string) => selected[s] ?? true;
+  const toggle = (s: string) =>
+    setSelected((prev) => ({ ...prev, [s]: !(prev[s] ?? true) }));
 
   async function run() {
     try {
@@ -53,6 +57,12 @@ export function Dca() {
 
   if (error) return <ErrorPanel title="DCA" message={`Failed to load: ${error}`} />;
   if (!data) return <Panel title="DCA"><Empty>Loading…</Empty></Panel>;
+
+  const actionable = (preview?.valid ? preview.allocations : []).filter(
+    (a) => a.amount_usd > 0,
+  );
+  const checked = actionable.filter((a) => isChecked(a.symbol));
+  const checkedTotal = checked.reduce((sum, a) => sum + a.amount_usd, 0);
 
   return (
     <>
@@ -237,13 +247,36 @@ export function Dca() {
         {status.data && preview?.valid && preview.allocations.length > 0 && (
           <ExecutePanel
             title={`${status.data.is_live ? 'Execute' : 'Simulate'} DCA`}
-            description={`This ${status.data.is_live ? 'deploys' : 'simulates deploying'} ${formatUsd(preview.amount_usd)} across ${preview.allocations.length} asset${preview.allocations.length === 1 ? '' : 's'} as market buys on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+            description={`This ${status.data.is_live ? 'deploys' : 'simulates deploying'} ${formatUsd(checkedTotal)} across ${checked.length} asset${checked.length === 1 ? '' : 's'} as market buys on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+            disabled={checked.length === 0}
             execute={() => apiPost<TradeExecuteResponse>('/api/execute/dca', {
               confirm: true,
               strategy,
-              trades: preview.allocations.map((a) => ({ asset: a.symbol, amount: a.amount_usd })),
+              trades: checked.map((a) => ({ asset: a.symbol, amount: a.amount_usd })),
             })}
-          />
+          >
+            <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+              {actionable.map((a) => (
+                <label key={a.symbol} className="font-ui"
+                       style={{ display: 'flex', alignItems: 'center',
+                                gap: 'var(--space-2)', fontSize: '13px',
+                                color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Include ${a.symbol}`}
+                    checked={isChecked(a.symbol)}
+                    onChange={() => toggle(a.symbol)}
+                  />
+                  {a.symbol} — {formatUsd(a.amount_usd)}
+                </label>
+              ))}
+              {checked.length === 0 && (
+                <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
+                  Select at least one trade.
+                </p>
+              )}
+            </div>
+          </ExecutePanel>
         )}
       </div>
     </>

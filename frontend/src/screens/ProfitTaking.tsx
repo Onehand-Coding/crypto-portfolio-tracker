@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
@@ -18,6 +19,10 @@ export function ProfitTaking() {
   const { data, error, reload } = useApi<ProfitResponse>('/api/strategy/profit');
   const status = useApi<ExecutionStatus>('/api/execute/status');
   usePollWhile(Boolean(data?.is_running), reload);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const isChecked = (s: string) => selected[s] ?? true;
+  const toggle = (s: string) =>
+    setSelected((prev) => ({ ...prev, [s]: !(prev[s] ?? true) }));
 
   async function run() {
     try {
@@ -29,6 +34,9 @@ export function ProfitTaking() {
 
   if (error) return <ErrorPanel title="Profit taking" message={`Failed to load: ${error}`} />;
   if (!data) return <Panel title="Profit taking"><Empty>Loading…</Empty></Panel>;
+
+  const actionable = data.opportunities;
+  const checked = actionable.filter((o) => isChecked(o.symbol));
 
   return (
     <>
@@ -113,13 +121,38 @@ export function ProfitTaking() {
         {status.data && data.has_data && data.opportunities.length > 0 && (
           <ExecutePanel
             title={`${status.data.is_live ? 'Execute' : 'Simulate'} profit-taking`}
-            description={`This ${status.data.is_live ? 'trims' : 'simulates trimming'} ${data.opportunities.length} scoring position${data.opportunities.length === 1 ? '' : 's'} — selling the configured share of each gain — as market sells on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+            description={`This ${status.data.is_live ? 'trims' : 'simulates trimming'} ${checked.length} scoring position${checked.length === 1 ? '' : 's'} — the selected position${checked.length === 1 ? '' : 's'} above, selling the configured share of each gain — as market sells on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+            disabled={checked.length === 0}
             execute={async () => {
-              const res = await apiPost<TradeExecuteResponse>('/api/execute/profit', { confirm: true });
+              const res = await apiPost<TradeExecuteResponse>(
+                '/api/execute/profit',
+                { confirm: true, symbols: checked.map((o) => o.symbol) });
               reload();
               return res;
             }}
-          />
+          >
+            <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+              {actionable.map((o) => (
+                <label key={o.symbol} className="font-ui"
+                       style={{ display: 'flex', alignItems: 'center',
+                                gap: 'var(--space-2)', fontSize: '13px',
+                                color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Include ${o.symbol}`}
+                    checked={isChecked(o.symbol)}
+                    onChange={() => toggle(o.symbol)}
+                  />
+                  {o.symbol}
+                </label>
+              ))}
+              {checked.length === 0 && (
+                <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
+                  Select at least one trade.
+                </p>
+              )}
+            </div>
+          </ExecutePanel>
         )}
       </div>
     </>
