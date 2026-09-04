@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
+import { BandMetric, KpiBand } from '../components/Band';
 import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
 import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatSigned, formatUsd } from '../lib/format';
-import type { ExecutionStatus, ProfitResponse, TradeExecuteResponse } from '../types';
+import type { DcaResponse, ExecutionStatus, ProfitResponse, TradeExecuteResponse } from '../types';
 
 function scoreTone(score: number | null) {
   if (score === null) return 'neutral' as const;
@@ -17,6 +18,7 @@ function scoreTone(score: number | null) {
 
 export function ProfitTaking() {
   const { data, error, reload } = useApi<ProfitResponse>('/api/strategy/profit');
+  const balances = useApi<DcaResponse>('/api/strategy/dca');
   const status = useApi<ExecutionStatus>('/api/execute/status');
   usePollWhile(Boolean(data?.is_running), reload);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -46,6 +48,22 @@ export function ProfitTaking() {
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <TradingStatusBanner status={status.data ?? null} />
         <AnalysisBar state={data} onRun={run} label="Profit-taking analysis" />
+
+        <Panel title="Available to deploy">
+          <KpiBand>
+            <BandMetric emphasis label="Total USDT" value={formatUsd(balances.data?.available_usdt ?? null)} />
+            <BandMetric label="Spot" value={formatUsd(balances.data?.spot_usdt ?? null)} />
+            <BandMetric label="Earn" value={formatUsd(balances.data?.earn_usdt ?? null)} />
+            <BandMetric label="Minimum trade" value={formatUsd(balances.data?.minimum_trade_usd ?? null)} />
+          </KpiBand>
+          {!balances.data?.has_data && (
+            <p className="font-ui text-sm"
+               style={{ color: 'var(--text-secondary)', marginTop: 'var(--space-4)', marginBottom: 0 }}>
+              Balances are unknown until a balance check runs. Profit takes size
+              from the scored gains above, so this is context only.
+            </p>
+          )}
+        </Panel>
 
         <Panel title="Opportunities">
           {!data.has_data ? (

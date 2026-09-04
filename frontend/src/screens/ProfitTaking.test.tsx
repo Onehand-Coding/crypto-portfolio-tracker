@@ -19,12 +19,21 @@ const STATE = {
   ],
 };
 
-function stubFetch(captured: { body?: Record<string, unknown> }) {
+const DCA_BALANCES = {
+  has_data: true, is_running: false, error: null,
+  staleness: { cached_at: null, age_seconds: null, is_stale: true },
+  available_usdt: 100, spot_usdt: 60, earn_usdt: 40, minimum_trade_usd: 5,
+};
+
+function stubFetch(captured: { body?: Record<string, unknown> }, dca: Record<string, unknown> = DCA_BALANCES) {
   vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { body?: unknown }) => {
     const path = String(url);
     if (path.includes('/api/execute/profit')) {
       if (typeof init?.body === 'string') captured.body = JSON.parse(init.body);
       return { ok: true, json: async () => ({ success: true, testnet: true, messages: [], errors: [] }) };
+    }
+    if (path.includes('/api/strategy/dca')) {
+      return { ok: true, json: async () => dca };
     }
     const payload = path.includes('/api/execute/status') ? STATUS : STATE;
     return { ok: true, json: async () => payload };
@@ -71,5 +80,24 @@ describe('ProfitTaking per-trade selection', () => {
     expect(await screen.findByText(/select at least one trade/i)).toBeDefined();
     expect(screen.getByRole('button', { name: /simulate profit-taking/i })).toBeDisabled();
     expect(captured.body).toBeUndefined();
+  });
+});
+
+describe('ProfitTaking balances', () => {
+  it('shows available balances alongside the opportunities', async () => {
+    stubFetch({});
+    render(<ProfitTaking />);
+    await waitFor(() => expect(screen.getByText('$100.00')).toBeDefined());
+    expect(screen.getByText('$60.00')).toBeDefined();
+    expect(screen.getByText('$40.00')).toBeDefined();
+  });
+
+  it('says balances are unknown when no balance check has run', async () => {
+    stubFetch({}, { ...DCA_BALANCES, has_data: false, available_usdt: null,
+                    spot_usdt: null, earn_usdt: null });
+    render(<ProfitTaking />);
+    await waitFor(() => {
+      expect(screen.getByText(/balances are unknown/i)).toBeDefined();
+    });
   });
 });

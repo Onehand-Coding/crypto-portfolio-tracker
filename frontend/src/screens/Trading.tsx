@@ -26,6 +26,7 @@ export function Trading() {
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [symbol, setSymbol] = useState('BTC');
   const [amount, setAmount] = useState('50');
+  const [unit, setUnit] = useState<'USD' | 'COIN'>('USD');
   const [confirmText, setConfirmText] = useState('');
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<TradeExecuteResponse | null>(null);
@@ -37,14 +38,22 @@ export function Trading() {
   }
 
   const holding = cockpit.data.holdings.find((h) => h.symbol === symbol.toUpperCase());
-  const amountUsd = Number(amount);
-  const valid = Number.isFinite(amountUsd) && amountUsd >= health.data.minimum_trade_usd;
+  const price = holding?.current_price ?? null;
+  const raw = Number(amount);
+  const isQuote = unit === 'USD';
+  // Coin mode values the order at the last known price; unknown price means
+  // unknown impact, never $0. The backend revalidates either way.
+  const estUsd = isQuote ? raw : (price !== null && Number.isFinite(raw) ? raw * price : null);
+  const valid = Number.isFinite(raw) && raw > 0
+    && (isQuote ? raw >= health.data.minimum_trade_usd : true);
 
   const total = cockpit.data.total_value_usd;
   const currentValue = holding?.value_usd ?? 0;
-  const afterValue = side === 'BUY' ? currentValue + amountUsd : currentValue - amountUsd;
-  const afterTotal = side === 'BUY' ? total + amountUsd : total;
-  const price = holding?.current_price ?? null;
+  const deltaUsd = isQuote ? raw : estUsd;
+  const afterValue = deltaUsd === null
+    ? null : side === 'BUY' ? currentValue + deltaUsd : currentValue - deltaUsd;
+  const afterTotal = deltaUsd === null
+    ? null : side === 'BUY' ? total + deltaUsd : total;
 
   const testnet = status.data?.testnet ?? false;
   const isLive = status.data?.is_live ?? false;
@@ -54,8 +63,8 @@ export function Trading() {
     setResult(null);
     try {
       const res = await apiPost<TradeExecuteResponse>('/api/execute/trade', {
-        trade_type: side, symbol: symbol.toUpperCase(), amount: amountUsd,
-        is_quote_qty: true, confirm: true,
+        trade_type: side, symbol: symbol.toUpperCase(), amount: raw,
+        is_quote_qty: isQuote, confirm: true,
       });
       setResult(res);
       setConfirmText('');
@@ -133,7 +142,7 @@ export function Trading() {
             <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
               <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
                                                  letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                Amount (USD)
+                Amount ({isQuote ? 'USD' : `${symbol} units`})
               </span>
               <input
                 value={amount}
@@ -146,14 +155,41 @@ export function Trading() {
                   padding: 'var(--space-2) var(--space-3)', width: '140px', fontSize: '14px',
                 }}
               />
+              <div className="flex" style={{ gap: 'var(--space-2)' }}>
+                {(['USD', 'COIN'] as const).map((u) => (
+                  <button
+                    key={u}
+                    onClick={() => setUnit(u)}
+                    className="font-ui transition-colors"
+                    style={{
+                      background: unit === u ? 'var(--surface-2)' : 'transparent',
+                      color: unit === u ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      border: `1px solid ${unit === u ? 'var(--border-strong)' : 'var(--border)'}`,
+                      borderRadius: 'var(--radius-control)',
+                      padding: 'var(--space-1) var(--space-3)', fontSize: '12px', cursor: 'pointer',
+                    }}
+                  >
+                    {u === 'USD' ? 'USD' : `${symbol} units`}
+                  </button>
+                ))}
+              </div>
             </label>
           </div>
 
           {!valid && (
             <p className="font-ui text-sm"
                style={{ color: 'var(--warning)', marginTop: 'var(--space-3)', marginBottom: 0 }}>
-              Amount must be at least the {formatUsd(health.data.minimum_trade_usd)} minimum
-              trade size.
+              {isQuote
+                ? <>Amount must be at least the {formatUsd(health.data.minimum_trade_usd)} minimum
+                    trade size.</>
+                : <>Enter an amount greater than zero.</>}
+            </p>
+          )}
+          {!isQuote && valid && estUsd !== null && estUsd < health.data.minimum_trade_usd && (
+            <p className="font-ui text-sm"
+               style={{ color: 'var(--warning)', marginTop: 'var(--space-3)', marginBottom: 0 }}>
+              Est. {formatUsd(estUsd)} is below the {formatUsd(health.data.minimum_trade_usd)} minimum
+              trade size — the exchange may reject it.
             </p>
           )}
         </Panel>
@@ -164,22 +200,34 @@ export function Trading() {
               <BandMetric
                 emphasis
                 label="Allocation after"
-                value={afterTotal ? formatPercentPlain((afterValue / afterTotal) * 100) : '—'}
+                value={afterTotal && afterValue !== null
+                  ? formatPercentPlain((afterValue / afterTotal) * 100) : '—'}
                 sub={health.data.target_allocation[symbol] !== undefined
                   ? `target ${formatPercentPlain(health.data.target_allocation[symbol] * 100)}`
                   : 'not a core asset'}
               />
-              <BandMetric label="Est. quantity"
-                          value={price ? formatQty(amountUsd / price) : '—'}
-                          sub={price ? `at ${formatUsd(price)}` : 'price unknown'} />
-              <BandMetric label={`${symbol} value now`} value={formatUsd(currentValue)} />
-              <BandMetric label={`${symbol} value after`} value={formatUsd(afterValue)} />
-            </KpiBand>
-            {side === 'SELL' && amountUsd > currentValue && (
+                <BandMetric label={isQuote ? 'Est. quantity' : 'Est. value'}
+                          value={isQuote
+                            ? (price ? formatQty(raw / price) : '—')
+                            : formatUsd(estUsd)}
+                          sub={price
+                            ? (isQuote ? `at ${formatUsd(price)}` : `${formatQty(raw)} ${symbol}`)
+                            : 'price unknown'} />
+                <BandMetric label={`${symbol} value now`} value={formatUsd(currentValue)} />
+                <BandMetric label={`${symbol} value after`} value={formatUsd(afterValue)} />
+              </KpiBand>
+            {side === 'SELL' && isQuote && raw > currentValue && (
               <p className="font-ui text-sm"
                  style={{ color: 'var(--negative)', marginTop: 'var(--space-4)', marginBottom: 0 }}>
                 You hold {formatUsd(currentValue)} of {symbol} — this sell is larger than
                 the position.
+              </p>
+            )}
+            {side === 'SELL' && !isQuote && raw > (holding?.total_quantity ?? 0) && (
+              <p className="font-ui text-sm"
+                 style={{ color: 'var(--negative)', marginTop: 'var(--space-4)', marginBottom: 0 }}>
+                You hold {formatQty(holding?.total_quantity ?? 0)} {symbol} — this sell is
+                larger than the position.
               </p>
             )}
           </Panel>
@@ -189,7 +237,9 @@ export function Trading() {
           <Panel title={isLive ? 'Execute' : 'Execute (simulated)'}>
             <p className="font-ui text-sm"
                style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-3) 0' }}>
-              This {isLive ? 'places' : 'simulates'} a market {side} of {formatUsd(amountUsd)} {symbol} on
+              This {isLive ? 'places' : 'simulates'} a market {side} of {isQuote
+                ? formatUsd(raw)
+                : `${formatQty(raw)} ${symbol}${estUsd !== null ? ` (≈ ${formatUsd(estUsd)})` : ''}`} on
               the Binance {testnet ? 'testnet' : 'mainnet'}
               {isLive ? '' : ' (live trading is off, so no order is sent)'}. To confirm,
               type <span className="font-mono"
