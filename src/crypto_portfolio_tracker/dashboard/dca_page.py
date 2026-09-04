@@ -129,6 +129,57 @@ def render_dca_page(dashboard):
         # Store current portfolio value for DCA calculations
         total_value = core_portfolio["value_usd"].sum()
         st.session_state.current_portfolio_value = total_value
+
+        st.markdown("#### 📐 Finish to targets (no sells)")
+        st.caption("Implied total comes from whichever holding demands the "
+                   "biggest finished size, so nothing held ever needs selling.")
+        plan_values: dict[str, float] = {}
+        plan_unknown: list[str] = []
+        for asset in target_allocation.keys():
+            asset_row = core_portfolio[core_portfolio["symbol"] == asset]
+            if asset_row.empty:
+                plan_values[asset] = 0.0
+                continue
+            raw_value = asset_row["value_usd"].iloc[0]
+            # NaN is truthy: unknown must render as em dash, never $0.00.
+            if raw_value is None or pd.isna(raw_value):
+                plan_unknown.append(asset)
+                plan_values[asset] = 0.0
+            else:
+                plan_values[asset] = float(raw_value)
+
+        plan_anchors = {
+            s: plan_values[s] / float(w)
+            for s, w in target_allocation.items()
+            if s not in plan_unknown and plan_values[s] > 0 and float(w) > 0
+        }
+        if not plan_anchors:
+            st.info("No holdings to anchor from yet — nothing held, nothing to finish.")
+        else:
+            plan_total = max(plan_anchors.values())
+            plan_winner = max(plan_anchors, key=lambda s: plan_anchors[s])
+            st.metric("Implied finished size",
+                      f"${plan_total:,.2f}",
+                      help=f"Anchored by {plan_winner}")
+            plan_rows = []
+            plan_need_total = 0.0
+            for asset, weight in target_allocation.items():
+                goal = plan_total * float(weight)
+                need = max(0.0, goal - plan_values[asset])
+                plan_need_total += need
+                plan_rows.append(
+                    {
+                        "Asset": asset,
+                        "Target %": f"{float(weight) * 100:.2f}%",
+                        "Target Value": f"${goal:,.2f}",
+                        "Current Value": ("—" if asset in plan_unknown
+                                          else f"${plan_values[asset]:,.2f}"),
+                        "Still to Buy": f"${need:,.2f}",
+                    }
+                )
+            st.dataframe(pd.DataFrame(plan_rows),
+                         use_container_width=True, hide_index=True)
+            st.metric("Additional cash needed", f"${plan_need_total:,.2f}")
     else:
         st.info("No core portfolio data available")
 
