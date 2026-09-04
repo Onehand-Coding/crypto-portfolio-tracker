@@ -5,6 +5,7 @@ cached result with its age. A GET never touches the network, so these pages
 open instantly and say plainly when their figures are old.
 """
 
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -20,7 +21,9 @@ from api.schemas.screens import (
     DcaPreviewRequest,
     DcaPreviewResponse,
     DcaResponse,
+    IndicatorPoint,
     IndicatorRow,
+    IndicatorsResponse,
     ProfitOpportunityOut,
     ProfitResponse,
     RebalanceResponse,
@@ -386,6 +389,32 @@ def technical(ctx=Depends(get_read_context)) -> TechnicalResponse:
         staleness=staleness_for(cache),
         timeframes=timeframes,
         bear_market=bear,
+    )
+
+
+def _indicators_cache(ctx, symbol: str, timeframe: str) -> MetricsCache:
+    suffix = "testnet" if ctx.config_manager.is_testnet_mode else "live"
+    return MetricsCache(
+        Path("data") / "api_cache" / f"indicators_{symbol}_{timeframe}_{suffix}.json")
+
+
+@router.get("/indicators", response_model=IndicatorsResponse)
+def indicators(symbol: str, timeframe: str = "swing",
+               ctx=Depends(get_read_context)) -> IndicatorsResponse:
+    """Cached per-coin indicator history. Run it first via
+    POST /api/strategy/indicators/run {symbol, timeframe} (live fetch)."""
+    clean_symbol = symbol.strip().upper()
+    cache = _indicators_cache(ctx, clean_symbol, timeframe)
+    cached = cache.read() or {}
+    runner = get_analysis_runner()
+    return IndicatorsResponse(
+        has_data=bool(cached.get("points")),
+        is_running=runner.is_running("indicators"),
+        error=runner.last_error("indicators"),
+        staleness=staleness_for(cache),
+        symbol=clean_symbol, timeframe=timeframe,
+        points=[IndicatorPoint(**p) for p in cached.get("points", [])
+                if isinstance(p, dict)],
     )
 
 

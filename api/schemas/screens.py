@@ -225,6 +225,27 @@ class TechnicalResponse(AnalysisState):
     )
 
 
+class IndicatorPoint(BaseModel):
+    date: str
+    close: Optional[float] = None
+    sma_short: Optional[float] = None
+    sma_long: Optional[float] = None
+    rsi: Optional[float] = None
+    macd: Optional[float] = None
+    macd_signal: Optional[float] = None
+    macd_hist: Optional[float] = None
+
+
+class IndicatorsResponse(BaseModel):
+    has_data: bool
+    is_running: bool
+    error: Optional[str] = None
+    staleness: Staleness
+    symbol: str
+    timeframe: str
+    points: list[IndicatorPoint] = []
+
+
 class BacktestPoint(BaseModel):
     date: str
     value_usd: Optional[float] = None

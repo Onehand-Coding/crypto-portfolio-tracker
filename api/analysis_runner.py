@@ -14,7 +14,10 @@ import asyncio
 import copy
 import logging
 import re
+from pathlib import Path
 from typing import Awaitable, Callable, Optional
+
+import pandas as pd
 
 from api.cache import MetricsCache, analysis_cache_path
 from api.deps import get_tracker
@@ -80,6 +83,87 @@ async def _technical(tracker, params=None) -> dict:
             logger.warning("Technical report failed for %s: %s", timeframe, exc)
             reports[timeframe] = None
     return {"reports": reports}
+
+
+def _num_or_none(value) -> Optional[float]:
+    """Float or None. NaN and None both mean 'not a number here'."""
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if result != result else result
+
+
+_INDICATOR_TIMEFRAMES = {"long_term", "swing", "day"}
+
+
+def _write_indicators_cache(config_manager, payload) -> None:
+    """Per-symbol cache file (the generic kind file cannot hold every coin)."""
+    suffix = "testnet" if config_manager.is_testnet_mode else "live"
+    MetricsCache(Path("data") / "api_cache" / f"indicators_{payload['symbol']}_{payload['timeframe']}_{suffix}.json").write(payload)
+
+
+async def _indicators(tracker, params=None) -> dict:
+    """Per-coin indicator history for charting.
+
+    Same fetch + indicator path as the Streamlit coin viewer: period/interval
+    rule, 30-row minimum, 500-row tail. Writes its own per-symbol cache file
+    and returns a summary for the generic kind file.
+    """
+    from crypto_portfolio_tracker.crypto_trend_analyzer import CryptoTrendAnalyzer
+
+    params = params or {}
+    symbol = str(params.get("symbol", "")).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{2,10}", symbol):
+        raise ValueError(f"Unknown symbol: {params.get('symbol')!r}")
+    timeframe = str(params.get("timeframe", "swing"))
+    if timeframe not in _INDICATOR_TIMEFRAMES:
+        raise ValueError(f"Unknown timeframe: {params.get('timeframe')!r}")
+
+    # The tracker exposes no trend analyzer; the core builds one on demand
+    # inside its rebalance method (portfolio_analyzer.py). Same construction
+    # here rather than inventing an attribute that does not exist.
+    analyzer = CryptoTrendAnalyzer(
+        config=tracker.config, binance_client=tracker.binance_client
+    )
+    settings = analyzer.timeframe_settings.get(timeframe) or {}
+    period = settings.get("period", "1mo")
+    interval = "1wk" if timeframe == "long_term" else "1d"
+    data = await analyzer.fetch_crypto_data_async(symbol, period, interval)
+    if data is None or data.empty or len(data) < 30:
+        summary = {"symbol": symbol, "timeframe": timeframe, "points": []}
+        _write_indicators_cache(tracker.config_manager, summary)
+        return summary
+
+    # _calculate_indicators is underscore-private; used here deliberately —
+    # it is the exact computation the viewer plots, and duplicating the
+    # Study assembly would fork the indicator logic.
+    frame = analyzer._calculate_indicators(data.copy(), settings)
+    if not pd.api.types.is_datetime64_any_dtype(frame.index):
+        raise ValueError(f"No datetime index for {symbol}.")
+    frame = frame[~frame.index.duplicated(keep="first")]
+    frame = frame[~frame.index.isna()].sort_index().tail(500)
+
+    short_len = settings.get("sma_short_window")
+    long_len = settings.get("sma_long_window")
+    rsi_col = f"RSI_{analyzer.rsi_period}"
+    points = []
+    for stamp, row in frame.iterrows():
+        points.append({
+            "date": str(stamp.date()) if hasattr(stamp, "date") else str(stamp),
+            "close": _num_or_none(row.get("Close")),
+            "sma_short": _num_or_none(row.get(f"SMA_{short_len}")) if short_len else None,
+            "sma_long": _num_or_none(row.get(f"SMA_{long_len}")) if long_len else None,
+            "rsi": _num_or_none(row.get(rsi_col)),
+            "macd": _num_or_none(row.get("MACD_12_26_9")),
+            "macd_signal": _num_or_none(row.get("MACDs_12_26_9")),
+            "macd_hist": _num_or_none(row.get("MACDh_12_26_9")),
+        })
+    summary = {"symbol": symbol, "timeframe": timeframe, "points": points}
+    _write_indicators_cache(tracker.config_manager, summary)
+    return summary
 
 
 # The core validates neither, and a bad period/frequency silently degrades the
@@ -261,6 +345,7 @@ KINDS: dict[str, Callable[..., Awaitable[dict]]] = {
     "dca": _dca,
     "technical": _technical,
     "backtest": _backtest,
+    "indicators": _indicators,
 }
 
 
