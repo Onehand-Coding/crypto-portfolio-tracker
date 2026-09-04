@@ -1540,25 +1540,25 @@ async def run_dca_menu(tracker: CryptoPortfolioTracker):
 
     loop = asyncio.get_event_loop()
 
-    # 0. Completion plan vs DCA with new funds. The plan needs no USDT, so
-    # it is offered before the balance gate below (a zero balance returns).
-    plan_choice = await loop.run_in_executor(
-        None, input,
-        "\n1. 📐 Completion plan (finish targets, no sells)\n"
-        "2. 💸 DCA with new funds\nSelect (1-2, Enter to return): ",
-    )
-    plan_choice = (plan_choice or "").strip()
-    if not plan_choice:
-        print("Returning to main menu...")
-        return
-    if plan_choice == "1":
-        await run_completion_plan(tracker)
-        return
-    if plan_choice != "2":
-        print("❌ Invalid choice. Please select 1 or 2.")
-        return
-
     try:
+        # 0. Completion plan vs DCA with new funds. The plan needs no USDT, so
+        # it is offered before the balance gate below (a zero balance returns).
+        plan_choice = await loop.run_in_executor(
+            None, input,
+            "\n1. 📐 Completion plan (finish targets, no sells)\n"
+            "2. 💸 DCA with new funds\nSelect (1-2, Enter to return): ",
+        )
+        plan_choice = (plan_choice or "").strip()
+        if not plan_choice:
+            print("Returning to main menu...")
+            return
+        if plan_choice == "1":
+            await run_completion_plan(tracker)
+            return
+        if plan_choice != "2":
+            print("❌ Invalid choice. Please select 1 or 2.")
+            return
+
         # 1. Display current USDT balance
         print("\n💰 Available USDT Balance:")
         usdt_balances = tracker.get_available_usdt_balance()
