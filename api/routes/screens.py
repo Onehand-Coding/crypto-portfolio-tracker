@@ -5,8 +5,10 @@ exception -- it constructs a tracker and touches the network, so it is POST
 like sync and execute, never GET.
 """
 
+import copy
 import datetime
 import io
+import json
 import os
 import platform
 from pathlib import Path
@@ -20,8 +22,13 @@ from api.cache import MetricsCache, analysis_cache_path, cache_path_for
 from api.deps import get_read_context, get_tracker
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
+    FREQUENCIES,
+    LOG_LEVELS,
+    LOOKBACK_KEYS,
+    ApiSettings,
     AssetDetailResponse,
     AssetTransaction,
+    AutomationSettings,
     BackupCreateResponse,
     BackupDeleteRequest,
     BackupDeleteResponse,
@@ -37,6 +44,8 @@ from api.schemas.screens import (
     GenerateExportRequest,
     GenerateExportResponse,
     ImportResponse,
+    LoggingSettings,
+    LogPreviewResponse,
     OverviewResponse,
     PreviewResponse,
     ProfitTakingSettings,
@@ -60,10 +69,12 @@ from api.schemas.screens import (
     SystemHealthResponse,
     TargetAllocationRequest,
     TargetAllocationResponse,
+    TimeframeWindows,
     TransactionRow,
     TransactionsResponse,
     TrendAnalyzerSettings,
     TrendExportRequest,
+    TrendTimeframes,
 )
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
@@ -876,6 +887,30 @@ def _read_settings(config) -> SettingsResponse:
     pt = config.get("profit_taking", {}) or {}
     ta = config.get("trend_analyzer", {}) or {}
     database = config.get("database", {}) or {}
+    auto = config.get("automation", {}) or {}
+    dca = auto.get("dca", {}) or {}
+    rb = auto.get("rebalancing", {}) or {}
+    apis = config.get("apis", {}) or {}
+    cg = apis.get("coingecko", {}) or {}
+    bi = apis.get("binance", {}) or {}
+    # Only the keys the Streamlit lookback widgets manage; anything else in
+    # the mapping (e.g. the legacy "transfers") is not surfaced.
+    raw_lb = config.get("history_lookback_days", {}) or {}
+    lookback = {key: int(num(raw_lb.get(key), 90)) for key in LOOKBACK_KEYS}
+    log = config.get("logging", {}) or {}
+    log_file = log.get("file_config", {}) or {}
+    log_console = log.get("console_config", {}) or {}
+    tf = ta.get("timeframe_settings", {}) or {}
+
+    def _windows(name: str) -> TimeframeWindows:
+        # Fallbacks match the Streamlit timeframe widgets (10/30); the shipped
+        # config carries its own per-timeframe values, which win when present.
+        slot = tf.get(name, {}) or {}
+        return TimeframeWindows(
+            sma_short_window=int(num(slot.get("sma_short_window"), 10)),
+            sma_long_window=int(num(slot.get("sma_long_window"), 30)),
+        )
+
     return SettingsResponse(
         minimum_trade_usd=num(portfolio.get("minimum_trade_usd"), 5.0),
         testnet_mode=bool(portfolio.get("testnet_mode", False)),
@@ -898,6 +933,30 @@ def _read_settings(config) -> SettingsResponse:
             cryptocurrencies=[str(x) for x in (ta.get("cryptocurrencies") or [])],
         ),
         cleanup_days=int(num(database.get("cleanup_days"), 90)),
+        automation=AutomationSettings(
+            dca_frequency=str(dca.get("frequency", "monthly") or "monthly"),
+            rebalancing_frequency=str(rb.get("frequency", "weekly") or "weekly"),
+        ),
+        apis=ApiSettings(
+            coingecko_timeout=num(cg.get("timeout"), 30),
+            binance_timeout=num(bi.get("timeout"), 60),
+            binance_recv_window=int(num(bi.get("recv_window"), 20000)),
+            binance_delay_ms=num(bi.get("request_delay_ms"), 500),
+            coingecko_delay_ms=num(cg.get("request_delay_ms"), 1500),
+        ),
+        history_lookback_days=lookback,
+        logging=LoggingSettings(
+            level=str(log.get("level", "INFO") or "INFO"),
+            file_enabled=bool(log_file.get("enabled", True)),
+            file_path=str(log_file.get("path", "logs/portfolio_tracker.log")
+                          or "logs/portfolio_tracker.log"),
+            console_enabled=bool(log_console.get("enabled", True)),
+        ),
+        trend_timeframes=TrendTimeframes(
+            long_term=_windows("long_term"),
+            swing=_windows("swing"),
+            day=_windows("day"),
+        ),
     )
 
 
@@ -974,8 +1033,230 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
             raise HTTPException(status_code=422, detail="Cleanup days cannot be negative.")
         config.setdefault("database", {})["cleanup_days"] = int(payload.cleanup_days)
 
+    if payload.automation is not None:
+        # exclude_unset: a partial group patches only the sent frequencies
+        # instead of resetting the other one to its schema default.
+        auto = payload.automation.model_dump(exclude_unset=True)
+        for key in ("dca_frequency", "rebalancing_frequency"):
+            if key in auto and str(auto[key]).strip().lower() not in FREQUENCIES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{key} must be one of {', '.join(FREQUENCIES)}.")
+        auto_cfg = config.setdefault("automation", {})
+        if "dca_frequency" in auto:
+            auto_cfg.setdefault("dca", {})["frequency"] = str(auto["dca_frequency"]).strip().lower()
+        if "rebalancing_frequency" in auto:
+            auto_cfg.setdefault("rebalancing", {})["frequency"] = (
+                str(auto["rebalancing_frequency"]).strip().lower())
+
+    if payload.apis is not None:
+        ap = payload.apis.model_dump(exclude_unset=True)
+        for key in ("coingecko_timeout", "binance_timeout"):
+            if key in ap and not ap[key] > 0:
+                raise HTTPException(
+                    status_code=422, detail=f"{key} must be positive.")
+        if "binance_recv_window" in ap and not ap["binance_recv_window"] > 0:
+            raise HTTPException(
+                status_code=422, detail="binance_recv_window must be positive.")
+        for key in ("binance_delay_ms", "coingecko_delay_ms"):
+            if key in ap and not ap[key] >= 0:
+                raise HTTPException(
+                    status_code=422, detail=f"{key} cannot be negative.")
+        apis_cfg = config.setdefault("apis", {})
+        if "coingecko_timeout" in ap:
+            apis_cfg.setdefault("coingecko", {})["timeout"] = float(ap["coingecko_timeout"])
+        if "binance_timeout" in ap:
+            apis_cfg.setdefault("binance", {})["timeout"] = float(ap["binance_timeout"])
+        if "binance_recv_window" in ap:
+            apis_cfg.setdefault("binance", {})["recv_window"] = int(ap["binance_recv_window"])
+        if "binance_delay_ms" in ap:
+            apis_cfg.setdefault("binance", {})["request_delay_ms"] = float(ap["binance_delay_ms"])
+        if "coingecko_delay_ms" in ap:
+            apis_cfg.setdefault("coingecko", {})["request_delay_ms"] = float(
+                ap["coingecko_delay_ms"])
+
+    if payload.history_lookback_days is not None:
+        for key, value in payload.history_lookback_days.items():
+            if key not in LOOKBACK_KEYS:
+                raise HTTPException(
+                    status_code=422, detail=f"Unknown lookback key: {key}.")
+            # Mirror the Streamlit number_input min_value=1.
+            if int(value) < 1:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Lookback days for {key} must be at least 1.")
+        lb_cfg = config.setdefault("history_lookback_days", {})
+        for key, value in payload.history_lookback_days.items():
+            lb_cfg[key] = int(value)
+
+    if payload.logging is not None:
+        lg = payload.logging.model_dump(exclude_unset=True)
+        if "level" in lg and str(lg["level"]).strip().upper() not in LOG_LEVELS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"level must be one of {', '.join(LOG_LEVELS)}.")
+        if "file_path" in lg:
+            new_path = str(lg["file_path"] or "").strip()
+            if not new_path:
+                raise HTTPException(
+                    status_code=422, detail="Log file path cannot be empty.")
+            # Mirror the Streamlit save: the directory must exist and be
+            # writable before the path is accepted.
+            try:
+                Path(new_path).parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=422, detail=f"Cannot create log directory: {exc}")
+            if not os.access(Path(new_path).parent, os.W_OK):
+                raise HTTPException(
+                    status_code=422, detail="Log file directory is not writable.")
+        log_cfg = config.setdefault("logging", {})
+        if "level" in lg:
+            log_cfg["level"] = str(lg["level"]).strip().upper()
+        if "file_enabled" in lg:
+            log_cfg.setdefault("file_config", {})["enabled"] = bool(lg["file_enabled"])
+        if "file_path" in lg:
+            log_cfg.setdefault("file_config", {})["path"] = str(lg["file_path"]).strip()
+        if "console_enabled" in lg:
+            log_cfg.setdefault("console_config", {})["enabled"] = bool(lg["console_enabled"])
+
+    if payload.trend_timeframes is not None:
+        for name in ("long_term", "swing", "day"):
+            group = getattr(payload.trend_timeframes, name)
+            # Mirror the Streamlit widgets: min 1, max 200, short below long.
+            for label, value in (("sma_short_window", group.sma_short_window),
+                                 ("sma_long_window", group.sma_long_window)):
+                if not 1 <= value <= 200:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"{label} for {name} must be between 1 and 200.")
+            if group.sma_short_window >= group.sma_long_window:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Short SMA must be less than Long SMA for {name}.")
+        tf_cfg = config.setdefault("trend_analyzer", {}).setdefault(
+            "timeframe_settings", {})
+        for name in ("long_term", "swing", "day"):
+            group = getattr(payload.trend_timeframes, name)
+            # Windows only: the period string is left untouched.
+            slot = tf_cfg.setdefault(name, {})
+            slot["sma_short_window"] = int(group.sma_short_window)
+            slot["sma_long_window"] = int(group.sma_long_window)
+
     _save_config_preserving_secrets(cm)
     return _read_settings(cm.config)
+
+
+def _sanitized_config_copy(config) -> dict:
+    """A disk-safe deep copy of the config: main keys masked, CoinGecko key
+    dropped. Mirrors what save_config() strips, without mutating the live dict
+    the way save_config() does (the restore happens in its wrapper)."""
+    snapshot = copy.deepcopy(config or {})
+    if isinstance(snapshot.get("main_api_keys"), dict):
+        snapshot["main_api_keys"] = {
+            key: "********" for key in snapshot["main_api_keys"]
+        }
+    try:
+        apis = snapshot.get("apis")
+        if isinstance(apis, dict) and isinstance(apis.get("coingecko"), dict):
+            apis["coingecko"].pop("api_key", None)
+    except (KeyError, TypeError, AttributeError):
+        pass
+    return snapshot
+
+
+@router.get("/system/config/export")
+def export_config(ctx=Depends(get_read_context)) -> FileResponse:
+    """Download the config as JSON. Secrets are masked/dropped in the file;
+    the live process keeps the real values (deep copy, never the live dict)."""
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"config_export_{stamp}.json"
+    path = export_dir / name
+    try:
+        path.write_text(
+            json.dumps(_sanitized_config_copy(ctx.config_manager.config),
+                       indent=2, default=str))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
+    return FileResponse(path, filename=name, media_type="application/json")
+
+
+@router.post("/system/config/import", response_model=SettingsResponse)
+async def import_config(
+    file: UploadFile = File(...), ctx=Depends(get_read_context)
+) -> SettingsResponse:
+    """Apply a previously exported config file. The live secrets are preserved:
+    an export only carries masked placeholders, so both secret keys are dropped
+    from the upload unconditionally. A sanitized backup of the live config is
+    written first, so a bad import is reversible."""
+    content = await file.read()
+    if len(content) > 1_000_000:
+        raise HTTPException(
+            status_code=422, detail="Config file too large (max 1MB).")
+    try:
+        new_config = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid JSON file: {exc}")
+    if not isinstance(new_config, dict):
+        raise HTTPException(
+            status_code=422, detail="Config must be a JSON object.")
+
+    new_config.pop("main_api_keys", None)
+    try:
+        apis = new_config.get("apis")
+        if isinstance(apis, dict) and isinstance(apis.get("coingecko"), dict):
+            apis["coingecko"].pop("api_key", None)
+    except (KeyError, TypeError, AttributeError):
+        pass
+
+    cm = ctx.config_manager
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = export_dir / f"config_backup_{stamp}.json"
+    try:
+        backup_path.write_text(
+            json.dumps(_sanitized_config_copy(cm.config), indent=2, default=str))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write backup: {exc}")
+
+    # Shallow top-level merge, like the Streamlit apply path.
+    cm.config.update(new_config)
+    _save_config_preserving_secrets(cm)
+    return _read_settings(cm.config)
+
+
+@router.get("/system/logs/preview", response_model=LogPreviewResponse)
+def log_preview(
+    lines: int = 50, ctx=Depends(get_read_context)
+) -> LogPreviewResponse:
+    """Last N lines of the configured log file. The path comes from the config
+    only, never from the caller, so this cannot be aimed at other files."""
+    config = ctx.config_manager.config or {}
+    path_str = str(
+        ((config.get("logging", {}) or {}).get("file_config", {}) or {}).get(
+            "path", "logs/portfolio_tracker.log")
+        or "logs/portfolio_tracker.log")
+    count = max(1, min(500, lines))
+    target = Path(path_str)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"No log file at {path_str}")
+    try:
+        text = target.read_text(errors="replace")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read log file: {exc}")
+    if len(text) > 200_000:
+        text = text[:200_000]
+    all_lines = text.splitlines()
+    total = len(all_lines)
+    return LogPreviewResponse(
+        path=path_str,
+        lines=all_lines[-count:] if total else [],
+        truncated=total > count,
+        total_lines=total,
+    )
 
 
 @router.post("/system/snapshot/save", response_model=SnapshotSaveResponse)

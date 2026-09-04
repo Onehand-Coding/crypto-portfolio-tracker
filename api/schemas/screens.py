@@ -277,6 +277,56 @@ class TrendAnalyzerSettings(BaseModel):
     cryptocurrencies: list[str]
 
 
+# Mirror the Streamlit settings page exactly: freq_options (settings_page.py),
+# LOG_LEVELS, the lookback_types keys, the logging file fallback, and the
+# timeframe fallback windows (10/30 when a timeframe block is absent).
+FREQUENCIES = ("daily", "weekly", "biweekly", "monthly", "quarterly")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+LOOKBACK_KEYS = ("trades", "deposits", "withdrawals", "p2p_buys",
+                 "internal_transfers", "spot_futures_transfers",
+                 "spot_convert_history", "simple_earn_rewards",
+                 "simple_earn_subscriptions", "simple_earn_redemptions",
+                 "dividend_history", "staking_history")
+
+
+class AutomationSettings(BaseModel):
+    dca_frequency: str = "monthly"
+    rebalancing_frequency: str = "weekly"
+
+
+class ApiSettings(BaseModel):
+    coingecko_timeout: float = 30
+    binance_timeout: float = 60
+    binance_recv_window: int = 20000
+    binance_delay_ms: float = 500
+    coingecko_delay_ms: float = 1500
+
+
+class LoggingSettings(BaseModel):
+    level: str = "INFO"
+    file_enabled: bool = True
+    file_path: str = "logs/portfolio_tracker.log"
+    console_enabled: bool = True
+
+
+class TimeframeWindows(BaseModel):
+    sma_short_window: int
+    sma_long_window: int
+
+
+class TrendTimeframes(BaseModel):
+    long_term: TimeframeWindows
+    swing: TimeframeWindows
+    day: TimeframeWindows
+
+
+class LogPreviewResponse(BaseModel):
+    path: str
+    lines: list[str] = []
+    truncated: bool = False
+    total_lines: int = 0
+
+
 class SettingsResponse(BaseModel):
     minimum_trade_usd: float
     testnet_mode: bool
@@ -287,6 +337,11 @@ class SettingsResponse(BaseModel):
     stablecoin_symbols: list[str]
     trend_analyzer: TrendAnalyzerSettings
     cleanup_days: int
+    automation: AutomationSettings
+    apis: ApiSettings
+    history_lookback_days: dict[str, int]
+    logging: LoggingSettings
+    trend_timeframes: TrendTimeframes
 
 
 class SettingsUpdate(BaseModel):
@@ -301,6 +356,11 @@ class SettingsUpdate(BaseModel):
     stablecoin_symbols: Optional[list[str]] = None
     trend_analyzer: Optional[TrendAnalyzerSettings] = None
     cleanup_days: Optional[int] = None
+    automation: Optional[AutomationSettings] = None
+    apis: Optional[ApiSettings] = None
+    history_lookback_days: Optional[dict[str, int]] = None
+    logging: Optional[LoggingSettings] = None
+    trend_timeframes: Optional[TrendTimeframes] = None
 
 
 class GenerateExportRequest(BaseModel):
