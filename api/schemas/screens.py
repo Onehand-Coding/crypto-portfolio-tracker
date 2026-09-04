@@ -186,6 +186,27 @@ class DcaPreviewResponse(BaseModel):
     allocations: list[DcaAllocation] = []
 
 
+class CompletionRow(BaseModel):
+    symbol: str
+    target_allocation_pct: float
+    target_value_usd: float
+    # None, not zero, when the holding exists but could not be priced.
+    current_value_usd: Optional[float] = None
+    need_usd: float
+
+
+class CompletionResponse(BaseModel):
+    """No-sell completion plan. Computed on read, so like DcaPreviewResponse
+    it carries its own validity instead of AnalysisState staleness."""
+
+    valid: bool
+    message: Optional[str] = None
+    anchor_symbol: Optional[str] = None
+    implied_total_usd: Optional[float] = None
+    additional_total_usd: float = 0.0
+    rows: list[CompletionRow] = []
+
+
 class IndicatorRow(BaseModel):
     symbol: str
     price: Optional[float] = None

@@ -63,3 +63,10 @@ files, additive display only.
 - No new automated tests: markup/menu display code has no test harness in this
   repo; the math will be covered when the API endpoint lands with the React
   work (typed schemas + `tests/api/`).
+
+## Addendum 2026-09-04 (parity branch)
+
+The deferred half is approved: `GET /api/strategy/completion` (offline,
+input-less, mirroring `dca_preview`'s null-rules) plus a collapsed-by-default
+section on the React DCA screen. Same semantics as §2; unknown renders as
+`null` in the API and an em dash in the UI.

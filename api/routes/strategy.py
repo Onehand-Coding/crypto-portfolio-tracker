@@ -14,6 +14,8 @@ from api.cache import MetricsCache, analysis_cache_path, cache_path_for
 from api.deps import get_read_context
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
+    CompletionResponse,
+    CompletionRow,
     DcaAllocation,
     DcaPreviewRequest,
     DcaPreviewResponse,
@@ -266,6 +268,70 @@ def _allocation(symbol, amount, holdings, target, core_value, total_amount) -> D
         current_allocation_pct=(value / core_value * 100.0) if core_value else None,
         target_allocation_pct=float(target[symbol]) * 100.0,
     ) if after else DcaAllocation(symbol=symbol, amount_usd=round(amount, 2))
+
+
+@router.get("/completion", response_model=CompletionResponse)
+def completion(ctx=Depends(get_read_context)) -> CompletionResponse:
+    """No-sell finish-to-targets plan. Computed offline on every read.
+
+    The implied finished total is set by whichever holding demands the
+    biggest total, so nothing already held ever needs selling. Takes no
+    input: the money needed is the output.
+    """
+    config = ctx.config_manager.config
+    target = config.get("target_allocation", {}) or {}
+    if not target:
+        return CompletionResponse(valid=False, message="No target allocation configured.")
+
+    metrics = MetricsCache(cache_path_for(ctx.config_manager)).read() or {}
+    holdings = {str(r.get("symbol")).upper(): r
+                for r in (metrics.get("holdings_df") or []) if isinstance(r, dict)}
+
+    values: dict[str, float] = {}
+    unknown: set[str] = set()
+    for symbol in target:
+        row = holdings.get(str(symbol).upper())
+        if row is None:
+            # Never held: known zero, not unknown.
+            values[symbol] = 0.0
+            continue
+        # opt() maps None/NaN to None; a missing price must never read as $0.
+        current = opt(row.get("value_usd"))
+        if current is None:
+            unknown.add(symbol)
+            values[symbol] = 0.0
+        else:
+            values[symbol] = current
+
+    anchors = {
+        s: values[s] / float(w) for s, w in target.items()
+        if s not in unknown and values[s] > 0 and float(w) > 0
+    }
+    if not anchors:
+        return CompletionResponse(
+            valid=False, message="No holdings to anchor from yet.")
+    total = max(anchors.values())
+    anchor = max(anchors, key=lambda s: anchors[s])
+
+    rows = []
+    additional = 0.0
+    for symbol, weight in target.items():
+        goal = total * float(weight)
+        need = max(0.0, goal - values[symbol])
+        additional += need
+        rows.append(CompletionRow(
+            symbol=symbol,
+            target_allocation_pct=float(weight) * 100.0,
+            target_value_usd=round(goal, 2),
+            current_value_usd=(None if symbol in unknown
+                               else round(values[symbol], 2)),
+            need_usd=round(need, 2),
+        ))
+    rows.sort(key=lambda r: r.need_usd, reverse=True)
+    return CompletionResponse(
+        valid=True, anchor_symbol=anchor,
+        implied_total_usd=round(total, 2),
+        additional_total_usd=round(additional, 2), rows=rows)
 
 
 @router.get("/technical", response_model=TechnicalResponse)
