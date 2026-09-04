@@ -9,6 +9,7 @@ const ROW = {
 
 function stubFetch(
   saveResult: unknown = { saved: true, timestamp: '2026-02-01T12:00:00', error: null },
+  snapshotRows: typeof ROW[] = [ROW],
 ) {
   const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
     const path = String(url);
@@ -20,7 +21,7 @@ function stubFetch(
       return { ok: true, json: async () => ({ deleted: 1, error: null }) };
     }
     if (path.includes('/api/system/snapshots')) {
-      return { ok: true, json: async () => ({ count: 1, rows: [ROW] }) };
+      return { ok: true, json: async () => ({ count: snapshotRows.length, rows: snapshotRows }) };
     }
     if (path.includes('/api/system/cleanup')) {
       if (method === 'POST') {
@@ -78,5 +79,24 @@ describe('DataManage snapshot save', () => {
       expect(screen.getByText(/save failed/i)).toBeDefined();
     });
     expect(screen.getByText(/disk full/)).toBeDefined();
+  });
+
+  it('offers Save with zero snapshots while Export CSV stays hidden', async () => {
+    const fetchMock = stubFetch(undefined, []);
+    render(<DataManage />);
+    await screen.findByText(/no snapshots recorded yet/i);
+
+    const saveBtn = screen.getByRole('button', { name: 'Save snapshot' });
+    expect(saveBtn).toBeDefined();
+
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/snapshot saved/i)).toBeDefined();
+    });
+    const post = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/system/snapshot/save'));
+    expect(post).toBeDefined();
+    expect((post?.[1] as RequestInit | undefined)?.method).toBe('POST');
+    expect(screen.queryByRole('button', { name: 'Export CSV' })).toBeNull();
   });
 });

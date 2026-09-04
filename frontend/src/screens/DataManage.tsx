@@ -159,19 +159,21 @@ function SnapshotsPanel() {
           {message}
         </p>
       )}
+      <div className="flex items-center justify-end"
+           style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+        <Button onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save snapshot'}
+        </Button>
+        {data && data.rows.length > 0 && (
+          <Button variant="secondary" onClick={() => exportSnapshots(data.rows)}>
+            Export CSV
+          </Button>
+        )}
+      </div>
       {!data ? <Empty>Loading…</Empty> : data.rows.length === 0 ? (
         <Empty>No snapshots recorded yet.</Empty>
       ) : (
         <>
-          <div className="flex items-center justify-end"
-               style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-            <Button onClick={save} disabled={saving}>
-              {saving ? 'Saving…' : 'Save snapshot'}
-            </Button>
-            <Button variant="secondary" onClick={() => exportSnapshots(data.rows)}>
-              Export CSV
-            </Button>
-          </div>
           <div className="table-scroll" style={{ maxHeight: '420px', overflowY: 'auto' }}>
           <table className="data">
             <thead>
