@@ -1462,6 +1462,62 @@ async def _run_integrated_profit_taking(
         print(f"❌ Error in integrated profit-taking: {e}")
 
 
+async def run_completion_plan(tracker: CryptoPortfolioTracker):
+    """Prints how much of each target asset is still needed to finish.
+
+    Read-only: implied total T = max(current / weight) over anchored
+    holdings, need = max(0, T * weight - current). Never suggests sells.
+    """
+    print("\n--- 📐 Completion Plan (finish targets, no sells) ---")
+
+    metrics = await tracker.calculate_portfolio_metrics()
+    core = metrics.get("core_holdings_df", pd.DataFrame())
+    target = tracker.config.get("target_allocation", {}) or {}
+    if not target:
+        print("❌ No target allocation configured.")
+        return
+
+    values: Dict[str, float] = {}
+    unknown: List[str] = []
+    for asset in target:
+        row = core[core["symbol"] == asset] if not core.empty else core
+        if row.empty:
+            values[asset] = 0.0
+            continue
+        raw = row["value_usd"].iloc[0]
+        # NaN is truthy: a missing price must read as unknown, never $0.00.
+        if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+            unknown.append(asset)
+            values[asset] = 0.0
+        else:
+            values[asset] = float(raw)
+
+    anchors = {
+        s: values[s] / float(w)
+        for s, w in target.items()
+        if s not in unknown and values[s] > 0 and float(w) > 0
+    }
+    if not anchors:
+        print("No holdings to anchor from yet — nothing held, nothing to finish.")
+        return
+
+    total = max(anchors.values())
+    winner = max(anchors, key=lambda s: anchors[s])
+    print(f"   Implied finished size: ${total:,.2f} (anchored by {winner})")
+
+    total_need = 0.0
+    for asset, weight in target.items():
+        goal = total * float(weight)
+        need = max(0.0, goal - values[asset])
+        total_need += need
+        current_txt = "unknown" if asset in unknown else f"${values[asset]:,.2f}"
+        print(
+            f"   {asset}: target {float(weight) * 100:.1f}% = ${goal:,.2f} "
+            f"(have {current_txt}) → buy ${need:,.2f}"
+        )
+    print(f"\n   Additional cash needed: ${total_need:,.2f}")
+
+
 async def run_dca_menu(tracker: CryptoPortfolioTracker):
     """Runs an interactive session for Dollar Cost Averaging (DCA)."""
     print("\n--- 💸 Dollar Cost Averaging (DCA) ---")
@@ -1485,6 +1541,24 @@ async def run_dca_menu(tracker: CryptoPortfolioTracker):
     loop = asyncio.get_event_loop()
 
     try:
+        # 0. Completion plan vs DCA with new funds. The plan needs no USDT, so
+        # it is offered before the balance gate below (a zero balance returns).
+        plan_choice = await loop.run_in_executor(
+            None, input,
+            "\n1. 📐 Completion plan (finish targets, no sells)\n"
+            "2. 💸 DCA with new funds\nSelect (1-2, Enter to return): ",
+        )
+        plan_choice = (plan_choice or "").strip()
+        if not plan_choice:
+            print("Returning to main menu...")
+            return
+        if plan_choice == "1":
+            await run_completion_plan(tracker)
+            return
+        if plan_choice != "2":
+            print("❌ Invalid choice. Please select 1 or 2.")
+            return
+
         # 1. Display current USDT balance
         print("\n💰 Available USDT Balance:")
         usdt_balances = tracker.get_available_usdt_balance()
