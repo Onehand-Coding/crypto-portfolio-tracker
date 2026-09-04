@@ -9,6 +9,13 @@ import type {
   BackupCreateResponse, RestoreResponse, SystemHealthResponse, TargetAllocationResponse,
 } from '../types';
 
+/** Deletion outcome for a database backup. */
+interface BackupDeleteResponse {
+  deleted: boolean;
+  name: string | null;
+  error: string | null;
+}
+
 interface DraftRow { symbol: string; pct: string }
 
 /** Editable target allocation. Reads fractions, edits percentages, writes back. */
@@ -187,6 +194,8 @@ export function SystemHealth() {
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function restore(name: string) {
     setRestoring(true);
@@ -202,6 +211,23 @@ export function SystemHealth() {
       setRestoreMsg(`Restore failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setRestoring(false);
+    }
+  }
+
+  async function deleteBackup(name: string) {
+    setDeleting(true);
+    try {
+      const result = await apiPost<BackupDeleteResponse>('/api/system/backup/delete', {
+        name, confirm: true,
+      });
+      setBackupMsg(result.deleted ? `Backup deleted: ${name}.`
+                                  : `Nothing deleted${result.error ? `: ${result.error}` : '.'}`);
+      setConfirmDelete(null);
+      if (result.deleted) reload();
+    } catch (e) {
+      setBackupMsg(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -299,7 +325,7 @@ export function SystemHealth() {
                     <th className="text-left">Name</th>
                     <th className="text-right">Size</th>
                     <th className="text-left">Created</th>
-                    <th className="text-right">Restore</th>
+                    <th className="text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -313,7 +339,52 @@ export function SystemHealth() {
                         {backup.modified.slice(0, 16).replace('T', ' ')}
                       </td>
                       <td className="text-right">
-                        {confirmRestore === backup.name ? (
+                        <span className="flex items-center justify-end" style={{ gap: 'var(--space-2)' }}>
+                          <a href={`/api/system/backup/download?name=${encodeURIComponent(backup.name)}`}
+                             className="font-ui transition-colors"
+                             style={{ color: 'var(--text-secondary)',
+                                      border: '1px solid var(--border-strong)',
+                                      borderRadius: 'var(--radius-control)',
+                                      padding: '2px var(--space-3)', fontSize: '12px',
+                                      textDecoration: 'none' }}>
+                            Download
+                          </a>
+                          {confirmDelete === backup.name ? (
+                            <>
+                              <button
+                                onClick={() => deleteBackup(backup.name)}
+                                disabled={deleting}
+                                className="font-ui transition-colors"
+                                style={{ background: 'color-mix(in srgb, var(--negative) 18%, transparent)',
+                                         color: 'var(--negative)',
+                                         border: '1px solid color-mix(in srgb, var(--negative) 35%, transparent)',
+                                         borderRadius: 'var(--radius-control)',
+                                         padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+                              >
+                                {deleting ? '…' : 'Confirm'}
+                              </button>
+                              <button
+                                onClick={() => setConfirmDelete(null)}
+                                className="font-ui transition-colors"
+                                style={{ background: 'transparent', color: 'var(--text-tertiary)',
+                                         border: '1px solid var(--border)', borderRadius: 'var(--radius-control)',
+                                         padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => { setConfirmDelete(backup.name); setBackupMsg(null); }}
+                              className="font-ui transition-colors"
+                              style={{ background: 'transparent', color: 'var(--text-secondary)',
+                                       border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-control)',
+                                       padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+                            >
+                              Delete
+                            </button>
+                          )}
+                          {confirmRestore === backup.name ? (
                           // Restore overwrites the live database, so it is a
                           // deliberate two-step: the current DB is snapshotted
                           // first, but the confirm is still explicit.
@@ -354,6 +425,7 @@ export function SystemHealth() {
                             Restore
                           </button>
                         )}
+                        </span>
                       </td>
                     </tr>
                   ))}

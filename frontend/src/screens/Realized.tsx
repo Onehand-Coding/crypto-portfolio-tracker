@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { apiPost } from '../lib/api';
 import { formatQty, formatSigned, formatUsd } from '../lib/format';
-import type { RealizedResponse } from '../types';
+import type { GenerateExportResponse, RealizedResponse } from '../types';
 
 /** Realized P/L in USD, coloured by direction. Zero and unknown are distinct. */
 function Gain({ value }: { value: number | null }) {
@@ -14,6 +16,26 @@ function Gain({ value }: { value: number | null }) {
 
 export function Realized() {
   const { data, error } = useApi<RealizedResponse>('/api/realized');
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [exportFile, setExportFile] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  /** Server-side export of the FIFO realized-gains table. */
+  async function exportRealized(format: string) {
+    setExportBusy(format);
+    setExportError(null);
+    setExportFile(null);
+    try {
+      const res = await apiPost<GenerateExportResponse>('/api/reports/realized', {
+        format,
+      });
+      setExportFile(res.name);
+    } catch (e) {
+      setExportError(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExportBusy(null);
+    }
+  }
 
   if (error) return <ErrorPanel title="Realized P/L" message={`Failed to load: ${error}`} />;
   if (!data) return <Panel title="Realized P/L"><Empty>Loading…</Empty></Panel>;
@@ -43,6 +65,33 @@ export function Realized() {
             Gains locked in by past sells and withdrawals, priced against their FIFO cost
             lots. Distinct from the unrealized P/L on open positions shown in the cockpit.
           </p>
+          <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)',
+                                                                 marginTop: 'var(--space-3)' }}>
+            <Button variant="secondary" onClick={() => exportRealized('excel')}
+                    disabled={exportBusy !== null}>
+              {exportBusy === 'excel' ? 'Exporting…' : 'Export Excel'}
+            </Button>
+            <Button variant="secondary" onClick={() => exportRealized('csv')}
+                    disabled={exportBusy !== null}>
+              {exportBusy === 'csv' ? 'Exporting…' : 'Export CSV'}
+            </Button>
+            {exportFile && (
+              <a href={`/api/reports/download?name=${encodeURIComponent(exportFile)}`}
+                 className="font-ui transition-colors"
+                 style={{ color: 'var(--text-secondary)',
+                          border: '1px solid var(--border-strong)',
+                          borderRadius: 'var(--radius-control)',
+                          padding: '2px var(--space-3)', fontSize: '12px',
+                          textDecoration: 'none' }}>
+                Download {exportFile}
+              </a>
+            )}
+            {exportError && (
+              <span className="font-ui" style={{ fontSize: '13px', color: 'var(--negative)' }}>
+                {exportError}
+              </span>
+            )}
+          </div>
         </Panel>
 
         {!data.has_data ? (

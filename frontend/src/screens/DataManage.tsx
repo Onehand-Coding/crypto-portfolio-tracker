@@ -72,6 +72,35 @@ function ImportPanel({ onDone }: { onDone: () => void }) {
   );
 }
 
+/** Build a CSV from header + rows and trigger a download, no server round-trip. */
+function downloadRows(filename: string, headers: string[], rows: (string | number | null)[][]) {
+  const esc = (v: string | number | null) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.join(','), ...rows.map((r) => r.map(esc).join(','))];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Export the currently listed snapshots as a local CSV file. */
+function exportSnapshots(rows: SnapshotRow[]) {
+  downloadRows(
+    `snapshots_${new Date().toISOString().slice(0, 10)}.csv`,
+    ['timestamp', 'total_value_usd', 'total_cost_basis_usd',
+     'unrealized_pl_usd', 'unrealized_pl_percent'],
+    rows.map((r) => [r.timestamp, r.total_value_usd, r.total_cost_basis_usd,
+                     r.unrealized_pl_usd, r.unrealized_pl_percent]),
+  );
+}
+
 /** Portfolio snapshots with per-row delete. */
 function SnapshotsPanel() {
   const { data, reload } = useApi<SnapshotsResponse>('/api/system/snapshots');
@@ -108,7 +137,14 @@ function SnapshotsPanel() {
       {!data ? <Empty>Loading…</Empty> : data.rows.length === 0 ? (
         <Empty>No snapshots recorded yet.</Empty>
       ) : (
-        <div className="table-scroll" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+        <>
+          <div className="flex items-center justify-end"
+               style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+            <Button variant="secondary" onClick={() => exportSnapshots(data.rows)}>
+              Export CSV
+            </Button>
+          </div>
+          <div className="table-scroll" style={{ maxHeight: '420px', overflowY: 'auto' }}>
           <table className="data">
             <thead>
               <tr>
@@ -161,7 +197,8 @@ function SnapshotsPanel() {
               })}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </Panel>
   );

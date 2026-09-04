@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { Panel } from '../components/Panel';
 import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { apiPost } from '../lib/api';
 import { formatQty, formatUsd } from '../lib/format';
-import type { TransactionRow, TransactionsResponse } from '../types';
+import type { GenerateExportResponse, TransactionRow, TransactionsResponse } from '../types';
 
 const BUY_TYPES = new Set(['BUY', 'DEPOSIT', 'TRANSFER_IN', 'EARN_REWARD', 'DIVIDEND']);
 
@@ -61,6 +62,26 @@ export function TradeLog() {
   const { data, error } = useApi<TransactionsResponse>('/api/transactions');
   const [typeFilter, setTypeFilter] = useState('');
   const [assetFilter, setAssetFilter] = useState('');
+  const [excelBusy, setExcelBusy] = useState(false);
+  const [excelFile, setExcelFile] = useState<string | null>(null);
+  const [excelError, setExcelError] = useState<string | null>(null);
+
+  /** Server-side Excel of the full transaction history (same rows as the CSV). */
+  async function exportExcel() {
+    setExcelBusy(true);
+    setExcelError(null);
+    setExcelFile(null);
+    try {
+      const res = await apiPost<GenerateExportResponse>('/api/reports/generate', {
+        data_type: 'transactions', format: 'excel',
+      });
+      setExcelFile(res.name);
+    } catch (e) {
+      setExcelError(`Excel export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExcelBusy(false);
+    }
+  }
 
   const { types, assets } = useMemo(() => {
     const t = new Set<string>();
@@ -108,10 +129,31 @@ export function TradeLog() {
                 {filtered.length} shown
               </span>
             </div>
-            <Button variant="secondary" onClick={() => downloadCsv(filtered)}
-                    disabled={filtered.length === 0}>
-              Export CSV
-            </Button>
+            <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)' }}>
+              <Button variant="secondary" onClick={() => downloadCsv(filtered)}
+                      disabled={filtered.length === 0}>
+                Export CSV
+              </Button>
+              <Button variant="secondary" onClick={exportExcel} disabled={excelBusy}>
+                {excelBusy ? 'Exporting…' : 'Export Excel'}
+              </Button>
+              {excelFile && (
+                <a href={`/api/reports/download?name=${encodeURIComponent(excelFile)}`}
+                   className="font-ui transition-colors"
+                   style={{ color: 'var(--text-secondary)',
+                            border: '1px solid var(--border-strong)',
+                            borderRadius: 'var(--radius-control)',
+                            padding: '2px var(--space-3)', fontSize: '12px',
+                            textDecoration: 'none' }}>
+                  Download {excelFile}
+                </a>
+              )}
+              {excelError && (
+                <span className="font-ui" style={{ fontSize: '13px', color: 'var(--negative)' }}>
+                  {excelError}
+                </span>
+              )}
+            </div>
           </div>
         </Panel>
 
