@@ -86,6 +86,25 @@ describe('Reports summary export', () => {
   });
 });
 
+describe('Reports trend export', () => {
+  it('posts the picked timeframe and format and confirms the file', async () => {
+    const fetchMock = stubFetch();
+    render(<Reports />);
+    await screen.findByText(FILE_NAME);
+    const panel = screen.getByText('Trend report').closest('section');
+    expect(panel).not.toBeNull();
+    const scope = within(panel as HTMLElement);
+    fireEvent.click(scope.getByRole('button', { name: 'Swing' }));
+    fireEvent.click(scope.getByRole('button', { name: 'JSON' }));
+    fireEvent.click(scope.getByRole('button', { name: /generate trend/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/generated trend_20260101\.csv/i)).toBeDefined();
+    });
+    expect(postBody(fetchMock, '/api/reports/trend'))
+      .toEqual({ timeframe: 'swing', format: 'json' });
+  });
+});
+
 describe('Reports preview', () => {
   it('renders the returned lines and the remaining-line count', async () => {
     stubFetch();
