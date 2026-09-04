@@ -300,6 +300,55 @@ def export_summary(
     return GenerateExportResponse(name=fresh[0].name, path=str(fresh[0]))
 
 
+@router.post("/reports/charts", response_model=GenerateExportResponse)
+def export_charts(ctx=Depends(get_read_context)) -> GenerateExportResponse:
+    """All portfolio charts as PNGs via the core visualizer (same files as the CLI chart menu)."""
+    import matplotlib
+
+    # Headless: the server has no display, and pyplot's default backend would
+    # try to use one (Tk aborts the process on teardown in tests).
+    matplotlib.use("Agg")
+    from crypto_portfolio_tracker.visualizations import Visualizer
+
+    metrics = MetricsCache(cache_path_for(ctx.config_manager)).read()
+    if not metrics:
+        raise HTTPException(status_code=422, detail="No synced metrics yet -- run a sync first.")
+    holdings = pd.DataFrame(metrics.get("holdings_df") or [])
+    if holdings.empty:
+        raise HTTPException(status_code=422, detail="No holdings to chart -- run a sync first.")
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    charts_dir = export_dir / "charts"
+    charts_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.name for p in charts_dir.iterdir() if p.is_file()}
+    config = dict(ctx.config_manager.config or {})
+    config["exports"] = {"path": str(export_dir)}
+    full = dict(metrics)
+    full["holdings_df"] = holdings
+    snapshots = ctx.db_manager.get_all_snapshots()
+    if not isinstance(snapshots, pd.DataFrame):
+        snapshots = pd.DataFrame()
+    try:
+        Visualizer(config).generate_all_charts(
+            holdings, full, config.get("target_allocation", {}) or {}, snapshots
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write charts: {exc}")
+    fresh = sorted(
+        (p for p in charts_dir.iterdir() if p.is_file() and p.name not in before),
+        key=lambda p: p.stat().st_mtime, reverse=True)
+    fresh = [p for p in fresh if p.suffix == ".png"]
+    if not fresh:
+        raise HTTPException(status_code=500, detail="Chart generation wrote no file.")
+    # The visualizer timestamps its filenames, so these cannot collide with
+    # anything already at the export root; the move keeps PNGs alongside the
+    # other generated files where the existing list and download links find them.
+    for path in fresh:
+        path.rename(export_dir / path.name)
+    newest = export_dir / fresh[0].name
+    return GenerateExportResponse(name=newest.name, path=str(newest))
+
+
 @router.post("/reports/trend", response_model=GenerateExportResponse)
 def export_trend(
     payload: TrendExportRequest, ctx=Depends(get_read_context)

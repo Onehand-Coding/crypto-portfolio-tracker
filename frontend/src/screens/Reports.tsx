@@ -78,6 +78,8 @@ export function Reports() {
   const [trendFormat, setTrendFormat] = useState('csv');
   const [trendBusy, setTrendBusy] = useState(false);
   const [trendMsg, setTrendMsg] = useState<string | null>(null);
+  const [chartsBusy, setChartsBusy] = useState(false);
+  const [chartsMsg, setChartsMsg] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -130,6 +132,20 @@ export function Reports() {
       setTrendMsg(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setTrendBusy(false);
+    }
+  }
+
+  async function generateCharts() {
+    setChartsBusy(true);
+    setChartsMsg(null);
+    try {
+      const res = await apiPost<GenerateExportResponse>('/api/reports/charts');
+      setChartsMsg(`Generated ${res.name}.`);
+      reload();
+    } catch (e) {
+      setChartsMsg(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setChartsBusy(false);
     }
   }
 
@@ -250,6 +266,23 @@ export function Reports() {
               <span className="font-ui" style={{ fontSize: '13px',
                        color: trendMsg.startsWith('Export failed') ? 'var(--negative)' : 'var(--text-secondary)' }}>
                 {trendMsg}
+              </span>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Charts">
+          <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-4)' }}>
+            <span className="font-ui" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+              Allocation, P/L and value history as PNG files.
+            </span>
+            <Button onClick={generateCharts} disabled={chartsBusy}>
+              {chartsBusy ? 'Generating…' : 'Generate charts'}
+            </Button>
+            {chartsMsg && (
+              <span className="font-ui" style={{ fontSize: '13px',
+                       color: chartsMsg.startsWith('Export failed') ? 'var(--negative)' : 'var(--text-secondary)' }}>
+                {chartsMsg}
               </span>
             )}
           </div>

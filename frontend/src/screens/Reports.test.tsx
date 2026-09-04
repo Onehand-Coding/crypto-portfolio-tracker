@@ -32,6 +32,9 @@ function stubFetch() {
     if (path.includes('/api/reports/delete')) {
       return { ok: true, json: async () => ({ deleted: true, name: FILE_NAME, error: null }) };
     }
+    if (path.includes('/api/reports/charts')) {
+      return { ok: true, json: async () => ({ name: 'portfolio_allocation_pie_20260101_120000.png', path: '/exports/portfolio_allocation_pie_20260101_120000.png' }) };
+    }
     if (path.includes('/api/reports/summary')) {
       return { ok: true, json: async () => ({ name: 'summary_20260101.xlsx', path: '/exports/summary_20260101.xlsx' }) };
     }
@@ -102,6 +105,24 @@ describe('Reports trend export', () => {
     });
     expect(postBody(fetchMock, '/api/reports/trend'))
       .toEqual({ timeframe: 'swing', format: 'json' });
+  });
+});
+
+describe('Reports charts export', () => {
+  it('posts to the charts endpoint and reloads the file list', async () => {
+    const fetchMock = stubFetch();
+    render(<Reports />);
+    await screen.findByText(FILE_NAME);
+    const panel = screen.getByText('Charts').closest('section');
+    expect(panel).not.toBeNull();
+    const scope = within(panel as HTMLElement);
+    fireEvent.click(scope.getByRole('button', { name: /generate charts/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/generated portfolio_allocation_pie_20260101_120000\.png/i)).toBeDefined();
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/reports/charts')).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === '/api/reports').length)
+      .toBeGreaterThan(1);
   });
 });
 
