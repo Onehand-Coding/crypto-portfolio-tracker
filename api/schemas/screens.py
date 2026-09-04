@@ -313,6 +313,24 @@ class GenerateExportResponse(BaseModel):
     path: str
 
 
+class PreviewResponse(BaseModel):
+    name: str
+    lines: list[str] = []
+    truncated: bool = False
+    total_lines: int = 0
+
+
+class DeleteExportRequest(BaseModel):
+    name: str
+    confirm: bool = False
+
+
+class DeleteExportResponse(BaseModel):
+    deleted: bool
+    name: Optional[str] = None
+    error: Optional[str] = None
+
+
 class TradeExecuteRequest(BaseModel):
     trade_type: str  # BUY or SELL
     symbol: str

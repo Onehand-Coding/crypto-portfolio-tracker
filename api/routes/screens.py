@@ -23,11 +23,14 @@ from api.schemas.screens import (
     CleanupRequest,
     CleanupResponse,
     CleanupStatsResponse,
+    DeleteExportRequest,
+    DeleteExportResponse,
     ExportFile,
     GenerateExportRequest,
     GenerateExportResponse,
     ImportResponse,
     OverviewResponse,
+    PreviewResponse,
     ProfitTakingSettings,
     RealizedGainRow,
     RealizedGainSummary,
@@ -245,6 +248,45 @@ def download_report(name: str, ctx=Depends(get_read_context)) -> FileResponse:
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"No such export: {name}")
     return FileResponse(target, filename=name)
+
+
+@router.get("/reports/preview", response_model=PreviewResponse)
+def preview_report(name: str, ctx=Depends(get_read_context)) -> PreviewResponse:
+    """First 50 lines of a generated export for on-screen preview."""
+    if name != Path(name).name:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    target = _export_dir(ctx) / name
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"No such export: {name}")
+    try:
+        text = target.read_text(errors="replace")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read export: {exc}")
+    if len(text) > 200_000:
+        text = text[:200_000]
+    lines = text.splitlines()
+    return PreviewResponse(
+        name=name, lines=lines[:50],
+        truncated=len(lines) > 50, total_lines=len(lines))
+
+
+@router.post("/reports/delete", response_model=DeleteExportResponse)
+def delete_report(
+    payload: DeleteExportRequest, ctx=Depends(get_read_context)
+) -> DeleteExportResponse:
+    """Delete a generated export. Confirmation required, same as snapshots."""
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Deletion requires explicit confirmation.")
+    if payload.name != Path(payload.name).name:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    target = _export_dir(ctx) / payload.name
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"No such export: {payload.name}")
+    try:
+        target.unlink()
+    except OSError as exc:
+        return DeleteExportResponse(deleted=False, name=payload.name, error=str(exc))
+    return DeleteExportResponse(deleted=True, name=payload.name)
 
 
 @router.get("/transactions", response_model=TransactionsResponse)
