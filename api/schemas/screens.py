@@ -313,6 +313,19 @@ class GenerateExportResponse(BaseModel):
     path: str
 
 
+class SummaryExportRequest(BaseModel):
+    format: str  # csv | excel | html
+
+
+class TrendExportRequest(BaseModel):
+    timeframe: str  # long_term | swing | day
+    format: str  # csv | json | html
+
+
+class RealizedExportRequest(BaseModel):
+    format: str  # csv | excel
+
+
 class PreviewResponse(BaseModel):
     name: str
     lines: list[str] = []

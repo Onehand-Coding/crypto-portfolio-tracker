@@ -12,7 +12,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from api.cache import MetricsCache, cache_path_for
+from api.cache import MetricsCache, analysis_cache_path, cache_path_for
 from api.deps import get_read_context
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
@@ -34,6 +34,7 @@ from api.schemas.screens import (
     OverviewResponse,
     PreviewResponse,
     ProfitTakingSettings,
+    RealizedExportRequest,
     RealizedGainRow,
     RealizedGainSummary,
     RealizedResponse,
@@ -47,12 +48,14 @@ from api.schemas.screens import (
     SnapshotPoint,
     SnapshotRow,
     SnapshotsResponse,
+    SummaryExportRequest,
     SystemHealthResponse,
     TargetAllocationRequest,
     TargetAllocationResponse,
     TransactionRow,
     TransactionsResponse,
     TrendAnalyzerSettings,
+    TrendExportRequest,
 )
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
@@ -177,6 +180,35 @@ def _export_dir(ctx) -> Path:
     )
 
 
+def _new_files_since(export_dir: Path, before: set[str]) -> list[Path]:
+    """Files the export just wrote. The core exporters timestamp their own
+    filenames, so the newcomer is found by diffing, not by guessing names."""
+    return sorted(
+        (p for p in export_dir.iterdir()
+         if p.is_file() and p.name not in before),
+        key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def _report_generator(ctx, export_dir: Path):
+    """Core exporters pointed at the API export dir. Constructing this never
+    touches the network; the tracker is not involved."""
+    from crypto_portfolio_tracker.exporters import (
+        CsvExporter,
+        ExcelExporter,
+        HtmlExporter,
+    )
+    from crypto_portfolio_tracker.report_generator import ReportGenerator
+    config = dict(ctx.config_manager.config or {})
+    config["exports"] = {"path": str(export_dir)}
+    return ReportGenerator(
+        config=config,
+        db_manager=ctx.db_manager,
+        excel_exporter=ExcelExporter(config),
+        html_exporter=HtmlExporter(config),
+        csv_exporter=CsvExporter(config),
+    )
+
+
 @router.get("/reports", response_model=ReportsResponse)
 def reports(ctx=Depends(get_read_context)) -> ReportsResponse:
     export_dir = _export_dir(ctx)
@@ -231,6 +263,96 @@ def generate_export(
             # Excel cannot store timezone-aware datetimes, so any such column is
             # made naive first rather than letting the write 500.
             safe = frame.copy()
+            for col in safe.columns:
+                if isinstance(safe[col].dtype, pd.DatetimeTZDtype):
+                    safe[col] = safe[col].dt.tz_localize(None)
+            safe.to_excel(path, index=False)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
+    return GenerateExportResponse(name=name, path=str(path))
+
+
+@router.post("/reports/summary", response_model=GenerateExportResponse)
+def export_summary(
+    payload: SummaryExportRequest, ctx=Depends(get_read_context)
+) -> GenerateExportResponse:
+    """Portfolio summary via the core exporters (same output as the CLI)."""
+    fmt = payload.format.strip().lower()
+    if fmt not in ("csv", "excel", "html"):
+        raise HTTPException(status_code=422, detail="format must be csv, excel or html.")
+    metrics = MetricsCache(cache_path_for(ctx.config_manager)).read()
+    if not metrics:
+        raise HTTPException(status_code=422, detail="No synced metrics yet -- run a sync first.")
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.name for p in export_dir.iterdir() if p.is_file()}
+    full = dict(metrics)
+    full["holdings_df"] = pd.DataFrame(metrics.get("holdings_df") or [])
+    try:
+        _report_generator(ctx, export_dir).export_portfolio_summary(full, fmt)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
+    fresh = _new_files_since(export_dir, before)
+    if not fresh:
+        raise HTTPException(status_code=500, detail="Exporter reported success but wrote no file.")
+    return GenerateExportResponse(name=fresh[0].name, path=str(fresh[0]))
+
+
+@router.post("/reports/trend", response_model=GenerateExportResponse)
+def export_trend(
+    payload: TrendExportRequest, ctx=Depends(get_read_context)
+) -> GenerateExportResponse:
+    """A cached technical report via the core trend exporter."""
+    fmt = payload.format.strip().lower()
+    if fmt not in ("csv", "json", "html"):
+        raise HTTPException(status_code=422, detail="format must be csv, json or html.")
+    cache = MetricsCache(analysis_cache_path(ctx.config_manager, "technical"))
+    reports = (cache.read() or {}).get("reports") or {}
+    report = reports.get(payload.timeframe)
+    if not isinstance(report, dict) or "coin_analyses" not in report:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No {payload.timeframe} technical report cached -- run the analysis first.")
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    before = {p.name for p in export_dir.iterdir() if p.is_file()}
+    try:
+        _report_generator(ctx, export_dir).export_trend_report(report, payload.timeframe, fmt.upper())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not write export: {exc}")
+    fresh = _new_files_since(export_dir, before)
+    if not fresh:
+        raise HTTPException(status_code=500, detail="Exporter reported success but wrote no file.")
+    return GenerateExportResponse(name=fresh[0].name, path=str(fresh[0]))
+
+
+@router.post("/reports/realized", response_model=GenerateExportResponse)
+def export_realized(
+    payload: RealizedExportRequest, ctx=Depends(get_read_context)
+) -> GenerateExportResponse:
+    """Realized FIFO gains as a file. Same tax_df the /realized screen shows,
+    written with the same tz-naive guard as generate_export."""
+    fmt = payload.format.strip().lower()
+    if fmt not in ("csv", "excel"):
+        raise HTTPException(status_code=422, detail="format must be csv or excel.")
+    transactions = ctx.db_manager.get_all_transactions()
+    if not isinstance(transactions, pd.DataFrame) or transactions.empty:
+        raise HTTPException(status_code=422, detail="No transactions to export.")
+    tax_df = calculate_fifo_realized_gains(transactions)
+    if tax_df.empty:
+        raise HTTPException(status_code=422, detail="No realized gains to export yet.")
+    export_dir = _export_dir(ctx)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"realized_{stamp}.{'csv' if fmt == 'csv' else 'xlsx'}"
+    path = export_dir / name
+    try:
+        if fmt == "csv":
+            tax_df.to_csv(path, index=False)
+        else:
+            safe = tax_df.copy()
             for col in safe.columns:
                 if isinstance(safe[col].dtype, pd.DatetimeTZDtype):
                     safe[col] = safe[col].dt.tz_localize(None)
