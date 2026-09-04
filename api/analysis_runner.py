@@ -11,7 +11,9 @@ already exposes.
 """
 
 import asyncio
+import copy
 import logging
+import re
 from typing import Awaitable, Callable, Optional
 
 from api.cache import MetricsCache, analysis_cache_path
@@ -82,11 +84,82 @@ async def _technical(tracker, params=None) -> dict:
 
 # The core validates neither, and a bad period/frequency silently degrades the
 # run rather than erroring, so the adapter is the place to whitelist them.
+# Freeform "<N>y" periods are the Streamlit custom-period parity path.
 _BACKTEST_PERIODS = {"1y", "2y", "3y", "5y", "max"}
 _BACKTEST_FREQUENCIES = {"weekly", "monthly", "quarterly"}
+_BACKTEST_CUSTOM_PERIOD = re.compile(r"^\d+y$")
+
+# Clamp fallbacks mirror config/default_config.json rebalance_technical, so a
+# custom run that omits a field rebuilds the value the core would read anyway.
+_DEFAULT_MAJORS_DRIFT = 3.0
+_DEFAULT_ALTS_DRIFT = 3.5
+_DEFAULT_MAJORS_SELL = 0.5
+_DEFAULT_MAJORS_BUY = 0.75
+_DEFAULT_ALTS_SELL = 0.5
+_DEFAULT_ALTS_BUY = 1.0
 
 
-def _backtest_config(params) -> dict:
+def _clamp(value, lo, hi, default):
+    """Float within [lo, hi]; garbage becomes the Streamlit default."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return min(hi, max(lo, result))
+
+
+def _live_backtest_defaults(tracker_config) -> dict:
+    """Current configured rebalance_technical values, as clamp fallbacks.
+
+    A plain run (no custom block) must behave byte-identically to the old
+    config path, even if the operator saved non-default thresholds via
+    Streamlit. Missing custom fields therefore fall back to the live config,
+    not the file defaults above.
+    """
+    tracker_config = tracker_config or {}
+    rt = tracker_config.get("rebalance_technical", {}) or {}
+    majors = rt.get("majors", {}) or {}
+    alts = rt.get("alts", {}) or {}
+    rules = rt.get("market_regime_rules", {}) or {}
+
+    def _num(source, key, fallback):
+        try:
+            return float(source.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+
+    return {
+        "majors_drift": _num(majors, "allocation_drift_threshold_pct", _DEFAULT_MAJORS_DRIFT),
+        "alts_drift": _num(alts, "allocation_drift_threshold_pct", _DEFAULT_ALTS_DRIFT),
+        "majors_sell": _num(majors, "sell_percentage_multiplier", _DEFAULT_MAJORS_SELL),
+        "majors_buy": _num(majors, "buy_amount_multiplier", _DEFAULT_MAJORS_BUY),
+        "alts_sell": _num(alts, "sell_percentage_multiplier", _DEFAULT_ALTS_SELL),
+        "alts_buy": _num(alts, "buy_amount_multiplier", _DEFAULT_ALTS_BUY),
+        "suppress_bear": rules.get("suppress_buys_in_bear", True),
+    }
+
+
+def _valid_custom_allocation(value) -> Optional[dict]:
+    """Validated allocation override, or None when it must be ignored.
+
+    Mirrors Streamlit's create_custom_config: the override applies only when
+    the weights sum to 1.0 within tolerance. Non-numeric or out-of-range
+    weights are also rejected rather than passed to the core.
+    """
+    if not isinstance(value, dict):
+        return None
+    try:
+        weights = {str(symbol): float(weight) for symbol, weight in value.items()}
+    except (TypeError, ValueError):
+        return None
+    if any(weight < 0 or weight > 1 for weight in weights.values()):
+        return None
+    if abs(sum(weights.values()) - 1.0) >= 0.001:
+        return None
+    return weights
+
+
+def _backtest_config(params, defaults=None) -> dict:
     params = params or {}
     try:
         capital = float(params.get("initial_capital", 10000.0))
@@ -95,12 +168,34 @@ def _backtest_config(params) -> dict:
     if not capital > 0:
         capital = 10000.0
     period = params.get("period", "2y")
-    if period not in _BACKTEST_PERIODS:
+    if period not in _BACKTEST_PERIODS and not (
+        isinstance(period, str) and _BACKTEST_CUSTOM_PERIOD.match(period)
+    ):
         period = "2y"
     frequency = params.get("frequency", "monthly")
     if frequency not in _BACKTEST_FREQUENCIES:
         frequency = "monthly"
-    return {"initial_capital": capital, "period": period, "frequency": frequency}
+    custom = params.get("custom")
+    if not isinstance(custom, dict):
+        custom = {}
+    base = defaults or {}
+
+    def _custom(key, lo, hi, fallback):
+        return _clamp(custom.get(key), lo, hi, base.get(key, fallback))
+
+    return {
+        "initial_capital": capital,
+        "period": period,
+        "frequency": frequency,
+        "custom_allocation": _valid_custom_allocation(custom.get("allocation")),
+        "majors_drift": _custom("majors_drift", 1.0, 20.0, _DEFAULT_MAJORS_DRIFT),
+        "alts_drift": _custom("alts_drift", 1.0, 20.0, _DEFAULT_ALTS_DRIFT),
+        "majors_sell": _custom("majors_sell", 0.1, 2.0, _DEFAULT_MAJORS_SELL),
+        "majors_buy": _custom("majors_buy", 0.1, 2.0, _DEFAULT_MAJORS_BUY),
+        "alts_sell": _custom("alts_sell", 0.1, 2.0, _DEFAULT_ALTS_SELL),
+        "alts_buy": _custom("alts_buy", 0.1, 2.0, _DEFAULT_ALTS_BUY),
+        "suppress_bear": bool(custom.get("suppress_bear", base.get("suppress_bear", True))),
+    }
 
 
 async def _backtest(tracker, params=None) -> dict:
@@ -115,8 +210,31 @@ async def _backtest(tracker, params=None) -> dict:
     """
     from crypto_portfolio_tracker.rebalancing_backtester import RebalancingBacktester
 
-    config = _backtest_config(params)
-    backtester = RebalancingBacktester(config=tracker.config)
+    config = _backtest_config(params, defaults=_live_backtest_defaults(tracker.config))
+    # Mirrors Streamlit's create_custom_config: the backtester reads its
+    # thresholds, allocation and frequency from the config dict it is built
+    # with. Deepcopy, not .copy(): the tracker is a process-wide singleton and
+    # setdefault below would otherwise mutate the live automation dict.
+    merged = copy.deepcopy(tracker.config)
+    merged["rebalance_technical"] = {
+        "market_regime_rules": {"suppress_buys_in_bear": config["suppress_bear"]},
+        "majors": {
+            "allocation_drift_threshold_pct": config["majors_drift"],
+            "sell_percentage_multiplier": config["majors_sell"],
+            "buy_amount_multiplier": config["majors_buy"],
+        },
+        "alts": {
+            "allocation_drift_threshold_pct": config["alts_drift"],
+            "sell_percentage_multiplier": config["alts_sell"],
+            "buy_amount_multiplier": config["alts_buy"],
+        },
+    }
+    if config["custom_allocation"] is not None:
+        merged["target_allocation"] = config["custom_allocation"]
+    automation = merged.setdefault("automation", {})
+    rebalancing = automation.setdefault("rebalancing", {})
+    rebalancing["frequency"] = config["frequency"]
+    backtester = RebalancingBacktester(config=merged)
     await asyncio.to_thread(
         backtester.run, config["initial_capital"], config["period"], config["frequency"]
     )

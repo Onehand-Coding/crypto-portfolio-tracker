@@ -9,9 +9,28 @@ import { StalenessNote } from '../components/StalenessNote';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatUsd } from '../lib/format';
-import type { BacktestResponse } from '../types';
+import type { BacktestResponse, SystemHealthResponse } from '../types';
 
-const PERIODS = ['1y', '2y', '3y', '5y', 'max'];
+const PERIODS = ['1y', '2y', '3y', '5y', 'max', 'Custom'];
+const CUSTOM_PERIOD_RE = /^\d+y$/;
+// Defaults mirror config/default_config.json rebalance_technical so an
+// untouched advanced section reproduces a plain run.
+const DEFAULT_MAJORS_DRIFT = '3.0';
+const DEFAULT_ALTS_DRIFT = '3.5';
+const DEFAULT_MAJORS_SELL = '0.5';
+const DEFAULT_MAJORS_BUY = '0.75';
+const DEFAULT_ALTS_SELL = '0.5';
+const DEFAULT_ALTS_BUY = '1.0';
+
+/** Backend clamps the same way; clamping here keeps the posted payload honest. */
+function clampNum(raw: string, lo: number, hi: number, fallback: number): number {
+  // Number inputs sanitise unparseable text to '' — like the backend, that
+  // means "no value", not zero (Number('') is 0, which would snap to lo).
+  if (raw.trim() === '') return fallback;
+  const v = Number(raw);
+  if (!Number.isFinite(v)) return fallback;
+  return Math.min(hi, Math.max(lo, v));
+}
 const FREQUENCIES = [
   { id: 'weekly', label: 'Weekly' },
   { id: 'monthly', label: 'Monthly' },
@@ -65,19 +84,108 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function NumField({ label, value, onChange, min, max, step }: {
+  label: string; value: string; onChange: (v: string) => void;
+  min: number; max: number; step: number;
+}) {
+  return (
+    <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+      <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
+                                         letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        {label}
+      </span>
+      <input
+        aria-label={label}
+        type="number"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => onChange(e.target.value)}
+        className="font-mono"
+        style={{
+          background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+          padding: 'var(--space-2) var(--space-3)', width: '120px', fontSize: '14px',
+        }}
+      />
+    </label>
+  );
+}
+
 export function Backtest() {
   const { data, error, reload } = useApi<BacktestResponse>('/api/strategy/backtest');
+  // Same endpoint Allocation.tsx uses for live target weights.
+  const health = useApi<SystemHealthResponse>('/api/system/health');
   usePollWhile(Boolean(data?.is_running), reload);
 
   const [capital, setCapital] = useState('10000');
   const [period, setPeriod] = useState('2y');
   const [frequency, setFrequency] = useState('monthly');
+  const [customPeriod, setCustomPeriod] = useState('6y');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advancedTouched, setAdvancedTouched] = useState(false);
+  const [majorsDrift, setMajorsDrift] = useState(DEFAULT_MAJORS_DRIFT);
+  const [altsDrift, setAltsDrift] = useState(DEFAULT_ALTS_DRIFT);
+  const [majorsSell, setMajorsSell] = useState(DEFAULT_MAJORS_SELL);
+  const [majorsBuy, setMajorsBuy] = useState(DEFAULT_MAJORS_BUY);
+  const [altsSell, setAltsSell] = useState(DEFAULT_ALTS_SELL);
+  const [altsBuy, setAltsBuy] = useState(DEFAULT_ALTS_BUY);
+  const [suppressBear, setSuppressBear] = useState(true);
+  const [weights, setWeights] = useState<Record<string, string> | null>(null);
+
+  // Mark the advanced section dirty: custom is omitted entirely until then,
+  // so an untouched section stays a byte-identical plain run.
+  function touch(setter: (v: string) => void) {
+    return (v: string) => { setAdvancedTouched(true); setter(v); };
+  }
+
+  const customPeriodValid = CUSTOM_PERIOD_RE.test(customPeriod);
+  const effectivePeriod = period === 'Custom' ? customPeriod : period;
+
+  const targets = health.data?.target_allocation ?? null;
+  const shownWeights: Record<string, string> | null = weights
+    ?? (targets
+      ? Object.fromEntries(Object.entries(targets).map(([s, w]) => [s, String(Number((w * 100).toFixed(2)))]))
+      : null);
+  const allocSum = shownWeights
+    ? Object.values(shownWeights).reduce((sum, v) => sum + (Number(v) || 0) / 100, 0)
+    : 1;
+  const allocValid = Math.abs(allocSum - 1) < 0.001;
+
+  function setWeight(symbol: string, v: string) {
+    setAdvancedTouched(true);
+    const base = shownWeights ?? {};
+    setWeights({ ...base, [symbol]: v });
+  }
+
+  const runDisabled = Boolean(data?.is_running)
+    || (period === 'Custom' && !customPeriodValid)
+    || (showAdvanced && shownWeights !== null && !allocValid);
 
   async function run() {
+    const body: Record<string, unknown> = {
+      initial_capital: Number(capital), period: effectivePeriod, frequency,
+    };
+    if (showAdvanced && advancedTouched) {
+      const custom: Record<string, unknown> = {
+        majors_drift: clampNum(majorsDrift, 1, 20, Number(DEFAULT_MAJORS_DRIFT)),
+        alts_drift: clampNum(altsDrift, 1, 20, Number(DEFAULT_ALTS_DRIFT)),
+        majors_sell: clampNum(majorsSell, 0.1, 2, Number(DEFAULT_MAJORS_SELL)),
+        majors_buy: clampNum(majorsBuy, 0.1, 2, Number(DEFAULT_MAJORS_BUY)),
+        alts_sell: clampNum(altsSell, 0.1, 2, Number(DEFAULT_ALTS_SELL)),
+        alts_buy: clampNum(altsBuy, 0.1, 2, Number(DEFAULT_ALTS_BUY)),
+        suppress_bear: suppressBear,
+      };
+      if (shownWeights !== null && allocValid) {
+        custom.allocation = Object.fromEntries(
+          Object.entries(shownWeights).map(([s, v]) => [s, (Number(v) || 0) / 100]),
+        );
+      }
+      body.custom = custom;
+    }
     try {
-      await apiPost('/api/strategy/backtest/run', {
-        initial_capital: Number(capital), period, frequency,
-      });
+      await apiPost('/api/strategy/backtest/run', body);
     } finally {
       reload();
     }
@@ -122,13 +230,35 @@ export function Backtest() {
               />
             </Field>
             <Field label="Period">
-              <div className="flex" style={{ gap: 'var(--space-2)' }}>
+              <div className="flex" style={{ gap: 'var(--space-2)', flexWrap: 'wrap' }}>
                 {PERIODS.map((p) => (
                   <ConfigButton key={p} active={period === p} onClick={() => setPeriod(p)}>
                     {p}
                   </ConfigButton>
                 ))}
               </div>
+              {period === 'Custom' && (
+                <>
+                  <input
+                    aria-label="Custom period"
+                    value={customPeriod}
+                    onChange={(e) => setCustomPeriod(e.target.value)}
+                    placeholder="6y"
+                    className="font-mono"
+                    style={{
+                      background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+                      borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                      padding: 'var(--space-2) var(--space-3)', width: '120px', fontSize: '14px',
+                      marginTop: 'var(--space-2)',
+                    }}
+                  />
+                  {!customPeriodValid && (
+                    <span className="font-ui" style={{ color: 'var(--warning)', fontSize: '12px' }}>
+                      Custom period must look like 6y — a number followed by y.
+                    </span>
+                  )}
+                </>
+              )}
             </Field>
             <Field label="Rebalance frequency">
               <div className="flex" style={{ gap: 'var(--space-2)' }}>
@@ -142,11 +272,17 @@ export function Backtest() {
             </Field>
             <div className="flex items-center" style={{ gap: 'var(--space-4)' }}>
               <StalenessNote staleness={data.staleness} />
-              <Button onClick={run} disabled={data.is_running}>
+              <Button onClick={run} disabled={runDisabled}>
                 {data.is_running ? 'Running…' : 'Run backtest'}
               </Button>
             </div>
           </div>
+          {showAdvanced && shownWeights !== null && !allocValid && (
+            <p className="font-ui" style={{ color: 'var(--warning)', fontSize: '12px',
+                                            marginTop: 'var(--space-2)', marginBottom: 0 }}>
+              Custom allocation weights must sum to 100% (now {(allocSum * 100).toFixed(1)}%).
+            </p>
+          )}
           <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
                                           marginTop: 'var(--space-3)', marginBottom: 0 }}>
             Fetches historical prices for your target assets and simulates the rebalancing
@@ -157,6 +293,62 @@ export function Backtest() {
                                               marginTop: 'var(--space-2)', marginBottom: 0 }}>
               Last run failed: {data.error}
             </p>
+          )}
+        </Panel>
+
+        <Panel title="Advanced parameters">
+          <Button variant="secondary" onClick={() => setShowAdvanced((v) => !v)}>
+            {showAdvanced ? 'Hide advanced parameters' : 'Show advanced parameters'}
+          </Button>
+          {showAdvanced && (
+            <div className="flex flex-col" style={{ gap: 'var(--space-4)', marginTop: 'var(--space-3)' }}>
+              <div className="flex flex-wrap" style={{ gap: 'var(--space-4)' }}>
+                <NumField label="Majors drift threshold (%)" value={majorsDrift}
+                          onChange={touch(setMajorsDrift)} min={1} max={20} step={0.5} />
+                <NumField label="Alts drift threshold (%)" value={altsDrift}
+                          onChange={touch(setAltsDrift)} min={1} max={20} step={0.5} />
+              </div>
+              <div className="flex flex-wrap" style={{ gap: 'var(--space-4)' }}>
+                <NumField label="Majors sell multiplier" value={majorsSell}
+                          onChange={touch(setMajorsSell)} min={0.1} max={2} step={0.1} />
+                <NumField label="Majors buy multiplier" value={majorsBuy}
+                          onChange={touch(setMajorsBuy)} min={0.1} max={2} step={0.1} />
+                <NumField label="Alts sell multiplier" value={altsSell}
+                          onChange={touch(setAltsSell)} min={0.1} max={2} step={0.1} />
+                <NumField label="Alts buy multiplier" value={altsBuy}
+                          onChange={touch(setAltsBuy)} min={0.1} max={2} step={0.1} />
+              </div>
+              <label className="font-ui"
+                     style={{ display: 'flex', alignItems: 'center',
+                              gap: 'var(--space-2)', fontSize: '13px',
+                              color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  aria-label="Suppress buys in bear market"
+                  checked={suppressBear}
+                  onChange={(e) => { setAdvancedTouched(true); setSuppressBear(e.target.checked); }}
+                />
+                Suppress buys in bear market
+              </label>
+              <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+                <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
+                                                   letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  Custom allocation (% per asset)
+                </span>
+                {shownWeights === null ? (
+                  <p className="font-ui text-sm" style={{ color: 'var(--text-secondary)', margin: 0 }}>
+                    {health.error ? 'Target allocation unavailable.' : 'Loading targets…'}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap" style={{ gap: 'var(--space-4)' }}>
+                    {Object.entries(shownWeights).map(([symbol, v]) => (
+                      <NumField key={symbol} label={`${symbol} weight (%)`} value={v}
+                                onChange={(nv) => setWeight(symbol, nv)} min={0} max={100} step={0.1} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </Panel>
 
