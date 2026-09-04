@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
-import { apiPut } from '../lib/api';
-import type { SettingsResponse } from '../types';
+import { apiGet, apiPut } from '../lib/api';
+import type { LogPreviewResponse, SettingsResponse } from '../types';
 
 function Field({ label, hint, children }: {
   label: string; hint?: string; children: React.ReactNode;
@@ -76,11 +76,28 @@ function NumberInput({ value, onChange, width }: {
   );
 }
 
+const FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly'] as const;
+const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const;
+const LOOKBACK_KEYS = [
+  'trades', 'deposits', 'withdrawals', 'p2p_buys',
+  'internal_transfers', 'spot_futures_transfers', 'spot_convert_history',
+  'simple_earn_rewards', 'simple_earn_subscriptions', 'simple_earn_redemptions',
+  'dividend_history', 'staking_history',
+] as const;
+const TIMEFRAMES = ['long_term', 'swing', 'day'] as const;
+
 export function Settings() {
   const { data, error, reload } = useApi<SettingsResponse>('/api/system/settings');
   const [form, setForm] = useState<SettingsResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [previewCount, setPreviewCount] = useState('50');
+  const [preview, setPreview] = useState<LogPreviewResponse | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [transferMessage, setTransferMessage] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => { if (data) setForm(structuredClone(data)); }, [data]);
 
@@ -101,10 +118,55 @@ export function Settings() {
     setForm((f) => f && { ...f, trend_analyzer: { ...f.trend_analyzer, [key]: value } });
   }
 
+  const auto = form.automation;
+  function setAuto<K extends keyof SettingsResponse['automation']>(
+    key: K, value: SettingsResponse['automation'][K],
+  ) {
+    setForm((f) => f && { ...f, automation: { ...f.automation, [key]: value } });
+  }
+
+  const apis = form.apis;
+  function setApis<K extends keyof SettingsResponse['apis']>(
+    key: K, value: SettingsResponse['apis'][K],
+  ) {
+    setForm((f) => f && { ...f, apis: { ...f.apis, [key]: value } });
+  }
+
+  function setLookback(key: string, value: string) {
+    setForm((f) => f && {
+      ...f, history_lookback_days: { ...f.history_lookback_days, [key]: value as unknown as number },
+    });
+  }
+
+  const lg = form.logging;
+  function setLg<K extends keyof SettingsResponse['logging']>(
+    key: K, value: SettingsResponse['logging'][K],
+  ) {
+    setForm((f) => f && { ...f, logging: { ...f.logging, [key]: value } });
+  }
+
+  function setTf(
+    name: keyof SettingsResponse['trend_timeframes'],
+    key: 'sma_short_window' | 'sma_long_window',
+    value: string,
+  ) {
+    setForm((f) => f && {
+      ...f,
+      trend_timeframes: {
+        ...f.trend_timeframes,
+        [name]: { ...f.trend_timeframes[name], [key]: value as unknown as number },
+      },
+    });
+  }
+
   async function save() {
     setSaving(true);
     setMessage(null);
     try {
+      const lookbacks: Record<string, number> = {};
+      for (const key of LOOKBACK_KEYS) {
+        lookbacks[key] = Number(form!.history_lookback_days[key]);
+      }
       const result = await apiPut<SettingsResponse>('/api/system/settings', {
         minimum_trade_usd: Number(form!.minimum_trade_usd),
         testnet_mode: form!.testnet_mode,
@@ -127,6 +189,38 @@ export function Settings() {
           cryptocurrencies: form!.trend_analyzer.cryptocurrencies,
         },
         cleanup_days: Number(form!.cleanup_days),
+        automation: {
+          dca_frequency: form!.automation.dca_frequency,
+          rebalancing_frequency: form!.automation.rebalancing_frequency,
+        },
+        apis: {
+          coingecko_timeout: Number(form!.apis.coingecko_timeout),
+          binance_timeout: Number(form!.apis.binance_timeout),
+          binance_recv_window: Number(form!.apis.binance_recv_window),
+          binance_delay_ms: Number(form!.apis.binance_delay_ms),
+          coingecko_delay_ms: Number(form!.apis.coingecko_delay_ms),
+        },
+        history_lookback_days: lookbacks,
+        logging: {
+          level: form!.logging.level,
+          file_enabled: form!.logging.file_enabled,
+          file_path: form!.logging.file_path,
+          console_enabled: form!.logging.console_enabled,
+        },
+        trend_timeframes: {
+          long_term: {
+            sma_short_window: Number(form!.trend_timeframes.long_term.sma_short_window),
+            sma_long_window: Number(form!.trend_timeframes.long_term.sma_long_window),
+          },
+          swing: {
+            sma_short_window: Number(form!.trend_timeframes.swing.sma_short_window),
+            sma_long_window: Number(form!.trend_timeframes.swing.sma_long_window),
+          },
+          day: {
+            sma_short_window: Number(form!.trend_timeframes.day.sma_short_window),
+            sma_long_window: Number(form!.trend_timeframes.day.sma_long_window),
+          },
+        },
       });
       setForm(structuredClone(result));
       setMessage('Settings saved.');
@@ -135,6 +229,46 @@ export function Settings() {
       setMessage(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function loadPreview() {
+    setPreviewBusy(true);
+    setPreviewMessage(null);
+    try {
+      const n = Math.max(1, Math.min(500, Number(previewCount) || 50));
+      const result = await apiGet<LogPreviewResponse>(`/api/system/logs/preview?lines=${n}`);
+      setPreview(result);
+    } catch (e) {
+      setPreviewMessage(`Preview failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function importConfig() {
+    const file = fileRef.current?.files?.[0];
+    if (!file) { setTransferMessage('Choose a file first.'); return; }
+    setImporting(true);
+    setTransferMessage(null);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const res = await fetch('/api/system/config/import', { method: 'POST', body });
+      if (!res.ok) {
+        const detail = await res.text();
+        setTransferMessage(`Import failed: ${detail || res.statusText}`);
+        return;
+      }
+      const result = (await res.json()) as SettingsResponse;
+      setForm(structuredClone(result));
+      setTransferMessage('Config imported.');
+      if (fileRef.current) fileRef.current.value = '';
+      reload();
+    } catch (e) {
+      setTransferMessage(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -176,6 +310,50 @@ export function Settings() {
             <NumberInput value={String(form.minimum_trade_usd)}
                          onChange={(v) => setForm((f) => f && { ...f, minimum_trade_usd: v as unknown as number })} />
           </Field>
+        </Panel>
+
+        <Panel title="Schedules">
+          <div className="grid grid-cols-3" style={{ gap: 'var(--space-5)' }}>
+            <Field label="DCA frequency">
+              <select value={auto.dca_frequency}
+                      onChange={(e) => setAuto('dca_frequency', e.target.value)}
+                      className="font-mono" style={inputStyle}>
+                {FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </Field>
+            <Field label="Rebalancing frequency">
+              <select value={auto.rebalancing_frequency}
+                      onChange={(e) => setAuto('rebalancing_frequency', e.target.value)}
+                      className="font-mono" style={inputStyle}>
+                {FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </Field>
+          </div>
+        </Panel>
+
+        <Panel title="API">
+          <div className="grid grid-cols-3" style={{ gap: 'var(--space-5)' }}>
+            <Field label="CoinGecko timeout" hint="Seconds.">
+              <NumberInput width={120} value={String(apis.coingecko_timeout)}
+                           onChange={(v) => setApis('coingecko_timeout', v as unknown as number)} />
+            </Field>
+            <Field label="Binance timeout" hint="Seconds.">
+              <NumberInput width={120} value={String(apis.binance_timeout)}
+                           onChange={(v) => setApis('binance_timeout', v as unknown as number)} />
+            </Field>
+            <Field label="Binance recv window" hint="Milliseconds.">
+              <NumberInput width={120} value={String(apis.binance_recv_window)}
+                           onChange={(v) => setApis('binance_recv_window', v as unknown as number)} />
+            </Field>
+            <Field label="Binance delay" hint="Milliseconds between requests.">
+              <NumberInput width={120} value={String(apis.binance_delay_ms)}
+                           onChange={(v) => setApis('binance_delay_ms', v as unknown as number)} />
+            </Field>
+            <Field label="CoinGecko delay" hint="Milliseconds between requests.">
+              <NumberInput width={120} value={String(apis.coingecko_delay_ms)}
+                           onChange={(v) => setApis('coingecko_delay_ms', v as unknown as number)} />
+            </Field>
+          </div>
         </Panel>
 
         <Panel title="Profit taking">
@@ -231,6 +409,89 @@ export function Settings() {
           </div>
         </Panel>
 
+        <Panel title="Lookbacks">
+          <p className="font-ui text-sm"
+             style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-4) 0' }}>
+            History window in days for each transaction source. Minimum 1 day.
+          </p>
+          <div className="grid grid-cols-3" style={{ gap: 'var(--space-5)' }}>
+            {LOOKBACK_KEYS.map((key) => (
+              <Field key={key} label={key}>
+                <NumberInput width={120} value={String(form.history_lookback_days[key])}
+                             onChange={(v) => setLookback(key, v)} />
+              </Field>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Logging">
+          <div className="grid grid-cols-3" style={{ gap: 'var(--space-5)',
+                                                     marginBottom: 'var(--space-4)' }}>
+            <Field label="Level">
+              <select value={lg.level}
+                      onChange={(e) => setLg('level', e.target.value)}
+                      className="font-mono" style={inputStyle}>
+                {LOG_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </Field>
+            <Field label="Log file path" hint="Relative or absolute path.">
+              <input value={lg.file_path}
+                     onChange={(e) => setLg('file_path', e.target.value)}
+                     className="font-mono" style={{ ...inputStyle, width: '100%' }} />
+            </Field>
+          </div>
+          <div className="flex flex-col" style={{ gap: 'var(--space-4)',
+                                                  marginBottom: 'var(--space-4)' }}>
+            <Toggle
+              checked={lg.file_enabled}
+              onChange={(v) => setLg('file_enabled', v)}
+              label="Log to file"
+              hint="Writes to the path above."
+              accent="var(--action)"
+            />
+            <Toggle
+              checked={lg.console_enabled}
+              onChange={(v) => setLg('console_enabled', v)}
+              label="Log to console"
+              hint="Streams log records to the server console."
+              accent="var(--action)"
+            />
+          </div>
+          <div className="flex flex-wrap items-end" style={{ gap: 'var(--space-3)' }}>
+            <Field label="Lines" hint="1–500.">
+              <NumberInput width={120} value={previewCount} onChange={setPreviewCount} />
+            </Field>
+            <Button onClick={loadPreview} disabled={previewBusy}>
+              {previewBusy ? 'Loading…' : 'Preview'}
+            </Button>
+            {previewMessage && (
+              <span className="font-ui" style={{ fontSize: '13px', color: 'var(--negative)' }}>
+                {previewMessage}
+              </span>
+            )}
+          </div>
+          {preview && (
+            <div style={{ marginTop: 'var(--space-3)' }}>
+              <p className="font-mono" style={{ color: 'var(--text-tertiary)',
+                                               fontSize: '11px', margin: '0 0 var(--space-2) 0' }}>
+                {preview.path}
+              </p>
+              <pre className="font-mono" style={{ background: 'var(--surface-0)',
+                    border: '1px solid var(--border)', borderRadius: 'var(--radius-control)',
+                    padding: 'var(--space-3)', fontSize: '12px', color: 'var(--text-secondary)',
+                    maxHeight: '240px', overflowY: 'auto', whiteSpace: 'pre-wrap', margin: 0 }}>
+                {preview.lines.join('\n')}
+              </pre>
+              {preview.truncated && (
+                <p className="font-ui" style={{ color: 'var(--text-tertiary)',
+                                               fontSize: '11px', margin: 'var(--space-2) 0 0 0' }}>
+                  Showing the last {preview.lines.length} of {preview.total_lines} lines — truncated.
+                </p>
+              )}
+            </div>
+          )}
+        </Panel>
+
         <Panel title="Trend analyzer">
           <div className="grid grid-cols-3" style={{ gap: 'var(--space-5)',
                                                      marginBottom: 'var(--space-4)' }}>
@@ -255,12 +516,64 @@ export function Settings() {
           </Field>
         </Panel>
 
+        <Panel title="Trend timeframes">
+          <p className="font-ui text-sm"
+             style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-4) 0' }}>
+            SMA window pairs per timeframe. Short must stay below long (1–200).
+          </p>
+          <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
+            {TIMEFRAMES.map((name) => (
+              <div key={name} className="grid grid-cols-3" style={{ gap: 'var(--space-5)' }}>
+                <Field label={`${name} short window`}>
+                  <NumberInput width={120}
+                               value={String(form.trend_timeframes[name].sma_short_window)}
+                               onChange={(v) => setTf(name, 'sma_short_window', v)} />
+                </Field>
+                <Field label={`${name} long window`}>
+                  <NumberInput width={120}
+                               value={String(form.trend_timeframes[name].sma_long_window)}
+                               onChange={(v) => setTf(name, 'sma_long_window', v)} />
+                </Field>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
         <Panel title="Data retention">
           <Field label="Cleanup days"
                  hint="Age beyond which snapshots are eligible for cleanup. 0 disables it.">
             <NumberInput value={String(form.cleanup_days)}
                          onChange={(v) => setForm((f) => f && { ...f, cleanup_days: v as unknown as number })} />
           </Field>
+        </Panel>
+
+        <Panel title="Config transfer">
+          <p className="font-ui text-sm"
+             style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-3) 0' }}>
+            Export the sanitized config as JSON, or import a previously exported
+            file. Secrets are preserved on import and a backup is written first,
+            so a bad import is reversible.
+          </p>
+          <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)' }}>
+            <a href="/api/system/config/export" download
+               className="font-ui" style={{ color: 'var(--action)', fontSize: '13px' }}>
+              Export config
+            </a>
+            <Field label="Config file">
+              <input ref={fileRef} type="file" accept=".json,application/json"
+                     className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }} />
+            </Field>
+            <Button onClick={importConfig} disabled={importing}>
+              {importing ? 'Importing…' : 'Import'}
+            </Button>
+            {transferMessage && (
+              <span className="font-ui" style={{ fontSize: '13px',
+                       color: transferMessage.startsWith('Import failed')
+                         ? 'var(--negative)' : 'var(--text-secondary)' }}>
+                {transferMessage}
+              </span>
+            )}
+          </div>
         </Panel>
 
         <div className="flex items-center" style={{ gap: 'var(--space-4)' }}>

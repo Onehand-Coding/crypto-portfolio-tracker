@@ -360,6 +360,44 @@ export interface TrendAnalyzerSettings {
   cryptocurrencies: string[];
 }
 
+export interface AutomationSettings {
+  dca_frequency: string;
+  rebalancing_frequency: string;
+}
+
+export interface ApiSettings {
+  coingecko_timeout: number;
+  binance_timeout: number;
+  binance_recv_window: number;
+  binance_delay_ms: number;
+  coingecko_delay_ms: number;
+}
+
+export interface LoggingSettings {
+  level: string;
+  file_enabled: boolean;
+  file_path: string;
+  console_enabled: boolean;
+}
+
+export interface TimeframeWindows {
+  sma_short_window: number;
+  sma_long_window: number;
+}
+
+export interface TrendTimeframes {
+  long_term: TimeframeWindows;
+  swing: TimeframeWindows;
+  day: TimeframeWindows;
+}
+
+export interface LogPreviewResponse {
+  path: string;
+  lines: string[];
+  truncated: boolean;
+  total_lines: number;
+}
+
 export interface SettingsResponse {
   minimum_trade_usd: number;
   testnet_mode: boolean;
@@ -370,6 +408,11 @@ export interface SettingsResponse {
   stablecoin_symbols: string[];
   trend_analyzer: TrendAnalyzerSettings;
   cleanup_days: number;
+  automation: AutomationSettings;
+  apis: ApiSettings;
+  history_lookback_days: Record<string, number>;
+  logging: LoggingSettings;
+  trend_timeframes: TrendTimeframes;
 }
 
 export interface SnapshotRow {
