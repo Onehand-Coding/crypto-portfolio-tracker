@@ -4,9 +4,14 @@ import type { ExecutionStatus } from '../types';
  * The three-cell trading posture strip, ported from the Streamlit dashboard.
  *
  * Two independent switches drive three readouts: whether live trading is armed,
- * which exchange endpoint is in use, and -- the one that matters most -- whether
+ * which exchange endpoint is in use, and - the one that matters most - whether
  * an order placed now is real or simulated. Every execution screen shows this so
  * the posture is never a surprise at the moment of confirming.
+ *
+ * Placement rule (the component cannot enforce it, so it is stated here):
+ * render it FIRST inside the screen's content column, directly under the
+ * ScreenHeader and above every figure. A posture strip below the figures it
+ * qualifies is a safety bug, not a layout choice.
  */
 function Cell({ text, tone }: { text: string; tone: 'negative' | 'warning' | 'positive' | 'info' }) {
   const color = {

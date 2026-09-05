@@ -49,6 +49,19 @@ describe('Wallets fetch failure', () => {
   });
 });
 
+describe('Wallets trading banner position', () => {
+  it('shows the trading posture strip above the balances, not below them', async () => {
+    stubFetch(walletsPayload(1000));
+    render(<Wallets />);
+    const banner = await screen.findByText(/LIVE TRADING/);
+    const balances = screen.getByRole('heading', { name: 'Spot & Earn' });
+    // The posture strip is safety-critical: it must precede the figures,
+    // matching every other execution screen (banner first under the header).
+    expect(banner.compareDocumentPosition(balances)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
 describe('Wallets share of total', () => {
   it('shows each balance as a one-decimal share of the total value', async () => {
     stubFetch(walletsPayload(1000));

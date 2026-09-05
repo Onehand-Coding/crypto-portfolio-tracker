@@ -179,6 +179,10 @@ export function Wallets() {
                     staleness={data.staleness} />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+        {/* Posture strip first, like every other execution screen: the LIVE /
+            SIMULATION state must be seen before any figure, never below it. */}
+        {status.data && <TradingStatusBanner status={status.data} />}
+
         <Panel>
           <KpiBand>
             <BandMetric emphasis label="Total" value={formatUsd(data.total_value_usd)} />
@@ -202,14 +206,11 @@ export function Wallets() {
         </Panel>
 
         {status.data && (
-          <>
-            <TradingStatusBanner status={status.data} />
-            <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-                                           gap: 'var(--space-3)' }}>
-              <TransferWidget status={status.data} />
-              <RedeemWidget status={status.data} />
-            </div>
-          </>
+          <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                                         gap: 'var(--space-3)' }}>
+            <TransferWidget status={status.data} />
+            <RedeemWidget status={status.data} />
+          </div>
         )}
       </div>
     </>
