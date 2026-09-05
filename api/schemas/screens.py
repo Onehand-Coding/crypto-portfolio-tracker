@@ -338,6 +338,8 @@ LOOKBACK_KEYS = ("trades", "deposits", "withdrawals", "p2p_buys",
 class AutomationSettings(BaseModel):
     dca_frequency: str = "monthly"
     rebalancing_frequency: str = "weekly"
+    auto_sync_enabled: bool = False
+    auto_sync_interval_minutes: int = 5
 
 
 class ApiSettings(BaseModel):

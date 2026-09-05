@@ -922,6 +922,7 @@ def _read_settings(config) -> SettingsResponse:
     auto = config.get("automation", {}) or {}
     dca = auto.get("dca", {}) or {}
     rb = auto.get("rebalancing", {}) or {}
+    sy = auto.get("auto_sync", {}) or {}
     apis = config.get("apis", {}) or {}
     cg = apis.get("coingecko", {}) or {}
     bi = apis.get("binance", {}) or {}
@@ -970,6 +971,8 @@ def _read_settings(config) -> SettingsResponse:
         automation=AutomationSettings(
             dca_frequency=str(dca.get("frequency", "monthly") or "monthly"),
             rebalancing_frequency=str(rb.get("frequency", "weekly") or "weekly"),
+            auto_sync_enabled=bool(sy.get("enabled", False)),
+            auto_sync_interval_minutes=int(num(sy.get("interval_minutes"), 5)),
         ),
         apis=ApiSettings(
             coingecko_timeout=num(cg.get("timeout"), 30),
@@ -1082,6 +1085,18 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         if "rebalancing_frequency" in auto:
             auto_cfg.setdefault("rebalancing", {})["frequency"] = (
                 str(auto["rebalancing_frequency"]).strip().lower())
+        if "auto_sync_enabled" in auto:
+            auto_cfg.setdefault("auto_sync", {})["enabled"] = bool(auto["auto_sync_enabled"])
+        if "auto_sync_interval_minutes" in auto:
+            try:
+                minutes = int(auto["auto_sync_interval_minutes"])
+            except (TypeError, ValueError):
+                minutes = 0
+            if not 2 <= minutes <= 1440:
+                raise HTTPException(
+                    status_code=422,
+                    detail="auto_sync_interval_minutes must be between 2 and 1440.")
+            auto_cfg.setdefault("auto_sync", {})["interval_minutes"] = minutes
 
     if payload.apis is not None:
         ap = payload.apis.model_dump(exclude_unset=True)
