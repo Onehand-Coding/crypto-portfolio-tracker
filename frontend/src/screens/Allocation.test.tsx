@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloneElement, isValidElement, type ReactElement } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
-import { plDomain, Allocation } from './Allocation';
+import { plDomain, DUST_THRESHOLD_PCT, groupDust, Allocation } from './Allocation';
 
 // jsdom has no layout, so recharts' ResponsiveContainer (ResizeObserver +
 // measured width) renders a 0x0 box and no chart at all — not even
@@ -136,5 +136,50 @@ describe('Allocation P/L chart', () => {
       .map((t) => Number(t.replace('$', '')));
     expect(ticks.length).toBeGreaterThan(0);
     expect(Math.max(...ticks)).toBeGreaterThan(0);
+  });
+});
+
+describe('groupDust', () => {
+  const slices = [
+    { name: 'BTC', value: 149.47 },
+    { name: 'ETH', value: 24.58 },
+    { name: 'USDT', value: 0.15 },
+    { name: 'SOL', value: 0.03 },
+  ];
+
+  it('groups sub-threshold holdings into one named slice', () => {
+    expect(DUST_THRESHOLD_PCT).toBe(1);
+    const out = groupDust(slices, 175.02);
+    expect(out.map((s) => s.name)).toEqual(['BTC', 'ETH', 'Others (2)']);
+    const others = out.find((s) => s.name === 'Others (2)');
+    expect(others?.value).toBeCloseTo(0.18, 10);
+  });
+
+  it('passes holdings through when nothing is dust', () => {
+    expect(groupDust(
+      [{ name: 'BTC', value: 60 }, { name: 'ETH', value: 40 }], 100))
+      .toEqual([{ name: 'BTC', value: 60 }, { name: 'ETH', value: 40 }]);
+  });
+
+  it('collapses to a single slice when everything is dust', () => {
+    expect(groupDust(
+      [{ name: 'A', value: 0.4 }, { name: 'B', value: 0.3 }], 100))
+      .toEqual([{ name: 'Others (2)', value: 0.7 }]);
+  });
+
+  it('does not divide by a zero total', () => {
+    expect(groupDust([{ name: 'A', value: 0 }], 0))
+      .toEqual([{ name: 'A', value: 0 }]);
+  });
+});
+
+describe('Allocation colour dots', () => {
+  it('shows a dot per drift row matching the ring order', async () => {
+    stubFetch();
+    const { container } = render(<Allocation />);
+    await screen.findByText('Current vs target');
+    // One dot per drift row (BTC, ETH, USDT in the stub health payload).
+    const dots = container.querySelectorAll('[data-testid="drift-dot"]');
+    expect(dots.length).toBe(3);
   });
 });

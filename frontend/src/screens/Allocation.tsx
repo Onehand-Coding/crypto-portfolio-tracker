@@ -29,6 +29,21 @@ export function plDomain(values: number[]): [number, number] {
   return [Math.min(0, lo - pad), Math.max(0, hi + pad)];
 }
 
+// Ring slices below this share of total value merge into one "Others (n)"
+// slice. The drift table still lists every asset: grouping is ring-only.
+export const DUST_THRESHOLD_PCT = 1;
+
+export interface PieSlice { name: string; value: number; }
+
+export function groupDust(slices: PieSlice[], total: number): PieSlice[] {
+  const isDust = (s: PieSlice) => total > 0 && (s.value / total) * 100 < DUST_THRESHOLD_PCT;
+  const dust = slices.filter(isDust);
+  if (dust.length === 0) return slices;
+  const kept = slices.filter((s) => !isDust(s));
+  const sum = dust.reduce((acc, s) => acc + s.value, 0);
+  return [...kept, { name: `Others (${dust.length})`, value: sum }];
+}
+
 export function Allocation() {
   const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
   const health = useApi<SystemHealthResponse>('/api/system/health');
@@ -37,10 +52,12 @@ export function Allocation() {
 
   const pie = useMemo(() => {
     const holdings = cockpit.data?.holdings ?? [];
-    return holdings
+    const total = cockpit.data?.total_value_usd ?? 0;
+    const slices = holdings
       .filter((h) => (h.value_usd ?? 0) > 0)
       .map((h) => ({ name: h.symbol, value: h.value_usd as number }))
       .sort((a, b) => b.value - a.value);
+    return groupDust(slices, total);
   }, [cockpit.data]);
 
   const pl = useMemo(() => {
@@ -66,6 +83,10 @@ export function Allocation() {
     }).sort((a, b) => b.target - a.target);
   }, [cockpit.data, health.data]);
 
+  const colourOf = new Map(
+    pie.map((s, i) => [s.name, SLICE_COLOURS[i % SLICE_COLOURS.length]]),
+  );
+
   if (error) return <ErrorPanel title="Allocation" message={`Failed to load: ${error}`} />;
   if (!cockpit.data || !health.data) {
     return <Panel title="Allocation"><Empty>Loading…</Empty></Panel>;
@@ -90,8 +111,8 @@ export function Allocation() {
                     <Pie data={pie} dataKey="value" nameKey="name" innerRadius={60}
                          outerRadius={110} paddingAngle={1} stroke="var(--surface-1)"
                          strokeWidth={1}>
-                      {pie.map((_, i) => (
-                        <Cell key={i} fill={SLICE_COLOURS[i % SLICE_COLOURS.length]} />
+                      {pie.map((s) => (
+                        <Cell key={s.name} fill={colourOf.get(s.name)} />
                       ))}
                     </Pie>
                     <Tooltip
@@ -125,7 +146,14 @@ export function Allocation() {
                       const delta = d.current - d.target;
                       return (
                         <tr key={d.name}>
-                          <td className="text-left" style={{ fontWeight: 500 }}>{d.name}</td>
+                          <td className="text-left" style={{ fontWeight: 500 }}>
+                          <span data-testid="drift-dot" style={{
+                            display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                            background: colourOf.get(d.name) ?? 'var(--text-tertiary)',
+                            marginRight: 8,
+                          }} />
+                          {d.name}
+                        </td>
                           <td className="text-right">{formatPercentPlain(d.current)}</td>
                           <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
                             {formatPercentPlain(d.target)}
