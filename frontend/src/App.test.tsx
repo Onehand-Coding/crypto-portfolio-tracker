@@ -1,7 +1,19 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+
+function LocationProbe() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  return (
+    <>
+      <output data-testid="location">{location.pathname}</output>
+      <button onClick={() => navigate(-1)}>Back</button>
+    </>
+  );
+}
 
 describe('App', () => {
   afterEach(() => {
@@ -78,22 +90,30 @@ describe('App', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getAllByRole('link', { name: 'Dashboard' }).every((link) => link.getAttribute('href') === '/')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('href')).toBe('/');
     expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
   });
 
-  it('redirects the legacy overview route to Dashboard', async () => {
+  it('replaces the legacy overview route with Dashboard', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 
     render(
-      <MemoryRouter initialEntries={['/overview']}>
+      <MemoryRouter initialEntries={['/prior', '/overview']} initialIndex={1}>
         <App />
+        <LocationProbe />
       </MemoryRouter>,
     );
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeDefined();
+      expect(screen.getByTestId('location').textContent).toBe('/');
     });
     expect(screen.queryByText('Portfolio overview')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/prior');
+    });
   });
 });
