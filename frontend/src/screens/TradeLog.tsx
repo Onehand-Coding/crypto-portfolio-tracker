@@ -3,7 +3,7 @@ import { Panel } from '../components/Panel';
 import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatQty, formatUsd } from '../lib/format';
+import { formatQty, formatUsd, NULL_GLYPH} from '../lib/format';
 import type { GenerateExportResponse, TransactionRow, TransactionsResponse } from '../types';
 
 const BUY_TYPES = new Set(['BUY', 'DEPOSIT', 'TRANSFER_IN', 'EARN_REWARD', 'DIVIDEND']);
@@ -183,7 +183,7 @@ export function TradeLog() {
                   {filtered.map((r, i) => (
                     <tr key={i}>
                       <td className="text-left" style={{ color: 'var(--text-secondary)' }}>
-                        {r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : '—'}
+                        {r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : NULL_GLYPH}
                       </td>
                       <td className="text-left" style={{ fontWeight: 500 }}>{r.symbol}</td>
                       <td className="text-left"><Badge text={r.type} tone={typeTone(r.type)} /></td>
@@ -196,7 +196,7 @@ export function TradeLog() {
                         {formatUsd(r.fee_usd)}
                       </td>
                       <td className="text-left" style={{ color: 'var(--text-tertiary)' }}>
-                        {r.source ?? '—'}
+                        {r.source ?? NULL_GLYPH}
                       </td>
                     </tr>
                   ))}

@@ -3,7 +3,7 @@ import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
-import { formatPercent, formatPercentPlain, formatQty, formatSigned, formatUsd } from '../lib/format';
+import { formatPercent, formatPercentPlain, formatQty, formatSigned, formatUsd, NULL_GLYPH} from '../lib/format';
 import type { AssetDetailResponse } from '../types';
 
 const BUY_TYPES = ['BUY', 'DEPOSIT', 'P2P_BUY', 'EARN_REWARD', 'DIVIDEND', 'TRANSFER_IN'];
@@ -46,7 +46,7 @@ export function AssetDetail() {
             <p className="font-ui text-sm"
                style={{ color: 'var(--warning)', margin: '0 0 var(--space-4) 0' }}>
               Price lookup failed for {data.symbol}. Its value and unrealized P/L are
-              unknown — not zero.
+              unknown - not zero.
             </p>
           )}
           <KpiBand>
@@ -83,7 +83,7 @@ export function AssetDetail() {
                   {data.transactions.map((tx, index) => (
                     <tr key={index}>
                       <td className="text-left" style={{ color: 'var(--text-secondary)' }}>
-                        {tx.timestamp ? tx.timestamp.slice(0, 16) : '—'}
+                        {tx.timestamp ? tx.timestamp.slice(0, 16) : NULL_GLYPH}
                       </td>
                       <td className="text-left">
                         <Badge
@@ -97,7 +97,7 @@ export function AssetDetail() {
                       </td>
                       <td className="text-right">{formatUsd(tx.value_usd)}</td>
                       <td className="text-left" style={{ color: 'var(--text-tertiary)' }}>
-                        {tx.source ?? '—'}
+                        {tx.source ?? NULL_GLYPH}
                       </td>
                     </tr>
                   ))}

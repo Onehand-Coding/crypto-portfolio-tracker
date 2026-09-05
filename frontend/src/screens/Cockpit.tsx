@@ -189,7 +189,7 @@ export function Cockpit() {
     return (
       <Panel title="Cockpit">
         <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
-          No data yet — run a sync to populate the portfolio.
+          No data yet - run a sync to populate the portfolio.
         </p>
       </Panel>
     );

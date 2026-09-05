@@ -1498,7 +1498,7 @@ async def run_completion_plan(tracker: CryptoPortfolioTracker):
         if s not in unknown and values[s] > 0 and float(w) > 0
     }
     if not anchors:
-        print("No holdings to anchor from yet — nothing held, nothing to finish.")
+        print("No holdings to anchor from yet - nothing held, nothing to finish.")
         return
 
     total = max(anchors.values())

@@ -2,13 +2,13 @@ import { Link } from 'react-router-dom';
 import { Panel } from '../components/Panel';
 import { Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
-import { formatPercentPlain, formatUsd } from '../lib/format';
+import { formatPercentPlain, formatUsd, NULL_GLYPH} from '../lib/format';
 import type { CockpitResponse, SystemHealthResponse, TechnicalResponse } from '../types';
 
 /**
  * Your configured universe with its current prices and trend context.
  *
- * The core has no market-discovery feed — no screener, no movers endpoint — so
+ * The core has no market-discovery feed - no screener, no movers endpoint - so
  * this deliberately does not pretend to be one. It shows the assets you have
  * chosen to care about, which is what the rest of the app acts on.
  */
@@ -97,7 +97,7 @@ export function Market() {
                           {holding ? formatUsd(holding.value_usd) : 'not held'}
                         </td>
                         <td className="text-right">
-                          {indicator?.rsi == null ? '—' : indicator.rsi.toFixed(1)}
+                          {indicator?.rsi == null ? NULL_GLYPH : indicator.rsi.toFixed(1)}
                         </td>
                         <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
                           {formatUsd(indicator?.support ?? null)}

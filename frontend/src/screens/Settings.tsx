@@ -490,7 +490,7 @@ export function Settings() {
               {preview.truncated && (
                 <p className="font-ui" style={{ color: 'var(--text-tertiary)',
                                                fontSize: '11px', margin: 'var(--space-2) 0 0 0' }}>
-                  Showing the last {preview.lines.length} of {preview.total_lines} lines — truncated.
+                  Showing the last {preview.lines.length} of {preview.total_lines} lines - truncated.
                 </p>
               )}
             </div>

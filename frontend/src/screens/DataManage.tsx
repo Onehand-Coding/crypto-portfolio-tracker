@@ -3,7 +3,7 @@ import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatSigned, formatUsd } from '../lib/format';
+import { formatSigned, formatUsd, NULL_GLYPH} from '../lib/format';
 import type {
   CleanupResponse, CleanupStatsResponse, ImportResponse, SnapshotDeleteResponse,
   SnapshotRow, SnapshotsResponse,
@@ -190,7 +190,7 @@ function SnapshotsPanel() {
                 return (
                   <tr key={key}>
                     <td className="text-left" style={{ color: 'var(--text-secondary)' }}>
-                      {row.timestamp ? row.timestamp.slice(0, 19).replace('T', ' ') : '—'}
+                      {row.timestamp ? row.timestamp.slice(0, 19).replace('T', ' ') : NULL_GLYPH}
                     </td>
                     <td className="text-right">{formatUsd(row.total_value_usd)}</td>
                     <td className="text-right"

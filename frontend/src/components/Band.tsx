@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 /**
  * Horizontal KPI band: figures inline, not stacked cards. Sits inside a Panel.
  *
- * This is the control-room density the cockpit established — the total anchored
- * left with its supporting figures beside it, everything above the fold —
+ * This is the control-room density the cockpit established - the total anchored
+ * left with its supporting figures beside it, everything above the fold -
  * rather than a row of tall cards that pushes the table below it off-screen.
  */
 export function KpiBand({ children }: { children: ReactNode }) {

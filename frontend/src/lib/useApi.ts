@@ -27,7 +27,7 @@ export function useApi<T>(path: string, deps: unknown[] = []) {
   return { data, error, reload };
 }
 
-/** Poll while a condition holds — used to follow a running analysis. */
+/** Poll while a condition holds - used to follow a running analysis. */
 export function usePollWhile(active: boolean, reload: () => void, intervalMs = 2000) {
   useEffect(() => {
     if (!active) return;

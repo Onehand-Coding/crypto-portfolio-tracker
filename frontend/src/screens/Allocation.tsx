@@ -8,7 +8,7 @@ import { useApi } from '../lib/useApi';
 import { formatPercentPlain, formatSigned, formatUsd } from '../lib/format';
 import type { CockpitResponse, SystemHealthResponse } from '../types';
 
-// A restrained categorical palette — the accent plus muted supporting hues,
+// A restrained categorical palette - the accent plus muted supporting hues,
 // not a rainbow. Slices beyond this wrap around.
 const SLICE_COLOURS = [
   'var(--action)', '#6d8bd0', '#4fa9a0', '#c9a15a', '#a97fc4',

@@ -25,7 +25,7 @@ export function Overview() {
         <ScreenHeader title="Portfolio overview" subtitle="Value and cost basis over time" />
         <Panel>
           <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
-            No snapshots recorded yet. Snapshots are written by a sync — run one to
+            No snapshots recorded yet. Snapshots are written by a sync - run one to
             start building history.
           </p>
         </Panel>

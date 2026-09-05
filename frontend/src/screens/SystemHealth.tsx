@@ -3,6 +3,7 @@ import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
 import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { NULL_GLYPH } from '../lib/format';
 import { apiPost, apiPut } from '../lib/api';
 import { formatPercentPlain, formatUsd } from '../lib/format';
 import type {
@@ -38,23 +39,23 @@ interface ConnectionsResponse {
 }
 
 function formatPct1(value: number | null): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  if (value === null || value === undefined || Number.isNaN(value)) return NULL_GLYPH;
   return `${value.toFixed(1)}%`;
 }
 
-/** Host figures behind GET /system/resources. Nulls render as em dashes. */
+/** Host figures behind GET /system/resources. Nulls render as N/A. */
 function ResourcesPanel() {
   const { data } = useApi<ResourcesResponse>('/api/system/resources');
   return (
     <Panel title="Resources">
       {!data ? <Empty>Loading…</Empty> : (
         <KpiBand>
-          <BandMetric label="App version" value={data.app_version || '—'} />
-          <BandMetric label="Python" value={data.python_version || '—'} />
+          <BandMetric label="App version" value={data.app_version || NULL_GLYPH} />
+          <BandMetric label="Python" value={data.python_version || NULL_GLYPH} />
           <BandMetric label="CPU" value={formatPct1(data.cpu_percent)} />
           <BandMetric label="RAM" value={formatPct1(data.ram_percent)} />
           <BandMetric label="RAM used"
-                      value={data.ram_used_gb === null ? '—' : `${data.ram_used_gb.toFixed(1)} GB`} />
+                      value={data.ram_used_gb === null ? NULL_GLYPH : `${data.ram_used_gb.toFixed(1)} GB`} />
           <BandMetric label="Disk" value={formatPct1(data.disk_percent)} />
         </KpiBand>
       )}
@@ -404,7 +405,7 @@ export function SystemHealth() {
                style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
             <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
               {backupMsg ?? 'Create an on-demand copy of the database. This only reads the '
-                + 'live file — it never modifies it.'}
+                + 'live file - it never modifies it.'}
             </span>
             <Button variant="secondary" onClick={createBackup} disabled={backingUp}>
               {backingUp ? 'Creating…' : 'Create backup'}

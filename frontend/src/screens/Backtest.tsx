@@ -24,7 +24,7 @@ const DEFAULT_ALTS_BUY = '1.0';
 
 /** Backend clamps the same way; clamping here keeps the posted payload honest. */
 function clampNum(raw: string, lo: number, hi: number, fallback: number): number {
-  // Number inputs sanitise unparseable text to '' — like the backend, that
+  // Number inputs sanitise unparseable text to '' - like the backend, that
   // means "no value", not zero (Number('') is 0, which would snap to lo).
   if (raw.trim() === '') return fallback;
   const v = Number(raw);
@@ -277,7 +277,7 @@ export function Backtest() {
                   />
                   {!customPeriodValid && (
                     <span className="font-ui" style={{ color: 'var(--warning)', fontSize: '12px' }}>
-                      Custom period must look like 6y — a number followed by y.
+                      Custom period must look like 6y - a number followed by y.
                     </span>
                   )}
                 </>
@@ -404,7 +404,7 @@ export function Backtest() {
         {!data.has_data ? (
           <Panel title="Result">
             <Empty>
-              No backtest has been run yet. Configure it above and run one — it fetches
+              No backtest has been run yet. Configure it above and run one - it fetches
               several years of price history and takes longer than the other analyses.
             </Empty>
           </Panel>

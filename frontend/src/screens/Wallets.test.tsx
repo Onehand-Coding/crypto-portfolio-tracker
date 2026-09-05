@@ -58,18 +58,18 @@ describe('Wallets share of total', () => {
     });
   });
 
-  it('renders an em dash, never 0.0%, for an unpriced balance', async () => {
+  it('renders N/A, never 0.0%, for an unpriced balance', async () => {
     stubFetch(walletsPayload(1000));
     render(<Wallets />);
     await screen.findByText('25.0%');
-    // The ETH row has a null value: its share cell must be an em dash.
+    // The ETH row has a null value: its share cell must be N/A.
     const ethRow = screen.getByText('ETH').closest('tr');
     expect(ethRow).not.toBeNull();
-    expect(ethRow?.textContent).toContain('—');
+    expect(ethRow?.textContent).toContain('N/A');
     expect(ethRow?.textContent).not.toContain('0.0%');
   });
 
-  it('renders em dashes when there is no total to share against', async () => {
+  it('renders N/A glyphs when there is no total to share against', async () => {
     stubFetch(walletsPayload(0));
     render(<Wallets />);
     await screen.findByText('BTC');

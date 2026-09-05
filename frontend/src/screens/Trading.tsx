@@ -5,7 +5,7 @@ import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Sc
 import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
+import { formatPercentPlain, formatQty, formatUsd, NULL_GLYPH } from '../lib/format';
 import type {
   CockpitResponse, ExecutionStatus, SystemHealthResponse, TradeExecuteResponse,
 } from '../types';
@@ -79,7 +79,7 @@ export function Trading() {
   return (
     <>
       <ScreenHeader title="Trading"
-                    subtitle="Review an order, then execute it — live or simulated per your settings" />
+                    subtitle="Review an order, then execute it - live or simulated per your settings" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <TradingStatusBanner status={status.data ?? null} />
@@ -189,7 +189,7 @@ export function Trading() {
             <p className="font-ui text-sm"
                style={{ color: 'var(--warning)', marginTop: 'var(--space-3)', marginBottom: 0 }}>
               Est. {formatUsd(estUsd)} is below the {formatUsd(health.data.minimum_trade_usd)} minimum
-              trade size — the exchange may reject it.
+              trade size - the exchange may reject it.
             </p>
           )}
         </Panel>
@@ -201,14 +201,14 @@ export function Trading() {
                 emphasis
                 label="Allocation after"
                 value={afterTotal && afterValue !== null
-                  ? formatPercentPlain((afterValue / afterTotal) * 100) : '—'}
+                  ? formatPercentPlain((afterValue / afterTotal) * 100) : NULL_GLYPH}
                 sub={health.data.target_allocation[symbol] !== undefined
                   ? `target ${formatPercentPlain(health.data.target_allocation[symbol] * 100)}`
                   : 'not a core asset'}
               />
                 <BandMetric label={isQuote ? 'Est. quantity' : 'Est. value'}
                           value={isQuote
-                            ? (price ? formatQty(raw / price) : '—')
+                            ? (price ? formatQty(raw / price) : NULL_GLYPH)
                             : formatUsd(estUsd)}
                           sub={price
                             ? (isQuote ? `at ${formatUsd(price)}` : `${formatQty(raw)} ${symbol}`)
@@ -219,14 +219,14 @@ export function Trading() {
             {side === 'SELL' && isQuote && raw > currentValue && (
               <p className="font-ui text-sm"
                  style={{ color: 'var(--negative)', marginTop: 'var(--space-4)', marginBottom: 0 }}>
-                You hold {formatUsd(currentValue)} of {symbol} — this sell is larger than
+                You hold {formatUsd(currentValue)} of {symbol} - this sell is larger than
                 the position.
               </p>
             )}
             {side === 'SELL' && !isQuote && raw > (holding?.total_quantity ?? 0) && (
               <p className="font-ui text-sm"
                  style={{ color: 'var(--negative)', marginTop: 'var(--space-4)', marginBottom: 0 }}>
-                You hold {formatQty(holding?.total_quantity ?? 0)} {symbol} — this sell is
+                You hold {formatQty(holding?.total_quantity ?? 0)} {symbol} - this sell is
                 larger than the position.
               </p>
             )}

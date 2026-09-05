@@ -26,7 +26,7 @@ export function EnvBanner({ environment }: { environment: Environment | null }) 
         }}
       >
         <span className="font-bold tracking-wider">ENVIRONMENT UNKNOWN</span>
-        <span>cannot reach API — do not trust displayed figures</span>
+        <span>cannot reach API - do not trust displayed figures</span>
       </div>
     );
   }

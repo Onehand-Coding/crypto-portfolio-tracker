@@ -17,8 +17,8 @@ describe('formatUsd', () => {
     expect(formatUsd(1234.5)).toBe('$1,234.50');
   });
 
-  it('renders null as an em dash rather than zero', () => {
-    expect(formatUsd(null)).toBe('—');
+  it('renders null as N/A rather than zero', () => {
+    expect(formatUsd(null)).toBe('N/A');
   });
 });
 
@@ -54,9 +54,9 @@ describe('missing values never render as zero', () => {
     ['formatSigned', formatSigned],
     ['formatPercent', formatPercent],
     ['formatQty', formatQty],
-  ])('%s renders null, undefined and NaN as an em dash', (_name, fn) => {
-    expect(fn(null)).toBe('—');
-    expect(fn(undefined)).toBe('—');
-    expect(fn(NaN)).toBe('—');
+  ])('%s renders null, undefined and NaN as N/A', (_name, fn) => {
+    expect(fn(null)).toBe('N/A');
+    expect(fn(undefined)).toBe('N/A');
+    expect(fn(NaN)).toBe('N/A');
   });
 });

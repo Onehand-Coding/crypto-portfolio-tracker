@@ -74,17 +74,17 @@ export function HoldingsTable({ holdings }: { holdings: Holding[] }) {
               <td className="text-right" style={{ color: 'var(--warning)' }}>
                 price unavailable
               </td>
-              <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
-              <td className="text-right" style={{ color: 'var(--warning)' }}>—</td>
+              <td className="text-right" style={{ color: 'var(--warning)' }}>-</td>
+              <td className="text-right" style={{ color: 'var(--warning)' }}>-</td>
             </tr>
           ))}
           {dust.length > 0 && (
             <tr style={{ color: 'var(--text-tertiary)' }}>
               <td className="text-left">{dust.length} dust positions</td>
-              <td className="text-right">—</td>
-              <td className="text-right">—</td>
+              <td className="text-right">-</td>
+              <td className="text-right">-</td>
               <td className="text-right">{formatUsd(dustValue)}</td>
-              <td className="text-right">—</td>
+              <td className="text-right">-</td>
             </tr>
           )}
         </tbody>

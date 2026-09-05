@@ -4,7 +4,7 @@ import { BandMetric, KpiBand } from '../components/Band';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatQty, formatSigned, formatUsd } from '../lib/format';
+import { formatQty, formatSigned, formatUsd, NULL_GLYPH} from '../lib/format';
 import type { GenerateExportResponse, RealizedResponse } from '../types';
 
 /** Realized P/L in USD, coloured by direction. Zero and unknown are distinct. */
@@ -48,8 +48,8 @@ export function Realized() {
       <ScreenHeader
         title="Realized P/L"
         subtitle={eventCount > 0
-          ? `Net gain locked in across ${eventCount} disposal${eventCount === 1 ? '' : 's'} — FIFO priced`
-          : 'FIFO realized gains — the closed, taxable half of the accounting'}
+          ? `Net gain locked in across ${eventCount} disposal${eventCount === 1 ? '' : 's'} - FIFO priced`
+          : 'FIFO realized gains - the closed, taxable half of the accounting'}
         staleness={data.staleness}
       />
 
@@ -67,7 +67,7 @@ export function Realized() {
               $1k+ proceeds figure under a small net P/L does not mislead. */}
           <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
                                           marginTop: 'var(--space-3)', marginBottom: 0 }}>
-            Every sell, convert, or Earn move counts as a disposal — dust included — so
+            Every sell, convert, or Earn move counts as a disposal - dust included - so
             gross proceeds run large. The net P/L above is the figure that matters;
             the breakdown below shows where the gross came from. Distinct from the
             unrealized P/L on open positions shown in the cockpit.
@@ -108,13 +108,13 @@ export function Realized() {
         ) : data.rows.length === 0 ? (
           <Panel title="Realized gains">
             <Empty>
-              No taxable events yet — nothing has been sold or withdrawn, so no gain has
+              No taxable events yet - nothing has been sold or withdrawn, so no gain has
               been realized.
             </Empty>
           </Panel>
         ) : (
           <>
-            <Panel title="By kind — where the gross came from">
+            <Panel title="By kind - where the gross came from">
               <div className="table-scroll">
                 <table className="data">
                   <thead>
@@ -195,10 +195,10 @@ export function Realized() {
                     {data.rows.map((r, i) => (
                       <tr key={i}>
                         <td className="text-left" style={{ color: 'var(--text-secondary)' }}>
-                          {r.date ? r.date.slice(0, 16).replace('T', ' ') : '—'}
+                          {r.date ? r.date.slice(0, 16).replace('T', ' ') : NULL_GLYPH}
                         </td>
                         <td className="text-right" style={{ color: 'var(--text-tertiary)' }}>
-                          {r.year ?? '—'}
+                          {r.year ?? NULL_GLYPH}
                         </td>
                         <td className="text-left" style={{ fontWeight: 500 }}>{r.symbol}</td>
                         <td className="text-left" style={{ color: 'var(--text-tertiary)' }}>

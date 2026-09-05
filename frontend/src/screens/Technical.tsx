@@ -8,7 +8,7 @@ import { AnalysisBar, Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../
 import { StalenessNote } from '../components/StalenessNote';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatUsd } from '../lib/format';
+import { formatUsd, NULL_GLYPH } from '../lib/format';
 import type { IndicatorRow, IndicatorsResponse, TechnicalResponse } from '../types';
 
 const TIMEFRAME_LABEL: Record<string, string> = {
@@ -47,7 +47,7 @@ function IndicatorTable({ rows }: { rows: IndicatorRow[] }) {
               <td className="text-left" style={{ fontWeight: 500 }}>{row.symbol}</td>
               <td className="text-right">{formatUsd(row.price)}</td>
               <td className="text-right">
-                {row.rsi === null ? '—'
+                {row.rsi === null ? NULL_GLYPH
                   : <Badge text={row.rsi.toFixed(1)} tone={rsiTone(row.rsi)} />}
               </td>
               <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
@@ -81,7 +81,7 @@ const INDICATOR_TIMEFRAMES = ['long_term', 'swing', 'day'];
 
 /**
  * The history endpoint only accepts bare uppercase tickers (^[A-Z0-9]{2,10}$),
- * while technical symbols may carry a quote suffix (e.g. BTC-USD) — so strip
+ * while technical symbols may carry a quote suffix (e.g. BTC-USD) - so strip
  * anything from the first dash on before sending. Picker options still show
  * the raw symbol, exactly as the table above renders it.
  */
@@ -184,7 +184,7 @@ function IndicatorViewer({ symbols }: { symbols: string[] }) {
 
           {data && !data.has_data ? (
             <Empty>
-              No indicator history for {symbol} ({label}) yet. Run the viewer above —
+              No indicator history for {symbol} ({label}) yet. Run the viewer above -
               fetching price history needs network access to the price feed.
             </Empty>
           ) : data && points.length > 0 ? (
@@ -245,7 +245,7 @@ function IndicatorViewer({ symbols }: { symbols: string[] }) {
                     contentStyle={TOOLTIP_STYLE}
                     labelStyle={{ color: 'var(--text-secondary)' }}
                     labelFormatter={(t) => String(t).slice(0, 10)}
-                    formatter={(v) => (typeof v === 'number' ? v.toFixed(1) : '—')}
+                    formatter={(v) => (typeof v === 'number' ? v.toFixed(1) : NULL_GLYPH)}
                   />
                   <Legend />
                   <Line type="monotone" dataKey="rsi" name="RSI" stroke="var(--action)"
@@ -353,7 +353,7 @@ export function Technical() {
 
         {symbols.length === 0 ? (
           <Panel title="Per-coin indicator history">
-            <Empty>No coins in the technical payload yet — run the analysis above first.</Empty>
+            <Empty>No coins in the technical payload yet - run the analysis above first.</Empty>
           </Panel>
         ) : (
           <IndicatorViewer key={symbols.join(',')} symbols={symbols} />

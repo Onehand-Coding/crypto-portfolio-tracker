@@ -84,7 +84,7 @@ export function Dca() {
             <p className="font-ui text-sm"
                style={{ color: 'var(--text-secondary)', marginTop: 'var(--space-4)' }}>
               Balances are unknown until you run the check above. The preview below works
-              without them — it allocates against your configured target weights.
+              without them - it allocates against your configured target weights.
             </p>
           )}
         </Panel>
@@ -194,7 +194,7 @@ export function Dca() {
 
           <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
                                           marginTop: 'var(--space-3)', marginBottom: 0 }}>
-            {STRATEGIES.find((s) => s.id === strategy)?.hint} This is a preview only —
+            {STRATEGIES.find((s) => s.id === strategy)?.hint} This is a preview only -
             it never places an order.
           </p>
         </Panel>
@@ -206,7 +206,7 @@ export function Dca() {
         )}
 
         {preview && (
-          <Panel title={`Allocation preview — ${formatUsd(preview.amount_usd)}`}>
+          <Panel title={`Allocation preview - ${formatUsd(preview.amount_usd)}`}>
             {!preview.valid ? (
               <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
                 {preview.message}
@@ -267,7 +267,7 @@ export function Dca() {
                     checked={isChecked(a.symbol)}
                     onChange={() => toggle(a.symbol)}
                   />
-                  {a.symbol} — {formatUsd(a.amount_usd)}
+                  {a.symbol} - {formatUsd(a.amount_usd)}
                 </label>
               ))}
               {checked.length === 0 && (

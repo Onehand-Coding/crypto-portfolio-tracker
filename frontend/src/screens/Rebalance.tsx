@@ -5,7 +5,7 @@ import { ExecutePanel } from '../components/ExecutePanel';
 import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatPercent, formatPercentPlain, formatQty, formatUsd } from '../lib/format';
+import { formatPercent, formatPercentPlain, formatQty, formatUsd, NULL_GLYPH} from '../lib/format';
 import type {
   ExecutionStatus, RebalanceResponse, RebalanceSuggestion, TradeExecuteResponse,
 } from '../types';
@@ -23,7 +23,7 @@ function DriftBar({ suggestion }: { suggestion: RebalanceSuggestion }) {
   const current = suggestion.current_allocation_pct;
   const target = suggestion.target_allocation_pct;
   if (current === null || target === null) {
-    return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+    return <span style={{ color: 'var(--text-tertiary)' }}>-</span>;
   }
   const scale = Math.max(current, target, 1) * 1.25;
   return (
@@ -76,7 +76,7 @@ export function Rebalance() {
             </Empty>
           ) : data.suggestions.length === 0 ? (
             <Empty>
-              The last run produced no suggestions — every core asset is within its
+              The last run produced no suggestions - every core asset is within its
               drift threshold.
             </Empty>
           ) : (
@@ -99,7 +99,7 @@ export function Rebalance() {
                     <tr key={s.symbol}>
                       <td className="text-left" style={{ fontWeight: 500 }}>{s.symbol}</td>
                       <td className="text-left">
-                        {s.action ? <Badge text={s.action} tone={actionTone(s.action)} /> : '—'}
+                        {s.action ? <Badge text={s.action} tone={actionTone(s.action)} /> : NULL_GLYPH}
                       </td>
                       <td className="text-left"><DriftBar suggestion={s} /></td>
                       <td className="text-right">{formatPercentPlain(s.current_allocation_pct)}</td>
@@ -160,7 +160,7 @@ export function Rebalance() {
           return (
             <ExecutePanel
               title={`${live ? 'Execute' : 'Simulate'} rebalance`}
-              description={`This ${live ? 'places' : 'simulates'} ${checked.length} market order${checked.length === 1 ? '' : 's'} — the selected suggestion${checked.length === 1 ? '' : 's'} above — on the Binance ${net}${live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+              description={`This ${live ? 'places' : 'simulates'} ${checked.length} market order${checked.length === 1 ? '' : 's'} - the selected suggestion${checked.length === 1 ? '' : 's'} above - on the Binance ${net}${live ? '' : ' (live trading is off, so no orders are sent)'}.`}
               disabled={checked.length === 0}
               execute={async () => {
                 const res = await apiPost<TradeExecuteResponse>(

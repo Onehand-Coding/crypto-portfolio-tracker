@@ -137,7 +137,7 @@ async def _indicators(tracker, params=None) -> dict:
         _write_indicators_cache(tracker.config_manager, summary)
         return summary
 
-    # _calculate_indicators is underscore-private; used here deliberately —
+    # _calculate_indicators is underscore-private; used here deliberately -
     # it is the exact computation the viewer plots, and duplicating the
     # Study assembly would fork the indicator logic.
     frame = analyzer._calculate_indicators(data.copy(), settings)

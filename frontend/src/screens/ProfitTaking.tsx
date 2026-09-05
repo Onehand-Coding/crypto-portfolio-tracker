@@ -6,7 +6,7 @@ import { ExecutePanel } from '../components/ExecutePanel';
 import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatPercent, formatSigned, formatUsd } from '../lib/format';
+import { formatPercent, formatSigned, formatUsd, NULL_GLYPH} from '../lib/format';
 import type { DcaResponse, ExecutionStatus, ProfitResponse, TradeExecuteResponse } from '../types';
 
 function scoreTone(score: number | null) {
@@ -93,7 +93,7 @@ export function ProfitTaking() {
                       <td className="text-right">
                         <Badge
                           text={o.opportunity_score === null
-                            ? '—' : o.opportunity_score.toFixed(0)}
+                            ? NULL_GLYPH : o.opportunity_score.toFixed(0)}
                           tone={scoreTone(o.opportunity_score)}
                         />
                       </td>
@@ -139,7 +139,7 @@ export function ProfitTaking() {
         {status.data && data.has_data && data.opportunities.length > 0 && (
           <ExecutePanel
             title={`${status.data.is_live ? 'Execute' : 'Simulate'} profit-taking`}
-            description={`This ${status.data.is_live ? 'trims' : 'simulates trimming'} ${checked.length} scoring position${checked.length === 1 ? '' : 's'} — the selected position${checked.length === 1 ? '' : 's'} above, selling the configured share of each gain — as market sells on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
+            description={`This ${status.data.is_live ? 'trims' : 'simulates trimming'} ${checked.length} scoring position${checked.length === 1 ? '' : 's'} - the selected position${checked.length === 1 ? '' : 's'} above, selling the configured share of each gain - as market sells on the Binance ${status.data.testnet ? 'testnet' : 'mainnet'}${status.data.is_live ? '' : ' (live trading is off, so no orders are sent)'}.`}
             disabled={checked.length === 0}
             execute={async () => {
               const res = await apiPost<TradeExecuteResponse>(

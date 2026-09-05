@@ -67,7 +67,7 @@ describe('SystemHealth fetch failure', () => {
 });
 
 describe('SystemHealth resources', () => {
-  it('renders the six host figures with an em dash for the null one', async () => {
+  it('renders the six host figures with N/A for the null one', async () => {
     stubFetch();
     render(<SystemHealth />);
     await waitFor(() => {
@@ -77,10 +77,10 @@ describe('SystemHealth resources', () => {
     expect(screen.getByText('12.3%')).toBeDefined();
     expect(screen.getByText('4.5 GB')).toBeDefined();
     expect(screen.getByText('60.0%')).toBeDefined();
-    // ram_percent is null: the RAM figure must be an em dash.
+    // ram_percent is null: the RAM figure must be N/A.
     const panel = screen.getByText('Resources').closest('section');
     expect(panel).not.toBeNull();
-    expect(panel?.textContent).toContain('—');
+    expect(panel?.textContent).toContain('N/A');
   });
 });
 
@@ -96,7 +96,7 @@ describe('SystemHealth connection test', () => {
       expect(screen.getByText('BINANCE OK')).toBeDefined();
     });
     expect(screen.getByText('COINGECKO FAILED')).toBeDefined();
-    // Null BTC price renders as an em dash, never $0.00.
+    // Null BTC price renders as N/A, never $0.00.
     expect(screen.getByText(/BTC/)).toBeDefined();
     const post = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/system/connections'));
     expect(post).toBeDefined();

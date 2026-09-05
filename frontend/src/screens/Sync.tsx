@@ -46,11 +46,11 @@ function lineText(event: SyncEvent): string {
     const errors = event.error_count ?? 0;
     const warnings = event.warning_count ?? 0;
     if (errors > 0) {
-      return `${event.message} — but ${errors} error${errors === 1 ? '' : 's'} occurred. `
+      return `${event.message} - but ${errors} error${errors === 1 ? '' : 's'} occurred. `
            + 'Some data may be missing or mispriced.';
     }
     if (warnings > 0) {
-      return `${event.message} — ${warnings} warning${warnings === 1 ? '' : 's'} logged.`;
+      return `${event.message} - ${warnings} warning${warnings === 1 ? '' : 's'} logged.`;
     }
   }
   return event.message;

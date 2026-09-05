@@ -142,7 +142,7 @@ def render_dca_page(dashboard):
                     plan_values[asset] = 0.0
                     continue
                 raw_value = asset_row["value_usd"].iloc[0]
-                # NaN is truthy: unknown must render as em dash, never $0.00.
+                # NaN is truthy: unknown must render as N/A, never $0.00.
                 if raw_value is None or pd.isna(raw_value):
                     plan_unknown.append(asset)
                     plan_values[asset] = 0.0
@@ -155,7 +155,7 @@ def render_dca_page(dashboard):
                 if s not in plan_unknown and plan_values[s] > 0 and float(w) > 0
             }
             if not plan_anchors:
-                st.info("No holdings to anchor from yet — nothing held, nothing to finish.")
+                st.info("No holdings to anchor from yet - nothing held, nothing to finish.")
             else:
                 plan_total = max(plan_anchors.values())
                 plan_winner = max(plan_anchors, key=lambda s: plan_anchors[s])
@@ -173,7 +173,7 @@ def render_dca_page(dashboard):
                             "Asset": asset,
                             "Target %": f"{float(weight) * 100:.2f}%",
                             "Target Value": f"${goal:,.2f}",
-                            "Current Value": ("—" if asset in plan_unknown
+                            "Current Value": ("-" if asset in plan_unknown
                                               else f"${plan_values[asset]:,.2f}"),
                             "Still to Buy": f"${need:,.2f}",
                         }

@@ -6,7 +6,7 @@ import { ExecutePanel } from '../components/ExecutePanel';
 import { TradingStatusBanner } from '../components/TradingStatusBanner';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
-import { formatQty, formatUsd } from '../lib/format';
+import { formatQty, formatUsd, NULL_GLYPH } from '../lib/format';
 import type {
   ExecutionStatus, TradeExecuteResponse, WalletBalance, WalletsResponse,
 } from '../types';
@@ -36,7 +36,7 @@ function TransferWidget({ status }: { status: ExecutionStatus }) {
       title={status.is_live ? 'Transfer' : 'Transfer (simulated)'}
       disabled={!valid}
       description={valid
-        ? `This ${status.is_live ? 'moves' : 'simulates moving'} ${amt} ${asset.toUpperCase()} from ${from} to ${to} on the Binance ${net}${status.is_live ? '' : ' (live trading is off — nothing is sent)'}.`
+        ? `This ${status.is_live ? 'moves' : 'simulates moving'} ${amt} ${asset.toUpperCase()} from ${from} to ${to} on the Binance ${net}${status.is_live ? '' : ' (live trading is off - nothing is sent)'}.`
         : 'Choose a positive amount and two different wallets.'}
       execute={() => apiPost<TradeExecuteResponse>('/api/execute/transfer', {
         confirm: true, asset: asset.toUpperCase(), amount: amt,
@@ -85,7 +85,7 @@ function RedeemWidget({ status }: { status: ExecutionStatus }) {
       title={status.is_live ? 'Redeem from Earn' : 'Redeem from Earn (simulated)'}
       disabled={!valid}
       description={valid
-        ? `This ${status.is_live ? 'redeems' : 'simulates redeeming'} ${amt} ${asset.toUpperCase()} from Simple Earn back to Spot on the Binance ${net}${status.is_live ? '' : ' (live trading is off — nothing is sent)'}.`
+        ? `This ${status.is_live ? 'redeems' : 'simulates redeeming'} ${amt} ${asset.toUpperCase()} from Simple Earn back to Spot on the Binance ${net}${status.is_live ? '' : ' (live trading is off - nothing is sent)'}.`
         : 'Choose a positive amount.'}
       execute={() => apiPost<TradeExecuteResponse>('/api/execute/redeem', {
         confirm: true, asset: asset.toUpperCase(), amount: amt,
@@ -108,10 +108,10 @@ function RedeemWidget({ status }: { status: ExecutionStatus }) {
 }
 
 /** Each wallet's share of total value, one decimal. No total (or an
-    unpriced balance) renders an em dash, never a confident 0.0%. */
+    unpriced balance) renders N/A, never a confident 0.0%. */
 function shareOf(value: number | null, total: number | null): string {
   if (value === null || value === undefined || total === null
-      || total === undefined || !(total > 0)) return '—';
+      || total === undefined || !(total > 0)) return NULL_GLYPH;
   return `${((value / total) * 100).toFixed(1)}%`;
 }
 
@@ -139,7 +139,7 @@ function BalanceTable({ rows, total, emptyText }: {
               </td>
               <td className="text-right"
                   style={{ color: row.value_usd === null ? 'var(--warning)' : undefined }}>
-                {/* An unpriced balance shows an em dash, never $0.00. */}
+                {/* An unpriced balance shows N/A, never $0.00. */}
                 {formatUsd(row.value_usd)}
               </td>
               <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
@@ -166,7 +166,7 @@ export function Wallets() {
         <ScreenHeader title="Wallets" subtitle="Spot & Earn, Futures, Funding" />
         <Panel>
           <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
-            No data yet — run a sync to populate wallet balances.
+            No data yet - run a sync to populate wallet balances.
           </p>
         </Panel>
       </>

@@ -143,7 +143,7 @@ export function AnalysisBar({
           {state.error && (
             <p className="font-mono" style={{ color: 'var(--negative)', fontSize: '12px', margin: 0 }}>
               Last run failed: {state.error}
-              {state.has_data && ' — the figures below are from the previous run.'}
+              {state.has_data && ' - the figures below are from the previous run.'}
             </p>
           )}
         </div>
