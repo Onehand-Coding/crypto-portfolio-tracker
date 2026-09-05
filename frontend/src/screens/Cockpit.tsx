@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, CartesianGrid, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { BandMetric } from '../components/Band';
 import { HoldingsTable } from '../components/HoldingsTable';
@@ -120,6 +120,10 @@ export function Cockpit() {
       }));
   }, [overview.data, range]);
 
+  const historyChange = series.length >= 2
+    ? series.at(-1)!.value - series[0].value
+    : null;
+
   // Current vs target allocation, computed here rather than fetched: both
   // halves are already on screen, and a network call for arithmetic would
   // break the rule that reads never touch the wire.
@@ -182,12 +186,12 @@ export function Cockpit() {
   }, [data, drift]);
 
   if (cockpit.error) {
-    return <ErrorPanel title="Cockpit" message={`Failed to load cockpit data: ${cockpit.error}`} />;
+    return <ErrorPanel title="Dashboard" message={`Failed to load dashboard data: ${cockpit.error}`} />;
   }
-  if (!data) return <Panel title="Cockpit"><Empty>Loading…</Empty></Panel>;
+  if (!data) return <Panel title="Dashboard"><Empty>Loading…</Empty></Panel>;
   if (!data.has_data) {
     return (
-      <Panel title="Cockpit">
+      <Panel title="Dashboard">
         <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
           No data yet - run a sync to populate the portfolio.
         </p>
@@ -267,9 +271,16 @@ export function Cockpit() {
                 </button>
               ))}
             </div>
-          </div>
+            </div>
 
-          {series.length < 2 ? (
+            {historyChange !== null && (
+              <p className="font-mono" style={{ color: 'var(--text-secondary)', fontSize: '11px',
+                                                 margin: '0 0 var(--space-3)' }}>
+                Change since first snapshot: {formatSigned(historyChange)} from {new Date(series[0].t).toISOString().slice(0, 10)}
+              </p>
+            )}
+
+            {series.length < 2 ? (
             // A failed history fetch must say so. Falling through to "Loading…"
             // leaves a permanent spinner that looks like slow data rather than
             // a broken endpoint -- which is exactly how a 404 here hid once.
@@ -318,10 +329,16 @@ export function Cockpit() {
                                     fontSize: '12px', fontFamily: 'JetBrains Mono, monospace' }}
                     labelStyle={{ color: 'var(--text-tertiary)' }}
                     labelFormatter={(t) => new Date(t as number).toLocaleDateString()}
-                    formatter={(v) => [formatUsd(typeof v === 'number' ? v : null), 'Value']}
+                    formatter={(v, name) => [
+                      formatUsd(typeof v === 'number' ? v : null),
+                      name === 'FIFO cost basis at snapshot' ? name : 'Value',
+                    ]}
                   />
                   <Area type="monotone" dataKey="value" stroke="var(--action)" strokeWidth={1.5}
-                        fill="url(#cockpitFill)" dot={false} />
+                         fill="url(#cockpitFill)" dot={false} />
+                  <Line type="monotone" dataKey="basis" name="FIFO cost basis at snapshot"
+                        stroke="var(--text-secondary)" strokeWidth={1.5} strokeDasharray="4 4"
+                        dot={false} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>

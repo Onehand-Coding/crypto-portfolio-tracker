@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Cockpit } from './Cockpit';
-import type { CockpitResponse } from '../types';
+import type { CockpitResponse, OverviewResponse, SystemHealthResponse } from '../types';
 
 /** The alert cards link to the screens that resolve them, so the cockpit
  *  requires router context. */
@@ -59,6 +59,40 @@ function mockFetch(payload: CockpitResponse) {
   }));
 }
 
+const HEALTH: SystemHealthResponse = {
+  environment_label: 'TESTNET',
+  is_testnet: true,
+  database_path: 'data/testnet_portfolio.db',
+  database_exists: true,
+  database_size_bytes: 1,
+  transaction_count: 1,
+  asset_count: 1,
+  snapshot_count: 2,
+  target_allocation: {},
+  live_trading_enabled: false,
+  minimum_trade_usd: 10,
+  backups: [],
+  metrics_cache_age_seconds: 120,
+  binance_configured: true,
+};
+
+function mockDashboardFetch(overview: OverviewResponse | Error) {
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === '/api/portfolio/cockpit') {
+      return Promise.resolve({ ok: true, json: async () => POPULATED });
+    }
+    if (url === '/api/overview') {
+      if (overview instanceof Error) return Promise.reject(overview);
+      return Promise.resolve({ ok: true, json: async () => overview });
+    }
+    if (url === '/api/system/health') {
+      return Promise.resolve({ ok: true, json: async () => HEALTH });
+    }
+    return Promise.reject(new Error(`Unexpected request: ${url}`));
+  }));
+}
+
 beforeEach(() => vi.unstubAllGlobals());
 
 describe('Cockpit unpriced holdings', () => {
@@ -104,6 +138,44 @@ describe('Cockpit populated state', () => {
 
     await waitFor(() => expect(screen.getByText(/76\.41 net in/)).toBeDefined());
     expect(screen.getByText(/199\.75 cost basis/)).toBeDefined();
+  });
+});
+
+describe('Cockpit performance history', () => {
+  it('shows the selected-range change from overview snapshots', async () => {
+    const now = Date.now();
+    mockDashboardFetch({
+      has_data: true,
+      staleness: POPULATED.staleness,
+      points: [
+        {
+          timestamp: new Date(now - 7 * 86_400_000).toISOString(),
+          total_value_usd: 100,
+          total_cost_basis_usd: 80,
+          unrealized_pl_usd: 20,
+          unrealized_pl_percent: 25,
+        },
+        {
+          timestamp: new Date(now - 86_400_000).toISOString(),
+          total_value_usd: 125,
+          total_cost_basis_usd: 90,
+          unrealized_pl_usd: 35,
+          unrealized_pl_percent: 38.89,
+        },
+      ],
+    });
+    renderCockpit();
+
+    expect(await screen.findByText(/Change since first snapshot: \+\$25\.00 from/)).toBeDefined();
+    expect(screen.queryByText(/Latest value/i)).toBeNull();
+    expect(screen.queryByText(/Current cost basis/i)).toBeNull();
+  });
+
+  it('shows an explicit error when overview history cannot load', async () => {
+    mockDashboardFetch(new TypeError('History unavailable'));
+    renderCockpit();
+
+    expect(await screen.findByText(/Could not load history: Cannot reach the API server/)).toBeDefined();
   });
 });
 
