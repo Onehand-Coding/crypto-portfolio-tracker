@@ -224,6 +224,17 @@ would render testnet figures under a LIVE banner.
 **Status:** Current
 **Reason:** No CORS in either arrangement, and one command to run.
 
+### React is the primary UI; Streamlit is frozen but working
+**Choice:** All new work lands in the React UI first. Streamlit stays runnable
+and gets breakage fixes only - no new features, no removal. Supersedes the
+earlier undecided direction (see §11).
+**Status:** Current
+**Reason:** The React UI reached read-screen parity with Streamlit and exceeds
+it in places (per-coin indicator history, disposal-kind breakdown). Splitting
+new work across two front ends doubles every change for a single operator.
+**Alternatives Considered:** Keeping both under active development; deleting
+Streamlit outright (rejected - irreversible, and it remains a useful fallback).
+
 ---
 
 ## 9. Domain Knowledge
@@ -285,12 +296,10 @@ would render testnet figures under a LIVE banner.
 
 ## 11. Implementation Notes
 
-- **Two front ends coexist.** Streamlit (`uv run track-portfolio-web`) remains the
-  full-featured UI — rebalance, DCA, trade, backtest, database tools. The React UI
-  (`uv run python run_ui.py`) covers the daily-use read screens plus sync.
-  **Whether React eventually replaces Streamlit is undecided** — do not assume
-  either direction, and do not remove Streamlit features on the assumption that
-  React supersedes them.
+- **Two front ends coexist, React leads.** Streamlit (`uv run track-portfolio-web`)
+  remains runnable as a fallback but is frozen: breakage fixes only, no new
+  features, no removal (decision in §8). The React UI (`uv run python run_ui.py`)
+  is where all new work lands.
 - `total_value_usd` comes from the core and omits holdings whose price could not
   be fetched. The API surfaces `unpriced_count` so the UI can caveat the figure;
   correcting the total itself would require changing the core.
