@@ -17,6 +17,13 @@ REPO_ROOT = Path(__file__).parents[2]
 def _seed(mock_read_context, tmp_path):
     config = json.loads((REPO_ROOT / "config" / "default_config.json").read_text())
     config["exports"] = {"path": str(tmp_path)}
+    # default_config.json is gitignored local runtime state, not shipped
+    # content: a live Settings PUT (e.g. enabling auto-sync) persists into it.
+    # Strip the auto_sync group so these tests pin the shipped dca/rebalancing
+    # defaults plus the schema fallbacks, immune to whoever last saved settings.
+    # The pre-auto-sync-config path this creates is itself valuable: it proves
+    # an old config without the group still reads the schema defaults.
+    config.setdefault("automation", {}).pop("auto_sync", None)
     mock_read_context.config_manager.config = config
     mock_read_context.config_manager.main_api_keys = {"api_key": "SECRET"}
     return mock_read_context.config_manager
