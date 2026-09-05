@@ -15,6 +15,19 @@ const SLICE_COLOURS = [
   '#c07a7a', '#7aa9c0', '#9ab060', '#b0709a', '#6fb0a0',
 ];
 
+/** Y-axis domain for the P/L chart that always contains the data and zero.
+    Recharts' auto domain demonstrably clipped a -$34.50 bar at -$24, so the
+    domain is owned here and unit-tested with real magnitudes. */
+export function plDomain(values: number[]): [number, number] {
+  if (values.length === 0) return [0, 1];
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo;
+  if (span === 0) return [Math.min(0, lo - 1), Math.max(0, hi + 1)];
+  const pad = span * 0.05;
+  return [Math.min(0, lo - pad), Math.max(0, hi + pad)];
+}
+
 export function Allocation() {
   const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
   const health = useApi<SystemHealthResponse>('/api/system/health');
