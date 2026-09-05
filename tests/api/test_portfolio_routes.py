@@ -37,9 +37,8 @@ def test_cockpit_reports_both_bases_distinctly(mock_read_context, tmp_path, monk
         }]),
     })
 
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame([
-        {"symbol": "BTC", "timestamp": "2026-01-01", "type": "BUY",
-         "quantity": 1.0, "price_usd": 199.75, "fee_usd": 0.0},
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame([
+        {"symbol": "BTC", "quantity": 1.0, "average_cost_basis": 199.75},
     ])
 
     body = _client().get("/api/portfolio/cockpit").json()
@@ -62,9 +61,8 @@ def test_cockpit_pl_math_matches_the_real_portfolio(mock_read_context, tmp_path,
         "total_invested_capital": 76.41,
         "holdings_df": pd.DataFrame(),
     })
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame([
-        {"symbol": "BTC", "timestamp": "2026-01-01", "type": "BUY",
-         "quantity": 1.0, "price_usd": 199.75, "fee_usd": 0.0},
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame([
+        {"symbol": "BTC", "quantity": 1.0, "average_cost_basis": 199.75},
     ])
 
     body = _client().get("/api/portfolio/cockpit").json()
@@ -85,7 +83,7 @@ def test_cockpit_marks_data_stale_past_threshold(mock_read_context, tmp_path, mo
     stale["_cached_at"] = time.time() - 7200
     cache_file.write_text(__import__("json").dumps(stale))
 
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
     assert body["staleness"]["is_stale"] is True
@@ -130,7 +128,7 @@ def test_cockpit_reports_a_failed_price_lookup_as_unknown_not_zero(
          "value_usd": 0.0, "unrealized_pl_usd": -72.37,
          "unrealized_pl_percent": -100.0},
     ])
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
     btc = body["holdings"][0]
@@ -155,7 +153,7 @@ def test_cockpit_treats_a_null_price_the_same_as_zero(
         {"symbol": "BTC", "total_quantity": 0.5, "current_price": None,
          "value_usd": None},
     ])
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
     assert body["holdings"][0]["price_unavailable"] is True
@@ -168,7 +166,7 @@ def test_cockpit_does_not_flag_a_priced_holding(mock_read_context, tmp_path, mon
         {"symbol": "BTC", "total_quantity": 0.0007386, "current_price": 76589.0,
          "value_usd": 56.57, "unrealized_pl_usd": -15.81},
     ])
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
 
@@ -185,7 +183,7 @@ def test_cockpit_does_not_flag_an_empty_position(mock_read_context, tmp_path, mo
     _write_holdings(cache_file, [
         {"symbol": "DUST", "total_quantity": 0.0, "current_price": 0.0, "value_usd": 0.0},
     ])
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
 
@@ -208,7 +206,7 @@ def test_cockpit_reports_undefined_percentage_when_basis_is_zero(
         "total_invested_capital": 0.0,
         "holdings_df": pd.DataFrame(),
     })
-    mock_read_context.db_manager.get_all_transactions.return_value = pd.DataFrame()
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
 
     body = _client().get("/api/portfolio/cockpit").json()
 

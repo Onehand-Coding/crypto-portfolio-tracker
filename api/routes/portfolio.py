@@ -94,7 +94,7 @@ def cockpit(ctx=Depends(get_read_context)) -> CockpitResponse:
 
     total_value = float(cached.get("total_value_usd") or 0.0)
     net_invested_basis = float(cached.get("total_invested_capital") or 0.0)
-    fifo_basis = portfolio_fifo_cost_basis(ctx.db_manager.get_all_transactions())
+    fifo_basis = portfolio_fifo_cost_basis(ctx.db_manager.get_holdings())
 
     holdings = [_holding(row) for row in (cached.get("holdings_df") or [])]
 
