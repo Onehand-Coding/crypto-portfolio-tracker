@@ -151,20 +151,24 @@ export function Allocation() {
           ) : (
             <div style={{ width: '100%', height: 300 }}>
               <ResponsiveContainer>
-                <BarChart data={pl} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                <BarChart data={pl} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                   <XAxis dataKey="name" tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
-                         stroke="var(--border)" />
+                         stroke="var(--border)" interval={0} angle={-35} textAnchor="end"
+                         height={56} />
                   <YAxis tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
                          stroke="var(--border)" width={64}
+                         domain={plDomain(pl.map((d) => d.value))}
                          tickFormatter={(v) => `$${Number(v).toFixed(0)}`} />
                   <Tooltip
                     cursor={{ fill: 'var(--surface-2)' }}
                     contentStyle={{ background: 'var(--surface-2)',
                                     border: '1px solid var(--border-strong)',
                                     borderRadius: 'var(--radius-control)', fontSize: '12px' }}
+                    labelStyle={{ color: 'var(--text-primary)' }}
+                    itemStyle={{ color: 'var(--text-secondary)' }}
                     formatter={(v) => [formatSigned(typeof v === 'number' ? v : null), 'Unrealized']}
                   />
-                  <Bar dataKey="value" radius={[2, 2, 0, 0]}>
+                  <Bar dataKey="value" radius={[2, 2, 0, 0]} minPointSize={3}>
                     {pl.map((d, i) => (
                       <Cell key={i} fill={d.value >= 0 ? 'var(--positive)' : 'var(--negative)'} />
                     ))}
