@@ -89,3 +89,5 @@ data/api_cache/
 
 # Runtime artifact written by start.sh
 .crypto_tracker.pids
+
+.superpowers/
