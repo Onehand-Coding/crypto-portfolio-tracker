@@ -1,6 +1,28 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const lineSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('recharts', () => {
+  const Passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
+  const Empty = () => null;
+  return {
+    Area: Empty,
+    AreaChart: Passthrough,
+    CartesianGrid: Empty,
+    Line: (props: unknown) => {
+      lineSpy(props);
+      return null;
+    },
+    ResponsiveContainer: Passthrough,
+    Tooltip: Empty,
+    XAxis: Empty,
+    YAxis: Empty,
+  };
+});
+
 import { Cockpit } from './Cockpit';
 import type { CockpitResponse, OverviewResponse, SystemHealthResponse } from '../types';
 
@@ -76,13 +98,14 @@ const HEALTH: SystemHealthResponse = {
   binance_configured: true,
 };
 
-function mockDashboardFetch(overview: OverviewResponse | Error) {
+function mockDashboardFetch(overview?: OverviewResponse | Error) {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     if (url === '/api/portfolio/cockpit') {
       return Promise.resolve({ ok: true, json: async () => POPULATED });
     }
     if (url === '/api/overview') {
+      if (overview === undefined) return new Promise<never>(() => {});
       if (overview instanceof Error) return Promise.reject(overview);
       return Promise.resolve({ ok: true, json: async () => overview });
     }
@@ -94,6 +117,7 @@ function mockDashboardFetch(overview: OverviewResponse | Error) {
 }
 
 beforeEach(() => vi.unstubAllGlobals());
+afterEach(() => vi.useRealTimers());
 
 describe('Cockpit unpriced holdings', () => {
   it('caveats the total when a holding could not be priced', async () => {
@@ -169,6 +193,78 @@ describe('Cockpit performance history', () => {
     expect(await screen.findByText(/Change since first snapshot: \+\$25\.00 from/)).toBeDefined();
     expect(screen.queryByText(/Latest value/i)).toBeNull();
     expect(screen.queryByText(/Current cost basis/i)).toBeNull();
+  });
+
+  it('recomputes the signed change from snapshots in the selected range', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+    mockDashboardFetch({
+      has_data: true,
+      staleness: POPULATED.staleness,
+      points: [
+        { timestamp: '2025-01-01T00:00:00Z', total_value_usd: 50, total_cost_basis_usd: 40,
+          unrealized_pl_usd: 10, unrealized_pl_percent: 25 },
+        { timestamp: '2025-12-20T00:00:00Z', total_value_usd: 80, total_cost_basis_usd: 60,
+          unrealized_pl_usd: 20, unrealized_pl_percent: 33.33 },
+        { timestamp: '2026-02-20T00:00:00Z', total_value_usd: 120, total_cost_basis_usd: 90,
+          unrealized_pl_usd: 30, unrealized_pl_percent: 33.33 },
+        { timestamp: '2026-03-10T00:00:00Z', total_value_usd: 150, total_cost_basis_usd: 100,
+          unrealized_pl_usd: 50, unrealized_pl_percent: 50 },
+      ],
+    });
+    renderCockpit();
+
+    await act(async () => {});
+    expect(screen.getByText(/Change since first snapshot: \+\$70\.00 from 2025-12-20/)).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: '1M' }));
+
+    expect(screen.getByText((_, element) =>
+      element?.textContent === 'Change since first snapshot: +$30.00 from 2026-02-20',
+    )).toBeDefined();
+  });
+
+  it('keeps history loading explicit before the overview request resolves', async () => {
+    mockDashboardFetch();
+    renderCockpit();
+
+    expect(await screen.findByText('Loading history…')).toBeDefined();
+  });
+
+  it('keeps fewer than two snapshots in the selected range explicit', async () => {
+    mockDashboardFetch({
+      has_data: true,
+      staleness: POPULATED.staleness,
+      points: [
+        { timestamp: '2026-03-10T00:00:00Z', total_value_usd: 150, total_cost_basis_usd: 100,
+          unrealized_pl_usd: 50, unrealized_pl_percent: 50 },
+      ],
+    });
+    renderCockpit();
+
+    expect(await screen.findByText('Not enough snapshots in this range to draw a line.')).toBeDefined();
+  });
+
+  it('configures the FIFO cost basis line with its tooltip name and dashed series props', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+    lineSpy.mockClear();
+    mockDashboardFetch({
+      has_data: true,
+      staleness: POPULATED.staleness,
+      points: [
+        { timestamp: '2026-03-01T00:00:00Z', total_value_usd: 100, total_cost_basis_usd: 80,
+          unrealized_pl_usd: 20, unrealized_pl_percent: 25 },
+        { timestamp: '2026-03-10T00:00:00Z', total_value_usd: 125, total_cost_basis_usd: 90,
+          unrealized_pl_usd: 35, unrealized_pl_percent: 38.89 },
+      ],
+    });
+    renderCockpit();
+
+    await act(async () => {});
+    expect(lineSpy).toHaveBeenCalled();
+    expect(lineSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      dataKey: 'basis', name: 'FIFO cost basis at snapshot', strokeDasharray: '4 4',
+    });
   });
 
   it('shows an explicit error when overview history cannot load', async () => {
