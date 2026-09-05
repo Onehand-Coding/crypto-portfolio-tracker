@@ -98,11 +98,11 @@ const HEALTH: SystemHealthResponse = {
   binance_configured: true,
 };
 
-function mockDashboardFetch(overview?: OverviewResponse | Error) {
+function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPULATED) {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     if (url === '/api/portfolio/cockpit') {
-      return Promise.resolve({ ok: true, json: async () => POPULATED });
+      return Promise.resolve({ ok: true, json: async () => cockpit });
     }
     if (url === '/api/overview') {
       if (overview === undefined) return new Promise<never>(() => {});
@@ -166,6 +166,26 @@ describe('Cockpit populated state', () => {
 });
 
 describe('Cockpit performance history', () => {
+  it('retains history when current cache data is absent', async () => {
+    const now = Date.now();
+    lineSpy.mockClear();
+    mockDashboardFetch({
+      has_data: true,
+      staleness: POPULATED.staleness,
+      points: [
+        { timestamp: new Date(now - 7 * 86_400_000).toISOString(), total_value_usd: 100, total_cost_basis_usd: 80,
+          unrealized_pl_usd: 20, unrealized_pl_percent: 25 },
+        { timestamp: new Date(now - 86_400_000).toISOString(), total_value_usd: 125, total_cost_basis_usd: 90,
+          unrealized_pl_usd: 35, unrealized_pl_percent: 38.89 },
+      ],
+    }, EMPTY);
+    renderCockpit();
+
+    expect(await screen.findByText(/no data yet/i)).toBeDefined();
+    expect(await screen.findByText(/Change since first snapshot: \+\$25\.00 from/)).toBeDefined();
+    expect(lineSpy).toHaveBeenCalled();
+  });
+
   it('shows the selected-range change from overview snapshots', async () => {
     const now = Date.now();
     mockDashboardFetch({

@@ -98,14 +98,9 @@ function AlertCard({ alert }: { alert: Alert }) {
   );
 }
 
-export function Cockpit() {
-  const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
+function PerformancePanel() {
   const overview = useApi<OverviewResponse>('/api/overview');
-  const health = useApi<SystemHealthResponse>('/api/system/health');
   const [range, setRange] = useState('3m');
-
-  const data = cockpit.data;
-
   const series = useMemo(() => {
     const points = overview.data?.points ?? [];
     const days = RANGES.find((r) => r.id === range)?.days ?? Infinity;
@@ -119,10 +114,84 @@ export function Cockpit() {
         basis: p.total_cost_basis_usd,
       }));
   }, [overview.data, range]);
-
   const historyChange = series.length >= 2
     ? series.at(-1)!.value - series[0].value
     : null;
+
+  return (
+    <section className="flex flex-col"
+             style={{ background: 'var(--surface-1)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-panel)', padding: 'var(--space-4)' }}>
+      <div className="flex shrink-0 items-center justify-between" style={{ marginBottom: 'var(--space-3)' }}>
+        <h2 className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px', fontWeight: 500,
+                                         letterSpacing: '0.08em', textTransform: 'uppercase', margin: 0 }}>
+          Performance
+        </h2>
+        <div className="flex" style={{ gap: '2px' }}>
+          {RANGES.map((r) => (
+            <button key={r.id} onClick={() => setRange(r.id)} className="font-mono transition-colors"
+                    style={{ background: range === r.id ? 'var(--surface-2)' : 'transparent',
+                             color: range === r.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                             border: '1px solid transparent', borderRadius: 'var(--radius-control)',
+                             padding: '2px var(--space-2)', fontSize: '10px', cursor: 'pointer' }}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {historyChange !== null && (
+        <p className="font-mono" style={{ color: 'var(--text-secondary)', fontSize: '11px', margin: '0 0 var(--space-3)' }}>
+          Change since first snapshot: {formatSigned(historyChange)} from {new Date(series[0].t).toISOString().slice(0, 10)}
+        </p>
+      )}
+
+      {series.length < 2 ? (
+        <div className="flex flex-1 items-center" style={{ minHeight: '208px' }}>
+          {overview.error ? (
+            <p className="font-mono" style={{ color: 'var(--negative)', fontSize: '12px' }}>
+              Could not load history: {overview.error}
+            </p>
+          ) : (
+            <Empty>{overview.data ? 'Not enough snapshots in this range to draw a line.' : 'Loading history…'}</Empty>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1" style={{ minHeight: '208px' }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+              <defs><linearGradient id="cockpitFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--action)" stopOpacity={0.28} />
+                <stop offset="100%" stopColor="var(--action)" stopOpacity={0} />
+              </linearGradient></defs>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
+              <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']}
+                     tickFormatter={(t) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                     stroke="var(--text-tertiary)" tickLine={false} axisLine={false}
+                     tick={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }} minTickGap={48} />
+              <YAxis stroke="var(--text-tertiary)" tickLine={false} axisLine={false} width={54}
+                     tick={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
+                     tickFormatter={(v) => `$${Math.round(v)}`} domain={['dataMin', 'dataMax']} />
+              <Tooltip contentStyle={{ background: 'var(--surface-2)', border: '1px solid var(--border-strong)',
+                                       borderRadius: 'var(--radius-control)', fontSize: '12px', fontFamily: 'JetBrains Mono, monospace' }}
+                       labelStyle={{ color: 'var(--text-tertiary)' }} labelFormatter={(t) => new Date(t as number).toLocaleDateString()}
+                       formatter={(v, name) => [formatUsd(typeof v === 'number' ? v : null), name === 'FIFO cost basis at snapshot' ? name : 'Value']} />
+              <Area type="monotone" dataKey="value" stroke="var(--action)" strokeWidth={1.5} fill="url(#cockpitFill)" dot={false} />
+              <Line type="monotone" dataKey="basis" name="FIFO cost basis at snapshot" stroke="var(--text-secondary)"
+                    strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function Cockpit() {
+  const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
+  const health = useApi<SystemHealthResponse>('/api/system/health');
+
+  const data = cockpit.data;
 
   // Current vs target allocation, computed here rather than fetched: both
   // halves are already on screen, and a network call for arithmetic would
@@ -191,11 +260,14 @@ export function Cockpit() {
   if (!data) return <Panel title="Dashboard"><Empty>Loading…</Empty></Panel>;
   if (!data.has_data) {
     return (
-      <Panel title="Dashboard">
-        <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
-          No data yet - run a sync to populate the portfolio.
-        </p>
-      </Panel>
+      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+        <Panel title="Dashboard">
+          <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
+            No data yet - run a sync to populate the portfolio.
+          </p>
+        </Panel>
+        <PerformancePanel />
+      </div>
     );
   }
 
@@ -241,109 +313,7 @@ export function Cockpit() {
           screen exists to answer, and drift is what you act on. */}
       <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 2.1fr) minmax(0, 1fr)',
                                      gap: 'var(--space-3)' }}>
-        {/* Flex column so the plot grows to the height of the drift rail beside
-            it, instead of sitting at a fixed height with dead space beneath. */}
-        <section className="flex flex-col"
-                 style={{ background: 'var(--surface-1)', border: '1px solid var(--border)',
-                          borderRadius: 'var(--radius-panel)', padding: 'var(--space-4)' }}>
-          <div className="flex shrink-0 items-center justify-between"
-               style={{ marginBottom: 'var(--space-3)' }}>
-            <h2 className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
-                                             fontWeight: 500, letterSpacing: '0.08em',
-                                             textTransform: 'uppercase', margin: 0 }}>
-              Performance
-            </h2>
-            <div className="flex" style={{ gap: '2px' }}>
-              {RANGES.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setRange(r.id)}
-                  className="font-mono transition-colors"
-                  style={{
-                    background: range === r.id ? 'var(--surface-2)' : 'transparent',
-                    color: range === r.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                    border: '1px solid transparent',
-                    borderRadius: 'var(--radius-control)',
-                    padding: '2px var(--space-2)', fontSize: '10px', cursor: 'pointer',
-                  }}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-            </div>
-
-            {historyChange !== null && (
-              <p className="font-mono" style={{ color: 'var(--text-secondary)', fontSize: '11px',
-                                                 margin: '0 0 var(--space-3)' }}>
-                Change since first snapshot: {formatSigned(historyChange)} from {new Date(series[0].t).toISOString().slice(0, 10)}
-              </p>
-            )}
-
-            {series.length < 2 ? (
-            // A failed history fetch must say so. Falling through to "Loading…"
-            // leaves a permanent spinner that looks like slow data rather than
-            // a broken endpoint -- which is exactly how a 404 here hid once.
-            <div className="flex flex-1 items-center" style={{ minHeight: '208px' }}>
-              {overview.error ? (
-                <p className="font-mono" style={{ color: 'var(--negative)', fontSize: '12px' }}>
-                  Could not load history: {overview.error}
-                </p>
-              ) : (
-                <Empty>
-                  {overview.data
-                    ? 'Not enough snapshots in this range to draw a line.'
-                    : 'Loading history…'}
-                </Empty>
-              )}
-            </div>
-          ) : (
-            <div className="flex-1" style={{ minHeight: '208px' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                  <defs>
-                    <linearGradient id="cockpitFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--action)" stopOpacity={0.28} />
-                      <stop offset="100%" stopColor="var(--action)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="2 4" vertical={false} />
-                  <XAxis
-                    dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']}
-                    tickFormatter={(t) => new Date(t).toLocaleDateString(undefined,
-                      { month: 'short', day: 'numeric' })}
-                    stroke="var(--text-tertiary)" tickLine={false} axisLine={false}
-                    tick={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
-                    minTickGap={48}
-                  />
-                  <YAxis
-                    stroke="var(--text-tertiary)" tickLine={false} axisLine={false} width={54}
-                    tick={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace' }}
-                    tickFormatter={(v) => `$${Math.round(v)}`}
-                    domain={['dataMin', 'dataMax']}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--surface-2)',
-                                    border: '1px solid var(--border-strong)',
-                                    borderRadius: 'var(--radius-control)',
-                                    fontSize: '12px', fontFamily: 'JetBrains Mono, monospace' }}
-                    labelStyle={{ color: 'var(--text-tertiary)' }}
-                    labelFormatter={(t) => new Date(t as number).toLocaleDateString()}
-                    formatter={(v, name) => [
-                      formatUsd(typeof v === 'number' ? v : null),
-                      name === 'FIFO cost basis at snapshot' ? name : 'Value',
-                    ]}
-                  />
-                  <Area type="monotone" dataKey="value" stroke="var(--action)" strokeWidth={1.5}
-                         fill="url(#cockpitFill)" dot={false} />
-                  <Line type="monotone" dataKey="basis" name="FIFO cost basis at snapshot"
-                        stroke="var(--text-secondary)" strokeWidth={1.5} strokeDasharray="4 4"
-                        dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </section>
+        <PerformancePanel />
 
         <Panel title="Allocation drift">
           {drift.length === 0 ? (
