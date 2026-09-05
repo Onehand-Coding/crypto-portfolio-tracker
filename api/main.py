@@ -4,15 +4,43 @@ One process, one port. In development Vite proxies /api here; in production
 this serves the built bundle too. Neither arrangement needs CORS.
 """
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from api.auto_sync import AutoSyncScheduler
+from api.deps import get_read_context
 from api.routes import capital, execute, portfolio, screens, strategy, sync, wallets
+from api.sync_runner import get_sync_runner
 
-app = FastAPI(title="Crypto Portfolio Tracker API", version="1.0.0")
+
+def build_scheduler() -> AutoSyncScheduler:
+    """Build the auto-sync scheduler from process-wide singletons.
+
+    get_read_context() is network-free (ConfigManager + SQLite + offline
+    analyzer), so this is safe to call at startup. Reuses get_sync_runner()
+    so manual and automatic syncs share the single-flight guard.
+    """
+    return AutoSyncScheduler(
+        config_manager=get_read_context().config_manager,
+        runner=get_sync_runner(),
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = build_scheduler()
+    scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
+
+
+app = FastAPI(title="Crypto Portfolio Tracker API", version="1.0.0", lifespan=lifespan)
 
 app.include_router(portfolio.router)
 app.include_router(capital.router)

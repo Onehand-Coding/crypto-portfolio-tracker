@@ -233,3 +233,26 @@ async def test_run_level_exception_increments_backoff():
     assert sched._consecutive_failures == 1
     assert sched._skips_owed == 1
     assert sched._task is None
+
+
+def test_lifespan_starts_and_stops_scheduler_without_hanging(monkeypatch):
+    """Startup must not break the app and shutdown must cancel the loop,
+    or every test client (and every deploy) leaks a task."""
+    from fastapi.testclient import TestClient
+
+    import api.main as main_module
+    from api.main import app
+
+    created = {}
+
+    class FakeSched:
+        def start(self):
+            created["started"] = True
+
+        async def stop(self):
+            created["stopped"] = True
+
+    monkeypatch.setattr(main_module, "build_scheduler", lambda: FakeSched())
+    with TestClient(app) as client:
+        assert client.get("/api/health").json() == {"status": "ok"}
+    assert created == {"started": True, "stopped": True}
