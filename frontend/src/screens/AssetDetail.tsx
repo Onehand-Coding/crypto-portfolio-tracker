@@ -37,7 +37,6 @@ export function AssetDetail() {
         subtitle={data.is_core
           ? `Core holding · target ${formatPercentPlain(data.target_allocation_pct)}`
           : 'Non-core holding'}
-        staleness={data.staleness}
       />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>

@@ -175,7 +175,7 @@ export function Wallets() {
 
   return (
     <ExecutionScreen title="Wallets" subtitle="Spot & Earn, Futures, Funding"
-                     status={status.data ?? null} staleness={data.staleness}>
+                     status={status.data ?? null}>
       <Panel>
         <KpiBand>
           <BandMetric emphasis label="Total" value={formatUsd(data.total_value_usd)} />

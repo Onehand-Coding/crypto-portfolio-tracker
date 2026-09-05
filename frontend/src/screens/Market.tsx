@@ -39,7 +39,6 @@ export function Market() {
       <ScreenHeader
         title="Market"
         subtitle="Your configured universe, with trend context where it has been computed"
-        staleness={cockpit.data.staleness}
       />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>

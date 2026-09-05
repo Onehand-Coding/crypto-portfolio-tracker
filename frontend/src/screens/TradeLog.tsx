@@ -103,7 +103,6 @@ export function TradeLog() {
       <ScreenHeader
         title="Trade log"
         subtitle={`${data.count} transactions across every asset`}
-        staleness={data.staleness}
       />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>

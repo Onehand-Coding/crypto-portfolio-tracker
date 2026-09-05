@@ -71,6 +71,9 @@ describe('Realized disposal-kind breakdown', () => {
     expect(screen.getByText('Earn moves')).toBeDefined();
     // The caption states what counts as a disposal.
     expect(screen.getByText(/every sell, convert, or earn move/i)).toBeDefined();
+    // Sync age lives in the top bar now: no per-screen "synced" readout,
+    // even though the payload still carries staleness.
+    expect(screen.queryByText(/synced/i)).toBeNull();
   });
 });
 

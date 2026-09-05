@@ -95,8 +95,7 @@ export function Allocation() {
   return (
     <>
       <ScreenHeader title="Allocation"
-                    subtitle="Portfolio composition, drift from target, and contribution to P/L"
-                    staleness={cockpit.data.staleness} />
+                    subtitle="Portfolio composition, drift from target, and contribution to P/L" />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
         <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.3fr)',

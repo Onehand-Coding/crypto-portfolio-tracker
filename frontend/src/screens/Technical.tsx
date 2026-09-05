@@ -163,7 +163,7 @@ function IndicatorViewer({ symbols }: { symbols: string[] }) {
               ))}
             </SelectField>
             <div className="flex items-center" style={{ gap: 'var(--space-4)' }}>
-              {data && <StalenessNote staleness={data.staleness} />}
+              {data && <StalenessNote staleness={data.staleness} verb="run" />}
               <Button variant="secondary" onClick={reload}>Refresh</Button>
               <Button onClick={run} disabled={Boolean(data?.is_running)}>
                 {data?.is_running ? 'Running…' : 'Run indicators'}

@@ -50,7 +50,6 @@ export function Realized() {
         subtitle={eventCount > 0
           ? `Net gain locked in across ${eventCount} disposal${eventCount === 1 ? '' : 's'} - FIFO priced`
           : 'FIFO realized gains - the closed, taxable half of the accounting'}
-        staleness={data.staleness}
       />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>

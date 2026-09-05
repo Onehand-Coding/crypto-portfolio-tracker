@@ -233,7 +233,6 @@ export function Backtest() {
       <ScreenHeader
         title="Backtesting"
         subtitle="Simulate the rebalancing strategy over historical data"
-        staleness={data.staleness}
       />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
@@ -294,7 +293,7 @@ export function Backtest() {
               </div>
             </Field>
             <div className="flex items-center" style={{ gap: 'var(--space-4)' }}>
-              <StalenessNote staleness={data.staleness} />
+              <StalenessNote staleness={data.staleness} verb="run" />
               <Button onClick={run} disabled={runDisabled}>
                 {data.is_running ? 'Running…' : 'Run backtest'}
               </Button>

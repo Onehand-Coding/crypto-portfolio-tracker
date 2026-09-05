@@ -56,7 +56,6 @@ export function Overview() {
       <ScreenHeader
         title="Portfolio overview"
         subtitle={`${data.points.length} snapshots recorded`}
-        staleness={data.staleness}
       />
 
       <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>

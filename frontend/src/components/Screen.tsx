@@ -148,7 +148,7 @@ export function AnalysisBar({
           )}
         </div>
         <div className="flex shrink-0 items-center" style={{ gap: 'var(--space-4)' }}>
-          <StalenessNote staleness={state.staleness} />
+          <StalenessNote staleness={state.staleness} verb="run" />
           <Button onClick={onRun} disabled={state.is_running}>
             {state.is_running ? 'Running…' : 'Run analysis'}
           </Button>

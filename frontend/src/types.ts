@@ -10,6 +10,11 @@ export interface Environment {
   label: string;
 }
 
+export interface SyncStatus {
+  is_running: boolean;
+  staleness: Staleness;
+}
+
 export interface AccountingBasis {
   label: string;
   question: string;

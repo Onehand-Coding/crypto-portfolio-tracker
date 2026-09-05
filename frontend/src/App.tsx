@@ -4,6 +4,7 @@ import { EnvBanner } from './components/EnvBanner';
 import { StalenessNote } from './components/StalenessNote';
 import { NAV_SECTIONS, sectionForPath } from './nav';
 import { apiGet } from './lib/api';
+import { useSyncStatus } from './lib/useSyncStatus';
 import type { CockpitResponse } from './types';
 import { Cockpit } from './screens/Cockpit';
 import { CapitalFlow } from './screens/CapitalFlow';
@@ -100,6 +101,11 @@ function Rail() {
 function TopBar({ cockpit }: { cockpit: CockpitResponse | null }) {
   const { pathname } = useLocation();
   const section = sectionForPath(pathname);
+  // The one live sync age in the app, polled so it cannot freeze at
+  // page-load like the old one-shot cockpit read. Screens do not show
+  // their own metrics-cache age; analysis-run ages stay where they belong
+  // (next to their run buttons, labelled as runs).
+  const syncStatus = useSyncStatus();
 
   return (
     <header
@@ -150,7 +156,7 @@ function TopBar({ cockpit }: { cockpit: CockpitResponse | null }) {
             {cockpit.environment.label}
           </span>
         )}
-        {cockpit && <StalenessNote staleness={cockpit.staleness} />}
+        {syncStatus && <StalenessNote staleness={syncStatus.staleness} />}
       </div>
     </header>
   );

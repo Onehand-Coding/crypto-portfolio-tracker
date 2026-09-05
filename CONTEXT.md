@@ -140,6 +140,10 @@ same app. Neither arrangement needs CORS.
 - **pandas types never leak past `api/serialization.py`.** DataFrames and
   Timestamps are converted at that single boundary so no route or schema imports
   pandas semantics.
+- **Sync age has one source: `GET /api/sync/status` via `useSyncStatus()`.**
+  The app shell's top bar is the only place metrics-cache age appears, polled
+  so it cannot freeze. Screens never show it; analysis-run ages stay next to
+  their run buttons labelled as runs (`verb="run"`).
 - **Unknown is never rendered as zero.** A missing figure is `null` in the API and
   an em dash in the UI. An undefined percentage (zero denominator) is `null`, not
   `0.0`. This rule exists because every violation found so far read as a
