@@ -3,11 +3,11 @@ Data Manager - Handles all data persistence and transaction management
 Moved from CryptoPortfolioTracker to separate concerns.
 """
 
+import datetime
 import json
 import logging
-import datetime
-from pathlib import Path
-from typing import Dict, Any, Optional
+import math
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
@@ -129,8 +129,10 @@ class DataManager:
             self.logger.error(f"Failed to record trade transaction: {e}", exc_info=True)
 
     def update_holdings_from_transactions(self):
-        """
-        Processes all transactions and updates holdings table with FIFO cost basis.
+        """Refresh FIFO holdings from transaction history after a successful sync.
+
+        Matched history is authoritative; incomplete disposal history preserves an
+        imported row because it cannot establish that the holding was sold.
         """
         if not self.db_manager:
             self.logger.error("Database manager not available for updating holdings")
@@ -179,9 +181,39 @@ class DataManager:
             # 2. Calculate cost basis and the remaining quantity FROM THAT BASIS
             cost_basis_qty, avg_cost = calculate_fifo_cost_basis(cost_basis_tx_df)
 
-            # 3. If there's a valid average cost, save it.
-            # The quantity saved here is just a placeholder; the final report uses the live wallet balance.
-            if avg_cost > 0:
+            # 3. If no FIFO lot remains, overwrite any earlier positive row with
+            # zero so a fully sold asset cannot survive a later refresh. An
+            # unmatched disposal is incomplete history, not proof a manually
+            # imported holding was sold.
+            acquisition_qty = cost_basis_tx_df.loc[
+                cost_basis_tx_df["type"].isin(["BUY", "DEPOSIT"]), "quantity"
+            ].clip(lower=0).sum()
+            disposal_qty = cost_basis_tx_df.loc[
+                cost_basis_tx_df["type"].isin(["SELL", "WITHDRAWAL"]), "quantity"
+            ].clip(lower=0).sum()
+            if (
+                cost_basis_qty <= 0
+                and acquisition_qty > 0
+                and (
+                    disposal_qty <= acquisition_qty
+                    or math.isclose(
+                        disposal_qty,
+                        acquisition_qty,
+                        rel_tol=1e-12,
+                        abs_tol=1e-12,
+                    )
+                )
+            ):
+                updated_holdings.append(
+                    {
+                        "symbol": symbol,
+                        "quantity": 0.0,
+                        "average_cost_basis": 0.0,
+                    }
+                )
+            # The quantity saved here is just a placeholder; the final report
+            # uses the live wallet balance.
+            elif avg_cost > 0:
                 self.logger.debug(
                     f"Calculated for {symbol}: Qty_from_basis={cost_basis_qty:.8f}, AvgCost={avg_cost:.8f}. Storing avg_cost."
                 )
@@ -262,4 +294,3 @@ class DataManager:
 
         self.logger.info(f"Created data backup summary: {backup_data}")
         return backup_data
-

@@ -56,7 +56,14 @@ class BinanceFetcher:
             self.config.get("target_allocation", {}).keys()
         )
         self.target_assets_for_sync.add("USDT")
+        self._sync_fetch_failed = False
         self.logger.debug("BinanceFetcher initialized.")
+
+    def reset_sync_fetch_failure(self) -> None:
+        self._sync_fetch_failed = False
+
+    def _record_sync_fetch_failure(self) -> None:
+        self._sync_fetch_failed = True
 
     def _handle_binance_api_exception(self, e: BinanceAPIException, context: str = "") -> bool:
         """
@@ -187,6 +194,7 @@ class BinanceFetcher:
                 if chunk_transactions:
                     all_transactions.extend(chunk_transactions)
             except Exception as e:
+                self._record_sync_fetch_failure()
                 self.logger.warning(
                     f"[{source_name}] Error fetching chunk {i+1}/{len(chunks)}: {e}"
                 )
@@ -220,6 +228,7 @@ class BinanceFetcher:
                     break  # Reached the last page
                 params["current"] += 1
             except Exception as e:
+                self._record_sync_fetch_failure()
                 self.logger.error(
                     f"Error fetching paginated data from {endpoint_path}: {e}"
                 )
@@ -435,6 +444,7 @@ class BinanceFetcher:
                                 self.logger.debug(f"Invalid pair: {pair}. Skipping.")
                                 break  # Invalid pair, no point retrying
                             else:
+                                self._record_sync_fetch_failure()
                                 # For other API errors, use our centralized handling
                                 if self._handle_binance_api_exception(e, f"fetching trades for {pair} in {source_name}"):
                                     # If recoverable, we could retry, but for now just log and continue
@@ -448,6 +458,7 @@ class BinanceFetcher:
                                     )
                                     break
                         except Exception as e:
+                            self._record_sync_fetch_failure()
                             self.logger.error(
                                 f"[{source_name}] Unexpected error fetching trades for {pair}: {e}"
                             )
@@ -464,7 +475,7 @@ class BinanceFetcher:
         source_name: str,
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         time_window = self._get_start_end_timestamps(
             source_name, days_back, latest_known_ts
         )
@@ -539,7 +550,7 @@ class BinanceFetcher:
                     )
                     print(f"❌ Binance API error: {e2}")
             # Non-recoverable error or retry failed
-            return raw_transactions
+            return None
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching deposit history: {e}", exc_info=True
@@ -551,7 +562,7 @@ class BinanceFetcher:
         source_name: str,
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         time_window = self._get_start_end_timestamps(
             source_name, days_back, latest_known_ts
         )
@@ -632,7 +643,7 @@ class BinanceFetcher:
                     )
                     print(f"❌ Binance API error: {e2}")
             # Non-recoverable error or retry failed
-            return raw_transactions
+            return None
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching withdrawal history: {e}", exc_info=True
@@ -644,7 +655,7 @@ class BinanceFetcher:
         source_name: str,
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         Fetches P2P buy history, filtering for COMPLETED trades first and then
         de-duplicating by orderNumber to ensure absolute accuracy.
@@ -777,7 +788,7 @@ class BinanceFetcher:
                     )
                     print(f"❌ Binance API error: {e2}")
             # Non-recoverable error or retry failed
-            return raw_transactions
+            return None
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching P2P USDT buys: {e}", exc_info=True
@@ -789,7 +800,7 @@ class BinanceFetcher:
         source_name: str,
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         Fetches P2P sell history (when user cashes out to fiat), filtering for COMPLETED trades
         and de-duplicating by orderNumber to ensure absolute accuracy.
@@ -922,7 +933,7 @@ class BinanceFetcher:
                     )
                     print(f"❌ Binance API error: {e2}")
             # Non-recoverable error or retry failed
-            return raw_transactions
+            return None
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching P2P USDT sells: {e}", exc_info=True
@@ -934,7 +945,7 @@ class BinanceFetcher:
         source_name: str,
         days_back: int = 90,
         latest_known_ts: Optional[datetime.datetime] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         time_window = self._get_start_end_timestamps(
             source_name, days_back, latest_known_ts
         )
@@ -1027,7 +1038,7 @@ class BinanceFetcher:
                     )
                     print(f"❌ Binance API error: {e2}")
             # Non-recoverable error or retry failed
-            return raw_transactions
+            return None
         except Exception as e:
             self.logger.error(
                 f"Unexpected error fetching spot convert history: {e}", exc_info=True
@@ -1239,6 +1250,7 @@ class BinanceFetcher:
                         break
                     current_page += 1
                 except Exception as e:
+                    self._record_sync_fetch_failure()
                     self.logger.warning(
                         f"Error fetching Simple Earn subscriptions (Page {current_page}): {e}"
                     )
@@ -1311,6 +1323,7 @@ class BinanceFetcher:
                         break
                     current_page += 1
                 except Exception as e:
+                    self._record_sync_fetch_failure()
                     self.logger.warning(
                         f"Error fetching Simple Earn redemptions (Page {current_page}): {e}"
                     )
@@ -1404,6 +1417,7 @@ class BinanceFetcher:
                 eth_txs = self._fetch_eth_staking_history(chunk_start, chunk_end)
                 chunk_txs.extend(eth_txs)
             except Exception as e:
+                self._record_sync_fetch_failure()
                 self.logger.warning(
                     f"ETH staking history fetch skipped: {e}. "
                     "ETH staking may not be available or enabled."
@@ -1414,6 +1428,7 @@ class BinanceFetcher:
                 sol_txs = self._fetch_sol_staking_history(chunk_start, chunk_end)
                 chunk_txs.extend(sol_txs)
             except Exception as e:
+                self._record_sync_fetch_failure()
                 self.logger.warning(
                     f"SOL staking history fetch skipped: {e}. "
                     "SOL staking may not be available or enabled."
@@ -1424,6 +1439,7 @@ class BinanceFetcher:
                 rewards_txs = self._fetch_general_staking_rewards(chunk_start, chunk_end)
                 chunk_txs.extend(rewards_txs)
             except Exception as e:
+                self._record_sync_fetch_failure()
                 self.logger.warning(
                     f"General staking rewards fetch skipped: {e}. "
                     "This endpoint may be deprecated by Binance."
@@ -1462,7 +1478,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass  # Silently skip if ETH staking not used
+            self._record_sync_fetch_failure()
         
         # ETH staking redemptions
         try:
@@ -1487,7 +1503,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass
+            self._record_sync_fetch_failure()
         
         # ETH staking rewards (interest)
         try:
@@ -1512,7 +1528,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass
+            self._record_sync_fetch_failure()
         
         return txs
     
@@ -1545,7 +1561,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass
+            self._record_sync_fetch_failure()
         
         # SOL staking redemptions
         try:
@@ -1570,7 +1586,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass
+            self._record_sync_fetch_failure()
         
         # SOL staking boost rewards (interest)
         try:
@@ -1595,7 +1611,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass
+            self._record_sync_fetch_failure()
         
         return txs
     
@@ -1632,7 +1648,7 @@ class BinanceFetcher:
                         },
                     })
         except Exception:
-            pass
+            self._record_sync_fetch_failure()
         
         return txs
 
@@ -1820,6 +1836,7 @@ class BinanceFetcher:
                 time.sleep(0.1)  # Small delay between API calls to be polite
 
             except BinanceAPIException as e:
+                self._record_sync_fetch_failure()
                 if self._handle_binance_api_exception(e, f"fetching {transfer_type} transfers"):
                     self.logger.warning(f"Recoverable error fetching {transfer_type}, continuing with other types.")
                     continue
@@ -1827,6 +1844,7 @@ class BinanceFetcher:
                     self.logger.error(f"Non-recoverable error fetching {transfer_type} transfers. Stopping.")
                     break
             except Exception as e:
+                self._record_sync_fetch_failure()
                 self.logger.error(f"Unexpected error fetching {transfer_type} transfers: {e}", exc_info=True)
                 continue
 

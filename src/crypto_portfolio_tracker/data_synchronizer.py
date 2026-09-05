@@ -492,7 +492,7 @@ class DataSynchronizer:
             self.logger.error(f"Failed to create yFinance ticker for {symbol}: {e}")
             return None
 
-    async def sync_data(self, enricher=None):
+    async def sync_data(self, enricher=None) -> bool:
         """
         Orchestrates the Gather, Enrich, and Process pipeline, now intelligently
         skipping unsupported data sources when in Testnet mode.
@@ -620,21 +620,34 @@ class DataSynchronizer:
             return True
 
         # 1. GATHER
+        self.fetcher.reset_sync_fetch_failure()
         self.logger.info(
             f"Launching {len(fetcher_tasks)} data fetching tasks concurrently..."
         )
         results = await asyncio.gather(*fetcher_tasks, return_exceptions=True)
 
         all_raw_transactions = []
+        fetch_failed = getattr(self.fetcher, "_sync_fetch_failed", False) is True
         for res in results:
             if isinstance(res, list):
                 all_raw_transactions.extend(res)
             elif isinstance(res, Exception):
+                fetch_failed = True
                 self.logger.error(
                     f"An error occurred during a fetching task: {res}", exc_info=False
                 )
+            elif res is None:
+                fetch_failed = True
+                self.logger.error(
+                    "A fetching task returned no result, so synchronization is incomplete."
+                )
 
         if not all_raw_transactions:
+            if fetch_failed:
+                self.logger.warning(
+                    "Data synchronization is incomplete because one or more sources failed."
+                )
+                return False
             self.logger.info("No new raw transactions were fetched. Sync complete.")
             return True
 
@@ -666,6 +679,13 @@ class DataSynchronizer:
             self.logger.warning(
                 "Enrichment process returned no transactions. Nothing to save."
             )
+            return False
+
+        if fetch_failed:
+            self.logger.warning(
+                "Data synchronization is incomplete because one or more sources failed."
+            )
+            return False
 
         self.logger.info("Data synchronization pipeline finished successfully.")
         return True

@@ -329,12 +329,12 @@ class CryptoPortfolioTracker:
 
     async def run_full_sync(self) -> Dict[str, Any]:
         """Run full sync - combines DataSynchronizer and PortfolioAnalyzer."""
-        await self.data_synchronizer.sync_data(enricher=self.enricher)
+        sync_succeeded = await self.data_synchronizer.sync_data(enricher=self.enricher)
         # The holdings table feeds Streamlit's FIFO pair + snapshot cost basis +
-        # now the API, so refresh it AFTER new transactions land and BEFORE
-        # metrics compute. The table sat stale since 2025-09-07 because nothing
-        # called this.
-        self.update_holdings_from_transactions()
+        # now the API. Only a complete online sync makes that history
+        # authoritative; a partial or offline run must preserve the old table.
+        if sync_succeeded and not self.offline_mode:
+            self.update_holdings_from_transactions()
         return await self.portfolio_analyzer.calculate_portfolio_metrics()
 
     def fetch_binance_balances(self):

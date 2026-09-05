@@ -248,6 +248,14 @@ Streamlit outright (rejected - irreversible, and it remains a useful fallback).
   ~99% loss on a portfolio that had simply been partly cashed out.
 - **FIFO cost basis is per-asset**; the portfolio-wide figure is the sum of
   `quantity × average_cost` across symbols (`api/accounting.py`).
+- **The holdings table is a derived FIFO view, not an independent ledger.** A
+successful Binance sync refreshes it after transaction ingestion. Matched
+transaction history supersedes an imported holdings row; an unmatched
+disposal preserves that row because the history cannot prove it was sold. A
+partial or offline sync leaves the table untouched because incomplete history
+is not authoritative. Trade, transfer, deposit, withdrawal, P2P, convert,
+staking, and Simple Earn subscription/redemption failures make a sync partial;
+the deprecated Simple Earn rewards endpoint is deliberately non-blocking.
 - **P2P buys are USDT purchased with fiat.** When the historical fiat rate lookup
   fails, price falls back to the USDT peg of $1.00 rather than $0.00 — a zero
   there silently erases real capital inflow from the invested-capital total.
