@@ -1071,8 +1071,8 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         config.setdefault("database", {})["cleanup_days"] = int(payload.cleanup_days)
 
     if payload.automation is not None:
-        # exclude_unset: a partial group patches only the sent frequencies
-        # instead of resetting the other one to its schema default.
+        # exclude_unset: a partial group patches only the sent fields
+        # instead of resetting the others to their schema defaults.
         auto = payload.automation.model_dump(exclude_unset=True)
         for key in ("dca_frequency", "rebalancing_frequency"):
             if key in auto and str(auto[key]).strip().lower() not in FREQUENCIES:
@@ -1088,10 +1088,9 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         if "auto_sync_enabled" in auto:
             auto_cfg.setdefault("auto_sync", {})["enabled"] = bool(auto["auto_sync_enabled"])
         if "auto_sync_interval_minutes" in auto:
-            try:
-                minutes = int(auto["auto_sync_interval_minutes"])
-            except (TypeError, ValueError):
-                minutes = 0
+            minutes = int(auto["auto_sync_interval_minutes"])
+            # Bounds: each run costs Binance + CoinGecko calls, so sub-2-minute
+            # cadences burn rate limit for no freshness gain; 1440 = once daily.
             if not 2 <= minutes <= 1440:
                 raise HTTPException(
                     status_code=422,
