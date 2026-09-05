@@ -30,6 +30,8 @@ def test_get_returns_extended_groups_with_config_values(mock_read_context, tmp_p
     assert body["automation"] == {
         "dca_frequency": "monthly",
         "rebalancing_frequency": "quarterly",
+        "auto_sync_enabled": False,
+        "auto_sync_interval_minutes": 5,
     }
     assert body["apis"] == {
         "coingecko_timeout": 30,
@@ -60,7 +62,8 @@ def test_put_frequencies_round_trip(mock_read_context, tmp_path):
         "automation": {"dca_frequency": "weekly", "rebalancing_frequency": "daily"},
     }).json()
     assert body["automation"] == {
-        "dca_frequency": "weekly", "rebalancing_frequency": "daily"}
+        "dca_frequency": "weekly", "rebalancing_frequency": "daily",
+        "auto_sync_enabled": False, "auto_sync_interval_minutes": 5}
     assert cm.config["automation"]["dca"]["frequency"] == "weekly"
     assert cm.config["automation"]["rebalancing"]["frequency"] == "daily"
     cm.save_config.assert_called_once()
