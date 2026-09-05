@@ -65,16 +65,16 @@ const COCKPIT = {
   staleness: STALENESS,
 };
 
-const HEALTH = { target_allocation: { BTC: 0.35, ETH: 0.3, USDT: 0.05 } };
+const HEALTH: { target_allocation: Record<string, number> } = { target_allocation: { BTC: 0.35, ETH: 0.3, USDT: 0.05 } };
 
-function stubFetch() {
+function stubFetch({ health = HEALTH, cockpit = COCKPIT } = {}) {
   vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
     const path = String(url);
     if (path.includes('/api/portfolio/cockpit')) {
-      return { ok: true, json: async () => COCKPIT };
+      return { ok: true, json: async () => cockpit };
     }
     if (path.includes('/api/system/health')) {
-      return { ok: true, json: async () => HEALTH };
+      return { ok: true, json: async () => health };
     }
     throw new Error(`unexpected fetch: ${path}`);
   }));
@@ -174,12 +174,41 @@ describe('groupDust', () => {
 });
 
 describe('Allocation colour dots', () => {
-  it('shows a dot per drift row matching the ring order', async () => {
+  it('maps each drift dot to its ring slice colour, with dust fallback', async () => {
     stubFetch();
     const { container } = render(<Allocation />);
     await screen.findByText('Current vs target');
-    // One dot per drift row (BTC, ETH, USDT in the stub health payload).
+    // Drift rows sort by target desc (BTC 0.35 > ETH 0.3 > USDT 0.05 in the
+    // stub); post-grouping pie order is [BTC, ETH, Others (1)].
     const dots = container.querySelectorAll('[data-testid="drift-dot"]');
     expect(dots.length).toBe(3);
+    expect(dots[0].parentElement?.textContent).toContain('BTC');
+    expect(dots[1].parentElement?.textContent).toContain('ETH');
+    expect(dots[2].parentElement?.textContent).toContain('USDT');
+    // Palette order reference (SLICE_COLOURS in Allocation.tsx):
+    // ['var(--action)', '#6d8bd0', '#4fa9a0', ...]. BTC takes palette[0],
+    // ETH takes palette[1]. Read via el.style.background, not
+    // getComputedStyle — jsdom does not resolve var().
+    expect((dots[0] as HTMLElement).style.background).toBe('var(--action)');
+    // jsdom normalizes hex colours to rgb() on readback, so palette[1]
+    // '#6d8bd0' reads back as rgb(109, 139, 208).
+    expect((dots[1] as HTMLElement).style.background).toBe('rgb(109, 139, 208)');
+    // USDT at 0.15/175.02 ≈ 0.09% is below the 1% DUST_THRESHOLD_PCT, so it
+    // is dust-grouped out of the ring and its drift row takes the tertiary
+    // fallback.
+    expect((dots[2] as HTMLElement).style.background).toBe('var(--text-tertiary)');
+  });
+
+  it('falls back to tertiary for a target-only symbol with no holding', async () => {
+    stubFetch({ health: { target_allocation: { ...HEALTH.target_allocation, SOL: 0.1 } } });
+    const { container } = render(<Allocation />);
+    await screen.findByText('Current vs target');
+    const dots = container.querySelectorAll('[data-testid="drift-dot"]');
+    expect(dots.length).toBe(4);
+    const solDot = Array.from(dots).find((d) =>
+      d.parentElement?.textContent?.includes('SOL'),
+    ) as HTMLElement | undefined;
+    expect(solDot).toBeDefined();
+    expect(solDot?.style.background).toBe('var(--text-tertiary)');
   });
 });
