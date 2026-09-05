@@ -21,6 +21,30 @@ if matplotlib.get_backend().lower() != "agg":
     plt.switch_backend("Agg")
 
 from api import deps, sync_runner
+from api import main as api_main
+
+
+@pytest.fixture(autouse=True)
+def _stub_auto_sync_scheduler(monkeypatch):
+    """Never boot the real auto-sync scheduler in API tests.
+
+    The app lifespan calls module-global build_scheduler(), which builds the
+    real read context (real ConfigManager + real DatabaseManager on the dev
+    data/*.db path) and spawns a real scheduler task. Any test using
+    `with TestClient(app)` runs the lifespan, so without this stub those
+    tests touch the dev database. The dummy's stop is awaitable because the
+    lifespan awaits it. Tests that patch build_scheduler themselves (e.g.
+    the lifespan test) override this stub via monkeypatch.
+    """
+
+    class _DummyScheduler:
+        def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    monkeypatch.setattr(api_main, "build_scheduler", lambda: _DummyScheduler())
 
 
 @pytest.fixture(autouse=True)
