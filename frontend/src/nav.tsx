@@ -43,8 +43,7 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: <Icon><rect x="2" y="2" width="5" height="5" /><rect x="9" y="2" width="5" height="5" />
       <rect x="2" y="9" width="5" height="5" /><rect x="9" y="9" width="5" height="5" /></Icon>,
     items: [
-      { to: '/', label: 'Cockpit' },
-      { to: '/overview', label: 'Overview' },
+      { to: '/', label: 'Dashboard' },
       { to: '/realized', label: 'Realized P/L' },
       { to: '/wallets', label: 'Wallets' },
       { to: '/capital', label: 'Capital Flow' },

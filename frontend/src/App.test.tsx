@@ -68,4 +68,32 @@ describe('App', () => {
     });
     expect(container.querySelector('.font-mono')).not.toBeNull();
   });
+
+  it('links Dashboard to the root without exposing Overview', () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByRole('link', { name: 'Dashboard' }).every((link) => link.getAttribute('href') === '/')).toBe(true);
+    expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
+  });
+
+  it('redirects the legacy overview route to Dashboard', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeDefined();
+    });
+    expect(screen.queryByText('Portfolio overview')).toBeNull();
+  });
 });

@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { EnvBanner } from './components/EnvBanner';
 import { StalenessNote } from './components/StalenessNote';
@@ -9,7 +9,6 @@ import type { CockpitResponse } from './types';
 import { Cockpit } from './screens/Cockpit';
 import { CapitalFlow } from './screens/CapitalFlow';
 import { Sync } from './screens/Sync';
-import { Overview } from './screens/Overview';
 import { Realized } from './screens/Realized';
 import { Wallets } from './screens/Wallets';
 import { AssetDetail } from './screens/AssetDetail';
@@ -185,7 +184,7 @@ export default function App() {
             <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-max)' }}>
               <Routes>
                 <Route path="/" element={<Cockpit />} />
-                <Route path="/overview" element={<Overview />} />
+                <Route path="/overview" element={<Navigate to="/" replace />} />
                 <Route path="/realized" element={<Realized />} />
                 <Route path="/wallets" element={<Wallets />} />
                 <Route path="/capital" element={<CapitalFlow />} />
