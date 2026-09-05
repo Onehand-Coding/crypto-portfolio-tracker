@@ -419,6 +419,7 @@ def render_home_page(dashboard):
                             "proceeds_usd": "Proceeds (USD)",
                             "cost_basis_usd": "Cost Basis (USD)",
                             "gain_usd": "Gain/Loss (USD)",
+                            "kind": "Kind",
                             "year": "Year",
                         }
                     )

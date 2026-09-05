@@ -23,6 +23,7 @@ from api.cache import MetricsCache, analysis_cache_path, cache_path_for
 from api.deps import get_read_context, get_tracker
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
+    DISPOSAL_KIND_LABELS,
     FREQUENCIES,
     LOG_LEVELS,
     LOOKBACK_KEYS,
@@ -53,6 +54,7 @@ from api.schemas.screens import (
     RealizedExportRequest,
     RealizedGainRow,
     RealizedGainSummary,
+    RealizedKindSummary,
     RealizedResponse,
     ReportsResponse,
     ResourcesResponse,
@@ -558,6 +560,7 @@ def realized(ctx=Depends(get_read_context)) -> RealizedResponse:
                 proceeds_usd=opt(record.get("proceeds_usd")),
                 cost_basis_usd=opt(record.get("cost_basis_usd")),
                 gain_usd=opt(record.get("gain_usd")),
+                kind=str(record.get("kind") or "OTHER"),
             )
         )
     # Newest first, matching every other dated table in the app.
@@ -583,10 +586,38 @@ def realized(ctx=Depends(get_read_context)) -> RealizedResponse:
     ]
     by_asset.sort(key=lambda s: s.total_gain_usd or 0.0, reverse=True)
 
+    # Same roll-up by economic kind of disposal, so the UI can show where the
+    # gross proceeds actually come from (trades vs Earn sweeps vs ...). The
+    # kind groups must add back up to the headline totals exactly -- a test
+    # pins that, because two disagreeing totals would be worse than one lump.
+    kind_summary = (
+        tax_df.groupby("kind")
+        .agg(
+            event_count=("gain_usd", "size"),
+            total_gain_usd=("gain_usd", "sum"),
+            total_proceeds_usd=("proceeds_usd", "sum"),
+            total_cost_basis_usd=("cost_basis_usd", "sum"),
+        )
+        .reset_index()
+    )
+    by_kind = [
+        RealizedKindSummary(
+            kind=str(record.get("kind")),
+            label=DISPOSAL_KIND_LABELS.get(str(record.get("kind")), "Other"),
+            event_count=int(record.get("event_count")),
+            total_gain_usd=opt(record.get("total_gain_usd")),
+            total_proceeds_usd=opt(record.get("total_proceeds_usd")),
+            total_cost_basis_usd=opt(record.get("total_cost_basis_usd")),
+        )
+        for record in kind_summary.to_dict(orient="records")
+    ]
+    by_kind.sort(key=lambda s: s.total_proceeds_usd or 0.0, reverse=True)
+
     return RealizedResponse(
         has_data=True,
         rows=rows,
         by_asset=by_asset,
+        by_kind=by_kind,
         total_gain_usd=opt(tax_df["gain_usd"].sum()),
         total_proceeds_usd=opt(tax_df["proceeds_usd"].sum()),
         total_cost_basis_usd=opt(tax_df["cost_basis_usd"].sum()),

@@ -40,11 +40,16 @@ export function Realized() {
   if (error) return <ErrorPanel title="Realized P/L" message={`Failed to load: ${error}`} />;
   if (!data) return <Panel title="Realized P/L"><Empty>Loading…</Empty></Panel>;
 
+  const kindLabel = new Map(data.by_kind.map((k) => [k.kind, k.label]));
+  const eventCount = data.rows.length;
+
   return (
     <>
       <ScreenHeader
         title="Realized P/L"
-        subtitle="FIFO realized gains — the closed, taxable half of the accounting"
+        subtitle={eventCount > 0
+          ? `Net gain locked in across ${eventCount} disposal${eventCount === 1 ? '' : 's'} — FIFO priced`
+          : 'FIFO realized gains — the closed, taxable half of the accounting'}
         staleness={data.staleness}
       />
 
@@ -57,13 +62,15 @@ export function Realized() {
             <BandMetric label="Total proceeds" value={formatUsd(data.total_proceeds_usd)} />
             <BandMetric label="Total cost basis" value={formatUsd(data.total_cost_basis_usd)} />
           </KpiBand>
-          {/* The cockpit's P/L is unrealized (open positions). This is realized
-              (closed lots). Conflating them is the classic accounting error, so
-              the distinction is stated rather than left to the label. */}
+          {/* Proceeds look large because every disposal counts -- dust converts,
+              Earn sweeps, trade legs -- not just cash-outs. Stated plainly so a
+              $1k+ proceeds figure under a small net P/L does not mislead. */}
           <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
                                           marginTop: 'var(--space-3)', marginBottom: 0 }}>
-            Gains locked in by past sells and withdrawals, priced against their FIFO cost
-            lots. Distinct from the unrealized P/L on open positions shown in the cockpit.
+            Every sell, convert, or Earn move counts as a disposal — dust included — so
+            gross proceeds run large. The net P/L above is the figure that matters;
+            the breakdown below shows where the gross came from. Distinct from the
+            unrealized P/L on open positions shown in the cockpit.
           </p>
           <div className="flex flex-wrap items-center" style={{ gap: 'var(--space-3)',
                                                                  marginTop: 'var(--space-3)' }}>
@@ -107,6 +114,39 @@ export function Realized() {
           </Panel>
         ) : (
           <>
+            <Panel title="By kind — where the gross came from">
+              <div className="table-scroll">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th className="text-left">Kind</th>
+                      <th className="text-right">Disposals</th>
+                      <th className="text-right">Realized P/L</th>
+                      <th className="text-right">Proceeds</th>
+                      <th className="text-right">Cost basis</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.by_kind.map((k) => (
+                      <tr key={k.kind}>
+                        <td className="text-left" style={{ fontWeight: 500 }}>{k.label}</td>
+                        <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                          {k.event_count}
+                        </td>
+                        <td className="text-right"><Gain value={k.total_gain_usd} /></td>
+                        <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                          {formatUsd(k.total_proceeds_usd)}
+                        </td>
+                        <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
+                          {formatUsd(k.total_cost_basis_usd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+
             <Panel title="By asset">
               <div className="table-scroll">
                 <table className="data">
@@ -144,6 +184,7 @@ export function Realized() {
                       <th className="text-left">Date</th>
                       <th className="text-right">Year</th>
                       <th className="text-left">Asset</th>
+                      <th className="text-left">Kind</th>
                       <th className="text-right">Quantity</th>
                       <th className="text-right">Proceeds</th>
                       <th className="text-right">Cost basis</th>
@@ -160,6 +201,9 @@ export function Realized() {
                           {r.year ?? '—'}
                         </td>
                         <td className="text-left" style={{ fontWeight: 500 }}>{r.symbol}</td>
+                        <td className="text-left" style={{ color: 'var(--text-tertiary)' }}>
+                          {kindLabel.get(r.kind) ?? r.kind}
+                        </td>
                         <td className="text-right" style={{ color: 'var(--text-secondary)' }}>
                           {formatQty(r.quantity)}
                         </td>

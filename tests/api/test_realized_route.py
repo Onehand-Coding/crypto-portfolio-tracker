@@ -74,3 +74,39 @@ def test_no_transactions_reports_no_data(mock_read_context):
     assert body["has_data"] is False
     assert body["rows"] == []
     assert body["total_gain_usd"] is None
+
+
+def test_rows_carry_disposal_kind_and_by_kind_sums_them(mock_read_context):
+    """Each row is classified by economic kind (trade/earn/...) and by_kind
+    rolls the kinds up, so the UI can explain gross proceeds instead of
+    showing one scary lump sum."""
+    mock_read_context.db_manager.get_all_transactions.return_value = _txns([
+        {"timestamp": "2025-01-01T00:00:00Z", "symbol": "BTC", "type": "BUY",
+         "quantity": 2.0, "price_usd": 100.0, "fee_usd": 0.0,
+         "source": "Binance Trade"},
+        {"timestamp": "2025-02-01T00:00:00Z", "symbol": "BTC", "type": "SELL",
+         "quantity": 1.0, "price_usd": 150.0, "fee_usd": 0.0,
+         "source": "Binance Trade"},
+        {"timestamp": "2025-03-01T00:00:00Z", "symbol": "BTC", "type": "SELL",
+         "quantity": 1.0, "price_usd": 150.0, "fee_usd": 0.0,
+         "source": "Binance Simple Earn Subscription"},
+    ])
+
+    body = TestClient(app).get("/api/realized").json()
+
+    kinds = {r["kind"] for r in body["rows"]}
+    assert kinds == {"TRADE", "EARN"}
+    by_kind = {s["kind"]: s for s in body["by_kind"]}
+    assert set(by_kind) == {"TRADE", "EARN"}
+    assert by_kind["TRADE"]["event_count"] == 1
+    assert by_kind["TRADE"]["total_gain_usd"] == pytest.approx(50.0)
+    assert by_kind["EARN"]["total_gain_usd"] == pytest.approx(50.0)
+    assert by_kind["TRADE"]["label"] == "Trades"
+    assert by_kind["EARN"]["label"] == "Earn moves"
+    # The kind split must add back up to the headline totals exactly.
+    assert sum(s["total_proceeds_usd"] for s in body["by_kind"]) == pytest.approx(
+        body["total_proceeds_usd"])
+    assert sum(s["total_cost_basis_usd"] for s in body["by_kind"]) == pytest.approx(
+        body["total_cost_basis_usd"])
+    assert sum(s["total_gain_usd"] for s in body["by_kind"]) == pytest.approx(
+        body["total_gain_usd"])

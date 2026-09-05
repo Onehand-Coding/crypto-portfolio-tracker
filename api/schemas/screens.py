@@ -83,6 +83,8 @@ class RealizedGainRow(BaseModel):
     proceeds_usd: Optional[float]
     cost_basis_usd: Optional[float]
     gain_usd: Optional[float]
+    # Economic kind of the disposal (TRADE, CONVERT, EARN, CASHOUT, OTHER).
+    kind: str = "OTHER"
 
 
 class RealizedGainSummary(BaseModel):
@@ -94,12 +96,35 @@ class RealizedGainSummary(BaseModel):
     total_cost_basis_usd: Optional[float]
 
 
+# Display labels for disposal kinds. The backend owns these strings so every
+# surface (React now, Streamlit later) describes a kind identically.
+DISPOSAL_KIND_LABELS = {
+    "TRADE": "Trades",
+    "CONVERT": "Conversions",
+    "EARN": "Earn moves",
+    "CASHOUT": "Cash-outs",
+    "OTHER": "Other",
+}
+
+
+class RealizedKindSummary(BaseModel):
+    """Realized gains rolled up by economic kind of disposal."""
+
+    kind: str
+    label: str
+    event_count: int
+    total_gain_usd: Optional[float]
+    total_proceeds_usd: Optional[float]
+    total_cost_basis_usd: Optional[float]
+
+
 class RealizedResponse(BaseModel):
     # False when there are no transactions at all; has_data True with an empty
     # rows list is the distinct, legitimate "no taxable events yet" state.
     has_data: bool
     rows: list[RealizedGainRow] = []
     by_asset: list[RealizedGainSummary] = []
+    by_kind: list[RealizedKindSummary] = []
     total_gain_usd: Optional[float] = None
     total_proceeds_usd: Optional[float] = None
     total_cost_basis_usd: Optional[float] = None

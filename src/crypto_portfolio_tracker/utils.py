@@ -143,11 +143,32 @@ def clean_export_df(df):
     return df
 
 
+def classify_disposal_kind(source) -> str:
+    """Economic kind of a disposal, from the transaction source string.
+
+    The FIFO figures do not depend on this -- it exists so surfaces can split
+    gross proceeds (trades vs conversions vs Earn sweeps vs cash-outs) instead
+    of showing one lump sum that reads as "money cashed out". Matching is
+    substring-based because sources are free-form sync labels; anything
+    missing or unrecognized is OTHER, never an error.
+    """
+    text = str(source or "").lower()
+    if "earn" in text:
+        return "EARN"
+    if "convert" in text:
+        return "CONVERT"
+    if "p2p" in text:
+        return "CASHOUT"
+    if "trade" in text or "synthetic" in text:
+        return "TRADE"
+    return "OTHER"
+
+
 def calculate_fifo_realized_gains(transactions_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculates realized gains/losses for each SELL using FIFO.
     Returns a DataFrame with columns:
-    ['date', 'symbol', 'quantity', 'proceeds_usd', 'cost_basis_usd', 'gain_usd']
+    ['date', 'symbol', 'quantity', 'proceeds_usd', 'cost_basis_usd', 'gain_usd', 'kind']
     """
     results = []
     for symbol, group in transactions_df.groupby("symbol"):
@@ -203,6 +224,11 @@ def calculate_fifo_realized_gains(transactions_df: pd.DataFrame) -> pd.DataFrame
                         "proceeds_usd": proceeds,
                         "cost_basis_usd": cost_basis,
                         "gain_usd": gain,
+                        # Economic kind of the disposal (trade, earn move,
+                        # ...). Informational only -- the FIFO figures above do
+                        # not depend on it. row.get with a default keeps older
+                        # minimal frames (no source column) working as OTHER.
+                        "kind": classify_disposal_kind(row.get("source")),
                     }
                 )
     return pd.DataFrame(results)

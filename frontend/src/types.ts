@@ -125,6 +125,7 @@ export interface RealizedGainRow {
   proceeds_usd: number | null;
   cost_basis_usd: number | null;
   gain_usd: number | null;
+  kind: string;
 }
 
 export interface RealizedGainSummary {
@@ -134,10 +135,20 @@ export interface RealizedGainSummary {
   total_cost_basis_usd: number | null;
 }
 
+export interface RealizedKindSummary {
+  kind: string;
+  label: string;
+  event_count: number;
+  total_gain_usd: number | null;
+  total_proceeds_usd: number | null;
+  total_cost_basis_usd: number | null;
+}
+
 export interface RealizedResponse {
   has_data: boolean;
   rows: RealizedGainRow[];
   by_asset: RealizedGainSummary[];
+  by_kind: RealizedKindSummary[];
   total_gain_usd: number | null;
   total_proceeds_usd: number | null;
   total_cost_basis_usd: number | null;
