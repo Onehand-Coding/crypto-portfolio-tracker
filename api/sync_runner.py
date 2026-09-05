@@ -72,16 +72,6 @@ class SyncRunner:
         logger = logging.getLogger(CORE_LOGGER)
         handler = _QueueHandler(self._queue, loop)
         previous_level = logger.level
-        # The core logger has no explicit level, so it inherits root's
-        # WARNING default and INFO-level chunk progress never reaches any
-        # handler. Lower it for the run's duration only, then restore it.
-        # Quiet automatic runs skip this: chunk-progress INFO from ~288 runs
-        # a day would bury real warnings in the log. Warnings/errors still
-        # propagate at the root WARNING default, and complete/error events
-        # are emitted explicitly.
-        if not self._quiet:
-            logger.setLevel(logging.INFO)
-        logger.addHandler(handler)
 
         def emit(event: dict) -> None:
             # Chunk fetching runs via asyncio.to_thread, so log records for
@@ -94,6 +84,17 @@ class SyncRunner:
             loop.call_soon_threadsafe(self._queue.put_nowait, event)
 
         try:
+            # The core logger has no explicit level, so it inherits root's
+            # WARNING default and INFO-level chunk progress never reaches any
+            # handler. Lower it for the run's duration only, then restore it.
+            # Quiet automatic runs skip this: chunk-progress INFO from ~288 runs
+            # a day would bury real warnings in the log. Warnings/errors still
+            # propagate at the root WARNING default, and complete/error events
+            # are emitted explicitly.
+            # Inside the try so an addHandler raise can't leak a level change.
+            if not self._quiet:
+                logger.setLevel(logging.INFO)
+            logger.addHandler(handler)
             emit({"event": "progress", "message": "Starting sync"})
             # Tracker construction (and cache-path resolution) happens inside
             # this try, not before it: CryptoPortfolioTracker.__init__ pings

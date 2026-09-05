@@ -75,6 +75,12 @@ async def test_runner_refuses_concurrent_syncs(mock_tracker, tmp_path):
     runner = SyncRunner(cache_path=tmp_path / "metrics.json")
     assert runner.start() is True
     assert runner.start() is False
+    # Drain the slow run this test started: leaving it orphaned lets its
+    # lowered INFO level outlive this test and pollute the core logger
+    # for later tests.
+    async for event in runner.events():
+        if event["event"] in ("complete", "error"):
+            break
 
 
 @pytest.mark.asyncio
@@ -228,36 +234,64 @@ def test_stream_route_emits_parseable_sse_frames(monkeypatch):
     assert json.loads(frames[-1][len("data: "):])["event"] == "complete"
 
 
-def test_quiet_run_leaves_logger_level_untouched(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_quiet_run_leaves_logger_level_untouched(mock_tracker, tmp_path):
     """Auto-syncs must not lower the core logger to INFO: with ~288 runs a
     day, chunk-progress INFO records would bury real warnings in the log."""
-    import asyncio
-    import logging
+    core_logger = logging.getLogger("crypto_portfolio_tracker")
+    entry_level = core_logger.level
+    observed: dict = {}
 
-    from api import sync_runner
-    from api.sync_runner import SyncRunner
+    async def fake_sync():
+        # Capture the level *during* the run: the pre-fix code lowers it
+        # to INFO before this point, so this is what actually pins the
+        # quiet behaviour (the post-run level is restored either way).
+        observed["level"] = core_logger.level
+        core_logger.info("chunk noise")
+        return {}
 
-    class StubTracker:
-        config_manager = None
-        observed_level = None
+    mock_tracker.run_full_sync = fake_sync
 
-        async def run_full_sync(self):
-            # Capture the level *during* the run: the pre-fix code lowers it
-            # to INFO before this point, so this is what actually pins the
-            # quiet behaviour (the post-run level is restored either way).
-            StubTracker.observed_level = logging.getLogger(
-                "crypto_portfolio_tracker").level
-            logging.getLogger("crypto_portfolio_tracker").info("chunk noise")
-            return {}
-
-    monkeypatch.setattr(sync_runner, "get_tracker", lambda: StubTracker())
-    # Normalise entry state: test_runner_refuses_concurrent_syncs leaves a
-    # dangling slow-sync task whose INFO level outlives its event loop, so
-    # the core logger can still be at INFO when this test starts.
-    logging.getLogger("crypto_portfolio_tracker").setLevel(logging.NOTSET)
     runner = SyncRunner(cache_path=tmp_path / "m.json")
-    runner._quiet = True
-    asyncio.run(runner._run())
-    assert StubTracker.observed_level == logging.NOTSET
-    assert logging.getLogger("crypto_portfolio_tracker").level == logging.NOTSET
+    try:
+        assert runner.start(quiet=True) is True
+        async for event in runner.events():
+            if event["event"] in ("complete", "error"):
+                break
+        post_run_level = core_logger.level
+    finally:
+        core_logger.setLevel(entry_level)
+
+    assert observed["level"] == logging.NOTSET
+    assert post_run_level == logging.NOTSET
     assert (tmp_path / "m.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_default_run_lowers_logger_level_during_sync(mock_tracker, tmp_path):
+    """The default (manual) path lowers the core logger to INFO so
+    chunk-progress records reach the run's handler. Paired with the quiet
+    test above: together they pin that the quiet flag -- not an inversion --
+    controls the level change."""
+    core_logger = logging.getLogger("crypto_portfolio_tracker")
+    entry_level = core_logger.level
+    observed: dict = {}
+
+    async def fake_sync():
+        observed["level"] = core_logger.level
+        return {}
+
+    mock_tracker.run_full_sync = fake_sync
+
+    runner = SyncRunner(cache_path=tmp_path / "m.json")
+    try:
+        assert runner.start() is True
+        async for event in runner.events():
+            if event["event"] in ("complete", "error"):
+                break
+        post_run_level = core_logger.level
+    finally:
+        core_logger.setLevel(entry_level)
+
+    assert observed["level"] == logging.INFO
+    assert post_run_level == entry_level
