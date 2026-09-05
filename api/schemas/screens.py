@@ -331,6 +331,7 @@ class LoggingSettings(BaseModel):
 
 
 class TimeframeWindows(BaseModel):
+    period: str = "90d"
     sma_short_window: int
     sma_long_window: int
 

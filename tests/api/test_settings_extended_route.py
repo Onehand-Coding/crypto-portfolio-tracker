@@ -47,11 +47,11 @@ def test_get_returns_extended_groups_with_config_values(mock_read_context, tmp_p
     assert body["logging"]["file_path"].endswith("logs/portfolio_tracker.log")
     assert body["logging"]["console_enabled"] is True
     assert body["trend_timeframes"]["long_term"] == {
-        "sma_short_window": 50, "sma_long_window": 200}
+        "period": "4y", "sma_short_window": 50, "sma_long_window": 200}
     assert body["trend_timeframes"]["swing"] == {
-        "sma_short_window": 10, "sma_long_window": 30}
+        "period": "3mo", "sma_short_window": 10, "sma_long_window": 30}
     assert body["trend_timeframes"]["day"] == {
-        "sma_short_window": 5, "sma_long_window": 15}
+        "period": "60d", "sma_short_window": 5, "sma_long_window": 15}
 
 
 def test_put_frequencies_round_trip(mock_read_context, tmp_path):
@@ -157,10 +157,37 @@ def test_put_trend_windows_round_trip(mock_read_context, tmp_path):
             "day": {"sma_short_window": 5, "sma_long_window": 15}},
     }).json()
     assert body["trend_timeframes"]["long_term"] == {
-        "sma_short_window": 40, "sma_long_window": 180}
+        "period": "4y", "sma_short_window": 40, "sma_long_window": 180}
     # The Streamlit period strings are untouched by a windows-only patch.
     assert cm.config["trend_analyzer"]["timeframe_settings"]["long_term"]["period"] == "4y"
     cm.save_config.assert_called_once()
+
+
+def test_put_trend_period_round_trip(mock_read_context, tmp_path):
+    cm = _seed(mock_read_context, tmp_path)
+    body = TestClient(app).put("/api/system/settings", json={
+        "trend_timeframes": {
+            "long_term": {"period": "5y", "sma_short_window": 50, "sma_long_window": 200},
+            "swing": {"period": "6mo", "sma_short_window": 10, "sma_long_window": 30},
+            "day": {"period": "60d", "sma_short_window": 5, "sma_long_window": 15}},
+    }).json()
+    assert body["trend_timeframes"]["long_term"]["period"] == "5y"
+    assert body["trend_timeframes"]["swing"]["period"] == "6mo"
+    assert cm.config["trend_analyzer"]["timeframe_settings"]["day"]["period"] == "60d"
+    cm.save_config.assert_called_once()
+
+
+def test_put_trend_bad_period_is_422(mock_read_context, tmp_path):
+    cm = _seed(mock_read_context, tmp_path)
+    for bad in ("decade", "", "  "):
+        resp = TestClient(app).put("/api/system/settings", json={
+            "trend_timeframes": {
+                "long_term": {"period": bad, "sma_short_window": 50, "sma_long_window": 200},
+                "swing": {"period": "3mo", "sma_short_window": 10, "sma_long_window": 30},
+                "day": {"period": "60d", "sma_short_window": 5, "sma_long_window": 15}},
+        })
+        assert resp.status_code == 422
+    cm.save_config.assert_not_called()
 
 
 def test_put_trend_short_ge_long_is_422(mock_read_context, tmp_path):

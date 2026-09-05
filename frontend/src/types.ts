@@ -398,6 +398,7 @@ export interface LoggingSettings {
 }
 
 export interface TimeframeWindows {
+  period: string;
   sma_short_window: number;
   sma_long_window: number;
 }

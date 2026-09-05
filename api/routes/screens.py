@@ -11,6 +11,7 @@ import io
 import json
 import os
 import platform
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -902,11 +903,13 @@ def _read_settings(config) -> SettingsResponse:
     log_console = log.get("console_config", {}) or {}
     tf = ta.get("timeframe_settings", {}) or {}
 
-    def _windows(name: str) -> TimeframeWindows:
-        # Fallbacks match the Streamlit timeframe widgets (10/30); the shipped
-        # config carries its own per-timeframe values, which win when present.
+    def _windows(name: str, default_period: str) -> TimeframeWindows:
+        # Fallbacks match the Streamlit timeframe widgets (period per
+        # timeframe, windows 10/30); the shipped config carries its own
+        # per-timeframe values, which win when present.
         slot = tf.get(name, {}) or {}
         return TimeframeWindows(
+            period=str(slot.get("period", default_period) or default_period),
             sma_short_window=int(num(slot.get("sma_short_window"), 10)),
             sma_long_window=int(num(slot.get("sma_long_window"), 30)),
         )
@@ -953,9 +956,9 @@ def _read_settings(config) -> SettingsResponse:
             console_enabled=bool(log_console.get("enabled", True)),
         ),
         trend_timeframes=TrendTimeframes(
-            long_term=_windows("long_term"),
-            swing=_windows("swing"),
-            day=_windows("day"),
+            long_term=_windows("long_term", "1y"),
+            swing=_windows("swing", "90d"),
+            day=_windows("day", "7d"),
         ),
     )
 
@@ -1135,12 +1138,25 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
                 raise HTTPException(
                     status_code=422,
                     detail=f"Short SMA must be less than Long SMA for {name}.")
+            # Mirror the Streamlit period check: non-empty Xy/Xd/Xmo.
+            period = str(group.period or "").strip()
+            if not period:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Period for {name} cannot be empty.")
+            if not re.match(r"^\d+(y|d|mo)$", period):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid period format for {name}: Use Xy, Xd, or Xmo.")
         tf_cfg = config.setdefault("trend_analyzer", {}).setdefault(
             "timeframe_settings", {})
+        provided = payload.trend_timeframes.model_dump(exclude_unset=True)
         for name in ("long_term", "swing", "day"):
             group = getattr(payload.trend_timeframes, name)
-            # Windows only: the period string is left untouched.
             slot = tf_cfg.setdefault(name, {})
+            # A windows-only patch must not clobber a stored period string.
+            if "period" in provided.get(name, {}):
+                slot["period"] = str(group.period).strip()
             slot["sma_short_window"] = int(group.sma_short_window)
             slot["sma_long_window"] = int(group.sma_long_window)
 

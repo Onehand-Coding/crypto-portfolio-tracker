@@ -32,9 +32,9 @@ const SETTINGS: SettingsResponse = {
     file_path: 'logs/portfolio_tracker.log', console_enabled: true,
   },
   trend_timeframes: {
-    long_term: { sma_short_window: 10, sma_long_window: 30 },
-    swing: { sma_short_window: 10, sma_long_window: 30 },
-    day: { sma_short_window: 10, sma_long_window: 30 },
+    long_term: { period: '4y', sma_short_window: 10, sma_long_window: 30 },
+    swing: { period: '90d', sma_short_window: 10, sma_long_window: 30 },
+    day: { period: '7d', sma_short_window: 10, sma_long_window: 30 },
   },
 };
 
@@ -107,8 +107,25 @@ describe('Settings schedules save', () => {
   });
 });
 
-describe('Settings config import', () => {
-  it('posts the picked file as multipart FormData under the file key', async () => {
+describe('Settings trend periods', () => {
+  it('carries edited period strings in the PUT payload', async () => {
+    const fetchMock = stubFetch();
+    render(<Settings />);
+    await screen.findByText('Trend timeframes');
+
+    fireEvent.change(screen.getByLabelText('long_term period'), { target: { value: '5y' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/settings saved/i)).toBeDefined();
+    });
+    const body = putBody(fetchMock) as Record<string, Record<string, Record<string, unknown>>>;
+    expect(body['trend_timeframes']['long_term']['period']).toBe('5y');
+    expect(body['trend_timeframes']['swing']['period']).toBe('90d');
+  });
+});
+
+describe('Settings config import', () => {  it('posts the picked file as multipart FormData under the file key', async () => {
     const fetchMock = stubFetch();
     render(<Settings />);
     await screen.findByText('Config transfer');
@@ -116,6 +133,7 @@ describe('Settings config import', () => {
     const file = new File(['{}'], 'config.json', { type: 'application/json' });
     fireEvent.change(screen.getByLabelText(/config file/i), { target: { files: [file] } });
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }));
 
     await waitFor(() => {
       expect(screen.getByText(/config imported/i)).toBeDefined();
@@ -125,6 +143,21 @@ describe('Settings config import', () => {
     const body = (post?.[1] as RequestInit | undefined)?.body;
     expect(body).toBeInstanceOf(FormData);
     expect((body as FormData).get('file')).toBeDefined();
+  });
+
+  it('requires confirmation before posting the import', async () => {
+    const fetchMock = stubFetch();
+    render(<Settings />);
+    await screen.findByText('Config transfer');
+
+    const file = new File(['{}'], 'config.json', { type: 'application/json' });
+    fireEvent.change(screen.getByLabelText(/config file/i), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/system/config/import')))
+      .toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/system/config/import')))
+      .toBe(false);
   });
 });
 

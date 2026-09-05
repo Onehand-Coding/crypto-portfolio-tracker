@@ -133,6 +133,8 @@ export function Backtest() {
   const [altsBuy, setAltsBuy] = useState(DEFAULT_ALTS_BUY);
   const [suppressBear, setSuppressBear] = useState(true);
   const [weights, setWeights] = useState<Record<string, string> | null>(null);
+  const [newAsset, setNewAsset] = useState('');
+  const [assetHint, setAssetHint] = useState<string | null>(null);
 
   // Mark the advanced section dirty: custom is omitted entirely until then,
   // so an untouched section stays a byte-identical plain run.
@@ -157,6 +159,27 @@ export function Backtest() {
     setAdvancedTouched(true);
     const base = shownWeights ?? {};
     setWeights({ ...base, [symbol]: v });
+  }
+
+  function addAsset() {
+    const symbol = newAsset.trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,10}$/.test(symbol)) {
+      setAssetHint('Use 2–10 letters/digits, e.g. DOGE.');
+      return;
+    }
+    if (shownWeights !== null && symbol in shownWeights) {
+      setAssetHint(`${symbol} is already in the allocation.`);
+      return;
+    }
+    setAssetHint(null);
+    setNewAsset('');
+    setWeight(symbol, '0');
+  }
+
+  function resetAllocation() {
+    setWeights(null);
+    setNewAsset('');
+    setAssetHint(null);
   }
 
   const runDisabled = Boolean(data?.is_running)
@@ -346,6 +369,32 @@ export function Backtest() {
                                 onChange={(nv) => setWeight(symbol, nv)} min={0} max={100} step={0.1} />
                     ))}
                   </div>
+                )}
+                <div className="flex items-end" style={{ gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                  <label className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+                    <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
+                                                       letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                      Add asset
+                    </span>
+                    <input
+                      value={newAsset}
+                      onChange={(e) => setNewAsset(e.target.value)}
+                      placeholder="DOGE"
+                      className="font-mono"
+                      style={{
+                        background: 'var(--surface-0)', border: '1px solid var(--border-strong)',
+                        borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                        padding: 'var(--space-2) var(--space-3)', width: '120px', fontSize: '14px',
+                      }}
+                    />
+                  </label>
+                  <Button onClick={addAsset}>Add asset</Button>
+                  <Button onClick={resetAllocation}>Reset to defaults</Button>
+                </div>
+                {assetHint && (
+                  <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
+                    {assetHint}
+                  </p>
                 )}
               </div>
             </div>

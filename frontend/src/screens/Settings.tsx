@@ -98,6 +98,7 @@ export function Settings() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [transferMessage, setTransferMessage] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [confirmImport, setConfirmImport] = useState(false);
 
   useEffect(() => { if (data) setForm(structuredClone(data)); }, [data]);
 
@@ -147,7 +148,7 @@ export function Settings() {
 
   function setTf(
     name: keyof SettingsResponse['trend_timeframes'],
-    key: 'sma_short_window' | 'sma_long_window',
+    key: 'period' | 'sma_short_window' | 'sma_long_window',
     value: string,
   ) {
     setForm((f) => f && {
@@ -209,14 +210,17 @@ export function Settings() {
         },
         trend_timeframes: {
           long_term: {
+            period: form!.trend_timeframes.long_term.period,
             sma_short_window: Number(form!.trend_timeframes.long_term.sma_short_window),
             sma_long_window: Number(form!.trend_timeframes.long_term.sma_long_window),
           },
           swing: {
+            period: form!.trend_timeframes.swing.period,
             sma_short_window: Number(form!.trend_timeframes.swing.sma_short_window),
             sma_long_window: Number(form!.trend_timeframes.swing.sma_long_window),
           },
           day: {
+            period: form!.trend_timeframes.day.period,
             sma_short_window: Number(form!.trend_timeframes.day.sma_short_window),
             sma_long_window: Number(form!.trend_timeframes.day.sma_long_window),
           },
@@ -264,6 +268,7 @@ export function Settings() {
       setForm(structuredClone(result));
       setTransferMessage('Config imported.');
       if (fileRef.current) fileRef.current.value = '';
+      setConfirmImport(false);
       reload();
     } catch (e) {
       setTransferMessage(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -520,10 +525,16 @@ export function Settings() {
           <p className="font-ui text-sm"
              style={{ color: 'var(--text-secondary)', margin: '0 0 var(--space-4) 0' }}>
             SMA window pairs per timeframe. Short must stay below long (1–200).
+            Periods use Xy/Xd/Xmo fetch windows (e.g. 4y, 90d, 7d).
           </p>
           <div className="flex flex-col" style={{ gap: 'var(--space-4)' }}>
             {TIMEFRAMES.map((name) => (
               <div key={name} className="grid grid-cols-3" style={{ gap: 'var(--space-5)' }}>
+                <Field label={`${name} period`}>
+                  <input value={form.trend_timeframes[name].period}
+                         onChange={(e) => setTf(name, 'period', e.target.value)}
+                         className="font-mono" style={{ ...inputStyle, width: 120 }} />
+                </Field>
                 <Field label={`${name} short window`}>
                   <NumberInput width={120}
                                value={String(form.trend_timeframes[name].sma_short_window)}
@@ -563,9 +574,22 @@ export function Settings() {
               <input ref={fileRef} type="file" accept=".json,application/json"
                      className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }} />
             </Field>
-            <Button onClick={importConfig} disabled={importing}>
-              {importing ? 'Importing…' : 'Import'}
+            <Button onClick={() => setConfirmImport(true)} disabled={importing || confirmImport}>
+              Import
             </Button>
+            {confirmImport && (
+              <>
+                <span className="font-ui" style={{ fontSize: '13px', color: 'var(--warning)' }}>
+                  Overwrite current settings with this file?
+                </span>
+                <Button onClick={importConfig} disabled={importing}>
+                  {importing ? 'Importing…' : 'Confirm import'}
+                </Button>
+                <Button onClick={() => setConfirmImport(false)} disabled={importing}>
+                  Cancel
+                </Button>
+              </>
+            )}
             {transferMessage && (
               <span className="font-ui" style={{ fontSize: '13px',
                        color: transferMessage.startsWith('Import failed')

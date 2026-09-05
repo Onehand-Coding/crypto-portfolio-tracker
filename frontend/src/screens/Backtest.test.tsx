@@ -94,3 +94,51 @@ describe('Backtest run payload', () => {
     expect(captured.body).toBeUndefined();
   });
 });
+
+describe('Backtest custom allocation assets', () => {
+  it('adds a new asset and includes it in the run payload', async () => {
+    const captured: { body?: Record<string, unknown> } = {};
+    stubFetch(captured);
+    render(<Backtest />);
+    await screen.findByRole('button', { name: /run backtest/i });
+    fireEvent.click(screen.getByRole('button', { name: /advanced parameters/i }));
+    await screen.findByLabelText('BTC weight (%)');
+    fireEvent.change(screen.getByPlaceholderText('DOGE'), { target: { value: 'doge' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add asset' }));
+    expect(await screen.findByLabelText('DOGE weight (%)')).toBeDefined();
+    fireEvent.change(screen.getByLabelText('DOGE weight (%)'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /run backtest/i }));
+    await waitFor(() => expect(captured.body).toBeDefined());
+    const custom = captured.body?.custom as Record<string, unknown>;
+    expect(custom['allocation']).toMatchObject({ BTC: 0.5, ETH: 0.5, DOGE: 0 });
+  });
+
+  it('rejects invalid and duplicate symbols with a hint', async () => {
+    stubFetch({});
+    render(<Backtest />);
+    await screen.findByRole('button', { name: /run backtest/i });
+    fireEvent.click(screen.getByRole('button', { name: /advanced parameters/i }));
+    await screen.findByLabelText('BTC weight (%)');
+    fireEvent.change(screen.getByPlaceholderText('DOGE'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add asset' }));
+    expect(await screen.findByText(/2–10 letters/i)).toBeDefined();
+    fireEvent.change(screen.getByPlaceholderText('DOGE'), { target: { value: 'BTC' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add asset' }));
+    expect(await screen.findByText(/already in the allocation/i)).toBeDefined();
+  });
+
+  it('resets added assets back to configured targets', async () => {
+    stubFetch({});
+    render(<Backtest />);
+    await screen.findByRole('button', { name: /run backtest/i });
+    fireEvent.click(screen.getByRole('button', { name: /advanced parameters/i }));
+    await screen.findByLabelText('BTC weight (%)');
+    fireEvent.change(screen.getByPlaceholderText('DOGE'), { target: { value: 'DOGE' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add asset' }));
+    await screen.findByLabelText('DOGE weight (%)');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }));
+    await waitFor(() => {
+      expect(screen.queryByLabelText('DOGE weight (%)')).toBeNull();
+    });
+  });
+});
