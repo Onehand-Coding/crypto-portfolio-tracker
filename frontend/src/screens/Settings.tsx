@@ -350,7 +350,7 @@ export function Settings() {
                      className="font-mono" style={{ ...inputStyle, width: 120 }} />
             </Field>
             <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px', margin: 0 }}>
-              The server syncs by itself on this cadence when it is running. The Sync button still forces one immediately.
+              The server syncs by itself on this cadence when it is running. The Sync button still forces one immediately. Changes apply without a restart.
             </p>
           </div>
         </Panel>
