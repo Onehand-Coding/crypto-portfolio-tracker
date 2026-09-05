@@ -226,3 +226,38 @@ def test_stream_route_emits_parseable_sse_frames(monkeypatch):
         json.loads(frame[len("data: "):])
 
     assert json.loads(frames[-1][len("data: "):])["event"] == "complete"
+
+
+def test_quiet_run_leaves_logger_level_untouched(monkeypatch, tmp_path):
+    """Auto-syncs must not lower the core logger to INFO: with ~288 runs a
+    day, chunk-progress INFO records would bury real warnings in the log."""
+    import asyncio
+    import logging
+
+    from api import sync_runner
+    from api.sync_runner import SyncRunner
+
+    class StubTracker:
+        config_manager = None
+        observed_level = None
+
+        async def run_full_sync(self):
+            # Capture the level *during* the run: the pre-fix code lowers it
+            # to INFO before this point, so this is what actually pins the
+            # quiet behaviour (the post-run level is restored either way).
+            StubTracker.observed_level = logging.getLogger(
+                "crypto_portfolio_tracker").level
+            logging.getLogger("crypto_portfolio_tracker").info("chunk noise")
+            return {}
+
+    monkeypatch.setattr(sync_runner, "get_tracker", lambda: StubTracker())
+    # Normalise entry state: test_runner_refuses_concurrent_syncs leaves a
+    # dangling slow-sync task whose INFO level outlives its event loop, so
+    # the core logger can still be at INFO when this test starts.
+    logging.getLogger("crypto_portfolio_tracker").setLevel(logging.NOTSET)
+    runner = SyncRunner(cache_path=tmp_path / "m.json")
+    runner._quiet = True
+    asyncio.run(runner._run())
+    assert StubTracker.observed_level == logging.NOTSET
+    assert logging.getLogger("crypto_portfolio_tracker").level == logging.NOTSET
+    assert (tmp_path / "m.json").exists()

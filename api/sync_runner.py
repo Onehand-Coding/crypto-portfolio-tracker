@@ -50,16 +50,18 @@ class SyncRunner:
         self._cache_path = cache_path
         self._queue: asyncio.Queue = asyncio.Queue()
         self._task: Optional[asyncio.Task] = None
+        self._quiet = False
 
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    def start(self) -> bool:
+    def start(self, quiet: bool = False) -> bool:
         """Begin a sync. Returns False if one is already in flight."""
         if self.is_running:
             return False
         self._queue = asyncio.Queue()
+        self._quiet = quiet
         # get_running_loop, not get_event_loop: the latter is deprecated on
         # Python 3.10+ and this project runs 3.12.
         self._task = asyncio.get_running_loop().create_task(self._run())
@@ -73,7 +75,12 @@ class SyncRunner:
         # The core logger has no explicit level, so it inherits root's
         # WARNING default and INFO-level chunk progress never reaches any
         # handler. Lower it for the run's duration only, then restore it.
-        logger.setLevel(logging.INFO)
+        # Quiet automatic runs skip this: chunk-progress INFO from ~288 runs
+        # a day would bury real warnings in the log. Warnings/errors still
+        # propagate at the root WARNING default, and complete/error events
+        # are emitted explicitly.
+        if not self._quiet:
+            logger.setLevel(logging.INFO)
         logger.addHandler(handler)
 
         def emit(event: dict) -> None:
@@ -115,7 +122,8 @@ class SyncRunner:
             emit({"event": "error", "message": str(exc)})
         finally:
             logger.removeHandler(handler)
-            logger.setLevel(previous_level)
+            if not self._quiet:
+                logger.setLevel(previous_level)
 
     async def events(self) -> AsyncIterator[dict]:
         # Single-consumer: this drains a shared queue, so two simultaneous
