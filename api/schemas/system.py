@@ -21,3 +21,11 @@ class Environment(BaseModel):
     is_testnet: bool
     database_path: str
     label: str = Field(description="'TESTNET' or 'LIVE' -- rendered globally")
+
+
+class SyncStatusResponse(BaseModel):
+    """The single source of truth for sync age. Polled by the app shell's
+    top bar; screens must not show their own metrics-cache age."""
+
+    is_running: bool
+    staleness: Staleness

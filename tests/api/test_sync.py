@@ -295,3 +295,72 @@ async def test_default_run_lowers_logger_level_during_sync(mock_tracker, tmp_pat
 
     assert observed["level"] == logging.INFO
     assert post_run_level == entry_level
+
+
+def _status_setup(mock_read_context, monkeypatch, age, config):
+    """Point GET /api/sync/status at a stub cache with a fixed age."""
+    import api.routes.sync as sync_route
+
+    class StubCache:
+        def __init__(self, path):
+            self.path = path
+
+        def age_seconds(self):
+            return age
+
+        def read(self):
+            return {"_cached_at": 0} if age is not None else None
+
+    monkeypatch.setattr(sync_route, "MetricsCache", StubCache)
+    cm = mock_read_context.config_manager
+    cm.is_testnet_mode = True
+    cm.config = config
+    return cm
+
+
+def test_sync_status_reports_age_and_idle(mock_read_context, monkeypatch):
+    _status_setup(mock_read_context, monkeypatch, age=100,
+                  config={"automation": {"auto_sync": {"enabled": True,
+                                                       "interval_minutes": 5}}})
+    body = TestClient(app).get("/api/sync/status").json()
+    assert body["is_running"] is False
+    assert body["staleness"]["age_seconds"] == 100
+    assert body["staleness"]["is_stale"] is False
+
+
+def test_sync_status_stale_after_three_intervals(mock_read_context, monkeypatch):
+    # Threshold is 3x the configured interval: 5 min -> stale past 900 s.
+    _status_setup(mock_read_context, monkeypatch, age=901,
+                  config={"automation": {"auto_sync": {"enabled": True,
+                                                       "interval_minutes": 5}}})
+    body = TestClient(app).get("/api/sync/status").json()
+    assert body["staleness"]["is_stale"] is True
+
+
+def test_sync_status_honours_custom_interval(mock_read_context, monkeypatch):
+    # 2 min interval -> 360 s threshold, so 400 s is stale.
+    _status_setup(mock_read_context, monkeypatch, age=400,
+                  config={"automation": {"auto_sync": {"enabled": True,
+                                                       "interval_minutes": 2}}})
+    body = TestClient(app).get("/api/sync/status").json()
+    assert body["staleness"]["is_stale"] is True
+
+
+def test_sync_status_never_synced_is_stale(mock_read_context, monkeypatch):
+    _status_setup(mock_read_context, monkeypatch, age=None, config={})
+    body = TestClient(app).get("/api/sync/status").json()
+    assert body["staleness"]["age_seconds"] is None
+    assert body["staleness"]["is_stale"] is True
+
+
+def test_sync_status_reports_running(mock_read_context, monkeypatch):
+    import api.routes.sync as sync_route
+
+    _status_setup(mock_read_context, monkeypatch, age=10, config={})
+
+    class BusyRunner:
+        is_running = True
+
+    monkeypatch.setattr(sync_route, "get_sync_runner", lambda: BusyRunner())
+    body = TestClient(app).get("/api/sync/status").json()
+    assert body["is_running"] is True
