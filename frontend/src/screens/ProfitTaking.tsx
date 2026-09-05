@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { AnalysisBar, Badge, Empty, ErrorPanel } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
-import { TradingStatusBanner } from '../components/TradingStatusBanner';
+import { ExecutionScreen } from '../components/ExecutionScreen';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatSigned, formatUsd, NULL_GLYPH} from '../lib/format';
@@ -41,13 +41,10 @@ export function ProfitTaking() {
   const checked = actionable.filter((o) => isChecked(o.symbol));
 
   return (
-    <>
-      <ScreenHeader title="Profit taking"
-                    subtitle="Positions scoring high enough to consider trimming" />
-
-      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
-        <TradingStatusBanner status={status.data ?? null} />
-        <AnalysisBar state={data} onRun={run} label="Profit-taking analysis" />
+    <ExecutionScreen title="Profit taking"
+                     subtitle="Positions scoring high enough to consider trimming"
+                     status={status.data ?? null}>
+      <AnalysisBar state={data} onRun={run} label="Profit-taking analysis" />
 
         <Panel title="Available to deploy">
           <KpiBand>
@@ -172,7 +169,6 @@ export function ProfitTaking() {
             </div>
           </ExecutePanel>
         )}
-      </div>
-    </>
+    </ExecutionScreen>
   );
 }

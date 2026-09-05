@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { Empty, ErrorPanel } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
-import { TradingStatusBanner } from '../components/TradingStatusBanner';
+import { ExecutionScreen } from '../components/ExecutionScreen';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatQty, formatUsd, NULL_GLYPH } from '../lib/format';
@@ -162,57 +162,49 @@ export function Wallets() {
 
   if (!data.has_data) {
     return (
-      <>
-        <ScreenHeader title="Wallets" subtitle="Spot & Earn, Futures, Funding" />
+      <ExecutionScreen title="Wallets" subtitle="Spot & Earn, Futures, Funding"
+                       status={status.data ?? null}>
         <Panel>
           <p className="font-ui text-sm" style={{ color: 'var(--warning)', margin: 0 }}>
             No data yet - run a sync to populate wallet balances.
           </p>
         </Panel>
-      </>
+      </ExecutionScreen>
     );
   }
 
   return (
-    <>
-      <ScreenHeader title="Wallets" subtitle="Spot & Earn, Futures, Funding"
-                    staleness={data.staleness} />
+    <ExecutionScreen title="Wallets" subtitle="Spot & Earn, Futures, Funding"
+                     status={status.data ?? null} staleness={data.staleness}>
+      <Panel>
+        <KpiBand>
+          <BandMetric emphasis label="Total" value={formatUsd(data.total_value_usd)} />
+          <BandMetric label="Spot & Earn" value={formatUsd(data.spot_earn_value_usd)} />
+          <BandMetric label="Futures" value={formatUsd(data.futures_value_usd)} />
+          <BandMetric label="Funding" value={formatUsd(data.funding_value_usd)} />
+        </KpiBand>
+      </Panel>
 
-      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
-        {/* Posture strip first, like every other execution screen: the LIVE /
-            SIMULATION state must be seen before any figure, never below it. */}
-        {status.data && <TradingStatusBanner status={status.data} />}
+      <Panel title="Spot & Earn">
+        <BalanceTable rows={data.spot_holdings} total={data.total_value_usd}
+                      emptyText="No spot or earn balances." />
+      </Panel>
+      <Panel title="Futures">
+        <BalanceTable rows={data.futures_balances} total={data.total_value_usd}
+                      emptyText="No futures balances." />
+      </Panel>
+      <Panel title="Funding">
+        <BalanceTable rows={data.funding_balances} total={data.total_value_usd}
+                      emptyText="No funding balances." />
+      </Panel>
 
-        <Panel>
-          <KpiBand>
-            <BandMetric emphasis label="Total" value={formatUsd(data.total_value_usd)} />
-            <BandMetric label="Spot & Earn" value={formatUsd(data.spot_earn_value_usd)} />
-            <BandMetric label="Futures" value={formatUsd(data.futures_value_usd)} />
-            <BandMetric label="Funding" value={formatUsd(data.funding_value_usd)} />
-          </KpiBand>
-        </Panel>
-
-        <Panel title="Spot & Earn">
-          <BalanceTable rows={data.spot_holdings} total={data.total_value_usd}
-                        emptyText="No spot or earn balances." />
-        </Panel>
-        <Panel title="Futures">
-          <BalanceTable rows={data.futures_balances} total={data.total_value_usd}
-                        emptyText="No futures balances." />
-        </Panel>
-        <Panel title="Funding">
-          <BalanceTable rows={data.funding_balances} total={data.total_value_usd}
-                        emptyText="No funding balances." />
-        </Panel>
-
-        {status.data && (
-          <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-                                         gap: 'var(--space-3)' }}>
-            <TransferWidget status={status.data} />
-            <RedeemWidget status={status.data} />
-          </div>
-        )}
-      </div>
-    </>
+      {status.data && (
+        <div className="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+                                       gap: 'var(--space-3)' }}>
+          <TransferWidget status={status.data} />
+          <RedeemWidget status={status.data} />
+        </div>
+      )}
+    </ExecutionScreen>
   );
 }

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { Badge, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
-import { TradingStatusBanner } from '../components/TradingStatusBanner';
+import { Badge, Button, Empty, ErrorPanel } from '../components/Screen';
+import { ExecutionScreen } from '../components/ExecutionScreen';
 import { useApi } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd, NULL_GLYPH } from '../lib/format';
@@ -77,14 +77,10 @@ export function Trading() {
   }
 
   return (
-    <>
-      <ScreenHeader title="Trading"
-                    subtitle="Review an order, then execute it - live or simulated per your settings" />
-
-      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
-        <TradingStatusBanner status={status.data ?? null} />
-
-        <Panel title="Order">
+    <ExecutionScreen title="Trading"
+                     subtitle="Review an order, then execute it - live or simulated per your settings"
+                     status={status.data ?? null}>
+      <Panel title="Order">
           <div className="flex items-end" style={{ gap: 'var(--space-4)', flexWrap: 'wrap' }}>
             <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
               <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
@@ -280,7 +276,6 @@ export function Trading() {
             )}
           </Panel>
         )}
-      </div>
-    </>
+    </ExecutionScreen>
   );
 }

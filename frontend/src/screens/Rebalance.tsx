@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
-import { AnalysisBar, Badge, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { AnalysisBar, Badge, Empty, ErrorPanel } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
-import { TradingStatusBanner } from '../components/TradingStatusBanner';
+import { ExecutionScreen } from '../components/ExecutionScreen';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercent, formatPercentPlain, formatQty, formatUsd, NULL_GLYPH} from '../lib/format';
@@ -61,13 +61,10 @@ export function Rebalance() {
   if (!data) return <Panel title="Rebalancing"><Empty>Loading…</Empty></Panel>;
 
   return (
-    <>
-      <ScreenHeader title="Rebalancing"
-                    subtitle="Current vs target allocation, with technical context" />
-
-      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
-        <TradingStatusBanner status={status.data ?? null} />
-        <AnalysisBar state={data} onRun={run} label="Rebalancing analysis" />
+    <ExecutionScreen title="Rebalancing"
+                     subtitle="Current vs target allocation, with technical context"
+                     status={status.data ?? null}>
+      <AnalysisBar state={data} onRun={run} label="Rebalancing analysis" />
 
         <Panel title="Suggestions">
           {!data.has_data ? (
@@ -194,7 +191,6 @@ export function Rebalance() {
             </ExecutePanel>
           );
         })()}
-      </div>
-    </>
+    </ExecutionScreen>
   );
 }

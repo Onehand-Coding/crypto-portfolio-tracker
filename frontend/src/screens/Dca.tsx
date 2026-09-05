@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { Panel } from '../components/Panel';
 import { BandMetric, KpiBand } from '../components/Band';
-import { AnalysisBar, Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
+import { AnalysisBar, Button, Empty, ErrorPanel } from '../components/Screen';
 import { ExecutePanel } from '../components/ExecutePanel';
-import { TradingStatusBanner } from '../components/TradingStatusBanner';
+import { ExecutionScreen } from '../components/ExecutionScreen';
 import { useApi, usePollWhile } from '../lib/useApi';
 import { apiPost } from '../lib/api';
 import { formatPercentPlain, formatQty, formatUsd } from '../lib/format';
@@ -65,13 +65,10 @@ export function Dca() {
   const checkedTotal = checked.reduce((sum, a) => sum + a.amount_usd, 0);
 
   return (
-    <>
-      <ScreenHeader title="Dollar cost averaging"
-                    subtitle="Preview where new capital would go before committing it" />
-
-      <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
-        <TradingStatusBanner status={status.data ?? null} />
-        <AnalysisBar state={data} onRun={run} label="Checking your USDT balance" />
+    <ExecutionScreen title="Dollar cost averaging"
+                     subtitle="Preview where new capital would go before committing it"
+                     status={status.data ?? null}>
+      <AnalysisBar state={data} onRun={run} label="Checking your USDT balance" />
 
         <Panel title="Available to deploy">
           <KpiBand>
@@ -278,7 +275,6 @@ export function Dca() {
             </div>
           </ExecutePanel>
         )}
-      </div>
-    </>
+    </ExecutionScreen>
   );
 }
