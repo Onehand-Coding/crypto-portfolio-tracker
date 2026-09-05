@@ -391,6 +391,8 @@ export interface TrendAnalyzerSettings {
 export interface AutomationSettings {
   dca_frequency: string;
   rebalancing_frequency: string;
+  auto_sync_enabled: boolean;
+  auto_sync_interval_minutes: number;
 }
 
 export interface ApiSettings {

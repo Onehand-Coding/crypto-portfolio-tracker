@@ -193,6 +193,8 @@ export function Settings() {
         automation: {
           dca_frequency: form!.automation.dca_frequency,
           rebalancing_frequency: form!.automation.rebalancing_frequency,
+          auto_sync_enabled: form!.automation.auto_sync_enabled,
+          auto_sync_interval_minutes: Number(form!.automation.auto_sync_interval_minutes),
         },
         apis: {
           coingecko_timeout: Number(form!.apis.coingecko_timeout),
@@ -333,6 +335,23 @@ export function Settings() {
                 {FREQUENCIES.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
             </Field>
+          </div>
+          <div className="flex flex-col" style={{ gap: 'var(--space-3)', marginTop: 'var(--space-4)' }}>
+            <label className="flex items-center" style={{ gap: 'var(--space-2)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={auto.auto_sync_enabled}
+                     onChange={(e) => setAuto('auto_sync_enabled', e.target.checked)} />
+              <span className="font-ui text-sm" style={{ color: 'var(--text-secondary)' }}>
+                Sync automatically
+              </span>
+            </label>
+            <Field label="Every N minutes">
+              <input type="number" min={2} max={1440} value={String(auto.auto_sync_interval_minutes)}
+                     onChange={(e) => setAuto('auto_sync_interval_minutes', e.target.value as unknown as number)}
+                     className="font-mono" style={{ ...inputStyle, width: 120 }} />
+            </Field>
+            <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px', margin: 0 }}>
+              The server syncs by itself on this cadence when it is running. The Sync button still forces one immediately.
+            </p>
           </div>
         </Panel>
 

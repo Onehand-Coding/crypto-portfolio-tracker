@@ -16,7 +16,12 @@ const SETTINGS: SettingsResponse = {
   stablecoin_symbols: ['USDT', 'USDC'],
   trend_analyzer: { rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, cryptocurrencies: ['BTC-USD'] },
   cleanup_days: 90,
-  automation: { dca_frequency: 'monthly', rebalancing_frequency: 'weekly' },
+  automation: {
+    dca_frequency: 'monthly',
+    rebalancing_frequency: 'weekly',
+    auto_sync_enabled: false,
+    auto_sync_interval_minutes: 5,
+  },
   apis: {
     coingecko_timeout: 30, binance_timeout: 60, binance_recv_window: 20000,
     binance_delay_ms: 500, coingecko_delay_ms: 1500,
@@ -103,7 +108,33 @@ describe('Settings schedules save', () => {
       expect(screen.getByText(/settings saved/i)).toBeDefined();
     });
     const body = putBody(fetchMock);
-    expect(body['automation']).toEqual({ dca_frequency: 'weekly', rebalancing_frequency: 'daily' });
+    expect(body['automation']).toEqual({
+      dca_frequency: 'weekly',
+      rebalancing_frequency: 'daily',
+      auto_sync_enabled: false,
+      auto_sync_interval_minutes: 5,
+    });
+  });
+});
+
+describe('Settings auto-sync save', () => {
+  it('carries the auto-sync toggle and interval in the PUT payload', async () => {
+    const fetchMock = stubFetch();
+    render(<Settings />);
+    await screen.findByText('Schedules');
+
+    fireEvent.click(screen.getByLabelText('Sync automatically'));
+    fireEvent.change(screen.getByLabelText('Every N minutes'), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/settings saved/i)).toBeDefined();
+    });
+    const body = putBody(fetchMock);
+    expect(body['automation']).toMatchObject({
+      auto_sync_enabled: true,
+      auto_sync_interval_minutes: 10,
+    });
   });
 });
 
