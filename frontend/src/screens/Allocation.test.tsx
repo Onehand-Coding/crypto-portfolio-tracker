@@ -12,7 +12,7 @@ describe('plDomain', () => {
 
   it('pins zero baseline for all-positive data', () => {
     expect(plDomain([1, 2, 3])[0]).toBe(0);
-    expect(plDomain([1, 2, 3])[1]).toBeGreaterThan(3);
+    expect(plDomain([1, 2, 3])[1]).toBeCloseTo(3.1, 10);
   });
 
   it('pins zero baseline for all-negative data', () => {
@@ -26,7 +26,12 @@ describe('plDomain', () => {
   });
 
   it('never degenerates for empty input', () => {
-    const [lo, hi] = plDomain([]);
-    expect(hi).toBeGreaterThan(lo);
+    expect(plDomain([])).toEqual([0, 1]);
+  });
+
+  it('never degenerates for single-element span-0 input', () => {
+    expect(plDomain([5])).toEqual([0, 6]);
+    expect(plDomain([-5])).toEqual([-6, 0]);
+    expect(plDomain([0])).toEqual([-1, 1]);
   });
 });

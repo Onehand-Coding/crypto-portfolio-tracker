@@ -17,7 +17,8 @@ const SLICE_COLOURS = [
 
 /** Y-axis domain for the P/L chart that always contains the data and zero.
     Recharts' auto domain demonstrably clipped a -$34.50 bar at -$24, so the
-    domain is owned here and unit-tested with real magnitudes. */
+    domain is owned here and unit-tested with real magnitudes.
+    Input contract: values are finite numbers; non-finite input is an upstream serialization bug, not handled here. */
 export function plDomain(values: number[]): [number, number] {
   if (values.length === 0) return [0, 1];
   const lo = Math.min(...values);
