@@ -70,7 +70,36 @@ def test_trading_mode_toggles_persist(mock_read_context):
     cm.save_config.assert_called_once()
 
 
-def test_toggles_default_false_when_absent(mock_read_context):
+def test_testnet_flip_resets_singletons(mock_read_context, monkeypatch):
+    """A testnet flip must drop the cached read context and tracker.
+
+    Both bind the database file (and the tracker the Binance endpoint) at
+    construction. Without a rebuild, pages keep serving the pre-flip
+    database even after a sync -- testnet pages showing live assets.
+    """
+    import api.routes.screens as screens
+
+    cm = _cm(mock_read_context)
+    cm.config["portfolio"]["testnet_mode"] = False
+    resets = []
+    monkeypatch.setattr(screens, "reset_singletons", lambda: resets.append(1))
+    body = TestClient(app).put(
+        "/api/system/settings", json={"testnet_mode": True}
+    ).json()
+    assert body["testnet_mode"] is True
+    assert len(resets) == 1
+
+
+def test_same_testnet_value_does_not_reset_singletons(mock_read_context, monkeypatch):
+    import api.routes.screens as screens
+
+    cm = _cm(mock_read_context)
+    cm.config["portfolio"]["testnet_mode"] = False
+    resets = []
+    monkeypatch.setattr(screens, "reset_singletons", lambda: resets.append(1))
+    TestClient(app).put("/api/system/settings", json={"testnet_mode": False})
+    TestClient(app).put("/api/system/settings", json={"minimum_trade_usd": 9})
+    assert resets == []
     _cm(mock_read_context)
     body = TestClient(app).get("/api/system/settings").json()
     assert body["testnet_mode"] is False

@@ -298,7 +298,7 @@ export function Settings() {
               checked={form.testnet_mode}
               onChange={(v) => setForm((f) => f && { ...f, testnet_mode: v })}
               label="🧪 Binance testnet mode"
-              hint="Switches between mainnet and testnet. Takes full effect after a server restart."
+              hint="Switches between mainnet and testnet. Takes effect immediately: the next read and the next sync use the other database and endpoint."
               accent="var(--warning)"
             />
             <Toggle

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from api.cache import MetricsCache, analysis_cache_path, cache_path_for
-from api.deps import get_read_context, get_tracker
+from api.deps import get_read_context, get_tracker, reset_singletons
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
     DISPOSAL_KIND_LABELS,
@@ -1073,9 +1073,17 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         portfolio["minimum_trade_usd"] = float(payload.minimum_trade_usd)
 
     # The two exchange switches, mirroring the CLI/Streamlit trading-mode block.
-    # testnet_mode selects the endpoint (and DB); a running server keeps its
-    # cached tracker, so a flip here needs a restart to take full effect.
+    # testnet_mode selects the endpoint (and DB). The read context and the
+    # tracker bind both at construction, so a flip must drop the cached
+    # singletons -- otherwise pages keep serving the pre-flip database and a
+    # manual sync reuses the pre-flip endpoint. The reset runs after the
+    # save below, and only on an actual flip, so unrelated settings saves
+    # never disturb live connections. (Streamlit's ui_controller.reload()
+    # exists for the same reason.)
+    testnet_flipped = False
     if payload.testnet_mode is not None:
+        if bool(payload.testnet_mode) != bool(portfolio.get("testnet_mode", False)):
+            testnet_flipped = True
         portfolio["testnet_mode"] = bool(payload.testnet_mode)
     if payload.live_trading_enabled is not None:
         portfolio["live_trading_enabled"] = bool(payload.live_trading_enabled)
@@ -1280,6 +1288,12 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
                         status_code=422, detail="Log file directory is not writable.")
 
     _save_config_preserving_secrets(cm)
+    if testnet_flipped:
+        # The current request finishes on its own (pre-flip) context; the
+        # next read or sync rebuilds against the flipped database/endpoint.
+        # An in-flight sync is unaffected: it holds its tracker object
+        # directly, and concurrent syncs are refused with 409.
+        reset_singletons()
     return _read_settings(cm.config)
 
 

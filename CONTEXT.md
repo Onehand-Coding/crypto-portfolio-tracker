@@ -437,8 +437,10 @@ trading is actually needed.
 selects the endpoint. So live trading off = dry run on either endpoint; on =
 real orders. Both `testnet_mode` and `live_trading_enabled` are editable from the
 React Settings screen (Trading mode panel) and every execution screen shows the
-three-cell `TradingStatusBanner`. A `testnet_mode` flip needs a server restart to
-take full effect (the running process caches the tracker/DB path). The typed
+three-cell `TradingStatusBanner`. A `testnet_mode` flip takes effect without a
+restart: `update_settings` drops the cached read context and tracker singletons
+(`api/deps.py::reset_singletons()`), so the next read and the next sync rebuild
+against the other database and endpoint. The typed
 `EXECUTE` confirmation gate is unchanged.
 
 ---
