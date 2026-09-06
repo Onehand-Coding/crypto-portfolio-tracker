@@ -24,7 +24,7 @@ vi.mock('recharts', () => {
 });
 
 import { Cockpit } from './Cockpit';
-import type { CockpitResponse, OverviewResponse, SystemHealthResponse } from '../types';
+import type { CockpitResponse, OverviewResponse, ProfitOpportunity, ProfitResponse, SystemHealthResponse } from '../types';
 
 /** The alert cards link to the screens that resolve them, so the cockpit
  *  requires router context. */
@@ -98,7 +98,7 @@ const HEALTH: SystemHealthResponse = {
   binance_configured: true,
 };
 
-function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPULATED) {
+function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPULATED, profit: ProfitResponse | Error = PROFIT_EMPTY) {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     if (url === '/api/portfolio/cockpit') {
@@ -112,9 +112,42 @@ function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPUL
     if (url === '/api/system/health') {
       return Promise.resolve({ ok: true, json: async () => HEALTH });
     }
+    if (url === '/api/strategy/profit') {
+      if (profit instanceof Error) return Promise.reject(profit);
+      return Promise.resolve({ ok: true, json: async () => profit });
+    }
     return Promise.reject(new Error(`Unexpected request: ${url}`));
   }));
 }
+
+/** A fresh run that found nothing: the neutral profit state, so existing
+ *  dashboard tests keep asserting a card-free alerts section. */
+const PROFIT_EMPTY: ProfitResponse = {
+  opportunities: [],
+  has_data: true,
+  is_running: false,
+  error: null,
+  staleness: POPULATED.staleness,
+};
+
+function profitWith(opportunity: ProfitOpportunity, staleness = POPULATED.staleness, is_running = false): ProfitResponse {
+  return { opportunities: [opportunity], has_data: true, is_running, error: null, staleness };
+}
+
+const SCORED: ProfitOpportunity = {
+  symbol: 'SOL',
+  unrealized_gain_usd: 42.50,
+  unrealized_gain_pct: 61.20,
+  opportunity_score: 82,
+  rsi_score: 80,
+  pl_score: 80,
+  resistance_score: 90,
+  market_context_score: 70,
+  current_price: 103.36,
+  support_level: 90.10,
+  resistance_level: 105.00,
+  reasons: ['Near resistance'],
+};
 
 beforeEach(() => vi.unstubAllGlobals());
 afterEach(() => vi.useRealTimers());
@@ -303,6 +336,63 @@ describe('Cockpit constrained state', () => {
     renderCockpit();
 
     await waitFor(() => expect(screen.getByText(/no data yet/i)).toBeDefined());
+  });
+});
+
+describe('Cockpit profit-taking alert', () => {
+  it('shows a trim card for a fresh high-scoring opportunity', async () => {
+    mockDashboardFetch(undefined, POPULATED, profitWith(SCORED));
+    renderCockpit();
+
+    expect(await screen.findByText('Alerts & review items (1)')).toBeDefined();
+    expect(screen.getByText('SOL scored 82 — trim candidate')).toBeDefined();
+    expect(screen.getByText('Up +$42.50 (+61.20%) at $103.36.')).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Review profit-taking' }))
+      .toHaveAttribute('href', '/profit');
+  });
+
+  it('stays silent when the top score is below the positive boundary', async () => {
+    mockDashboardFetch(undefined, POPULATED, profitWith({ ...SCORED, opportunity_score: 60 }));
+    renderCockpit();
+
+    await screen.findByText('$57.78');
+    expect(screen.queryByText(/Alerts & review items/)).toBeNull();
+  });
+
+  it('stays silent on a stale analysis run rather than nudging on dead signal', async () => {
+    mockDashboardFetch(undefined, POPULATED, profitWith(
+      SCORED, { ...POPULATED.staleness, age_seconds: 7200, is_stale: true }));
+    renderCockpit();
+
+    await screen.findByText('$57.78');
+    expect(screen.queryByText(/Alerts & review items/)).toBeNull();
+  });
+
+  it('stays silent while an analysis run is in flight', async () => {
+    mockDashboardFetch(undefined, POPULATED, profitWith(SCORED, POPULATED.staleness, true));
+    renderCockpit();
+
+    await screen.findByText('$57.78');
+    expect(screen.queryByText(/Alerts & review items/)).toBeNull();
+  });
+
+  it('stays silent when no analysis has ever run', async () => {
+    mockDashboardFetch(undefined, POPULATED, { ...PROFIT_EMPTY, has_data: false });
+    renderCockpit();
+
+    await screen.findByText('$57.78');
+    expect(screen.queryByText(/Alerts & review items/)).toBeNull();
+  });
+
+  it('renders the dashboard without the card when the profit fetch fails', async () => {
+    // The alerts section must not depend on the analysis pipeline being up:
+    // every other fetch succeeds here, only /api/strategy/profit rejects.
+    mockDashboardFetch(undefined, POPULATED, new Error('Analysis unavailable'));
+    renderCockpit();
+
+    await screen.findByText('$57.78');
+    expect(screen.queryByText(/Alerts & review items/)).toBeNull();
+    expect(screen.queryByText(/cannot reach|failed|error|unable/i)).toBeNull();
   });
 });
 

@@ -10,7 +10,7 @@ import { Empty, ErrorPanel } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { formatPercent, formatPercentPlain, formatSigned, formatUsd } from '../lib/format';
 import type {
-  AccountingBasis, CockpitResponse, OverviewResponse, SystemHealthResponse,
+  AccountingBasis, CockpitResponse, OverviewResponse, ProfitResponse, SystemHealthResponse,
 } from '../types';
 
 const RANGES = [
@@ -190,6 +190,10 @@ function PerformancePanel() {
 export function Cockpit() {
   const cockpit = useApi<CockpitResponse>('/api/portfolio/cockpit');
   const health = useApi<SystemHealthResponse>('/api/system/health');
+  // Fail-soft by construction: a rejected profit fetch leaves data null and
+  // this section simply contributes no card, so the Dashboard never depends
+  // on the analysis pipeline being up.
+  const profit = useApi<ProfitResponse>('/api/strategy/profit');
 
   const data = cockpit.data;
 
@@ -251,8 +255,28 @@ export function Cockpit() {
         action: { to: '/rebalance', label: 'Review rebalance' },
       });
     }
+    // Profit-taking only: the core returns opportunities solely when every
+    // rebalance signal is HOLD, so this card and the drift card above are
+    // near-mutually exclusive by construction — no dedup rule needed. The
+    // freshness gate matters: a trim nudge from a stale run is a real-money
+    // action on dead signal, so absent/running/stale analysis stays silent.
+    // The backend sorts highest score first; 75 is the screen's own
+    // "positive" boundary for "high enough to consider trimming".
+    const analysis = profit.data;
+    const fresh = analysis !== null && analysis.has_data && !analysis.is_running
+      && !analysis.staleness.is_stale;
+    const top = fresh ? (analysis.opportunities ?? [])[0] : undefined;
+    const score = top?.opportunity_score;
+    if (top && score !== null && score !== undefined && score >= 75) {
+      out.push({
+        kind: 'Profit-taking', tone: 'action',
+        title: `${top.symbol} scored ${score.toFixed(0)} — trim candidate`,
+        body: `Up ${formatSigned(top.unrealized_gain_usd)} (${formatPercent(top.unrealized_gain_pct)}) at ${formatUsd(top.current_price)}.`,
+        action: { to: '/profit', label: 'Review profit-taking' },
+      });
+    }
     return out;
-  }, [data, drift]);
+  }, [data, drift, profit.data]);
 
   if (cockpit.error) {
     return <ErrorPanel title="Dashboard" message={`Failed to load dashboard data: ${cockpit.error}`} />;
