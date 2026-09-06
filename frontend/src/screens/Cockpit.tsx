@@ -277,7 +277,7 @@ export function Cockpit() {
           it. Previously these were three stacked cards that filled the screen
           and pushed the holdings below the fold. */}
       <Panel>
-        <div className="flex flex-wrap items-end" style={{ gap: 'var(--space-6)' }}>
+        <div className="flex flex-wrap items-start" style={{ gap: 'var(--space-6)' }}>
           <div className="flex flex-col" style={{ gap: '3px' }}>
             <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '10px',
                                                fontWeight: 700, letterSpacing: '0.06em',

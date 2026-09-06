@@ -83,9 +83,9 @@ def cockpit(ctx=Depends(get_read_context)) -> CockpitResponse:
         return CockpitResponse(
             total_value_usd=0.0,
             net_invested=empty.model_copy(update={
-                "label": "NET INVESTED BASIS", "question": "did I make money?"}),
+                "label": "Cash profit", "question": "did I make money?"}),
             fifo=empty.model_copy(update={
-                "label": "FIFO BASIS", "question": "are my holdings underwater?"}),
+                "label": "Holdings profit (FIFO)", "question": "are my holdings underwater?"}),
             holdings=[],
             staleness=_staleness(None, None),
             environment=environment,
@@ -101,9 +101,9 @@ def cockpit(ctx=Depends(get_read_context)) -> CockpitResponse:
     return CockpitResponse(
         total_value_usd=total_value,
         net_invested=_basis(
-            "NET INVESTED BASIS", "did I make money?", total_value, net_invested_basis),
+            "Cash profit", "did I make money?", total_value, net_invested_basis),
         fifo=_basis(
-            "FIFO BASIS", "are my holdings underwater?", total_value, fifo_basis),
+            "Holdings profit (FIFO)", "are my holdings underwater?", total_value, fifo_basis),
         holdings=holdings,
         staleness=_staleness(cache.age_seconds(), cached.get("_cached_at")),
         environment=environment,

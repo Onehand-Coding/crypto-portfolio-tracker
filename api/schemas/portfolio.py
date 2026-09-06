@@ -9,7 +9,7 @@ class AccountingBasis(BaseModel):
     """One of the two accounting models. Both are correct; they answer
     different questions, and the UI must never present them as equal."""
 
-    label: str = Field(description="'NET INVESTED BASIS' or 'FIFO BASIS'")
+    label: str = Field(description="'Cash profit' or 'Holdings profit (FIFO)'")
     question: str = Field(description="The plain question this basis answers")
     basis_usd: float = Field(description="Denominator: net in, or cost basis")
     pl_usd: float

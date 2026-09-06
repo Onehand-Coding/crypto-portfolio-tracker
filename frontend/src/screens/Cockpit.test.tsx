@@ -34,11 +34,11 @@ const renderCockpit = () =>
 const POPULATED: CockpitResponse = {
   total_value_usd: 57.78,
   net_invested: {
-    label: 'NET INVESTED BASIS', question: 'did I make money?',
+    label: 'Cash profit', question: 'did I make money?',
     basis_usd: 76.41, pl_usd: -18.63, pl_percent: -24.38,
   },
   fifo: {
-    label: 'FIFO BASIS', question: 'are my holdings underwater?',
+    label: 'Holdings profit (FIFO)', question: 'are my holdings underwater?',
     basis_usd: 199.75, pl_usd: -141.97, pl_percent: -71.07,
   },
   holdings: [
@@ -154,6 +154,8 @@ describe('Cockpit populated state', () => {
 
     await waitFor(() => expect(screen.getByText('did I make money?')).toBeDefined());
     expect(screen.getByText('are my holdings underwater?')).toBeDefined();
+    expect(screen.getByText('Cash profit')).toBeDefined();
+    expect(screen.getByText('Holdings profit (FIFO)')).toBeDefined();
   });
 
   it('shows each basis denominator so the two are visibly different', async () => {
