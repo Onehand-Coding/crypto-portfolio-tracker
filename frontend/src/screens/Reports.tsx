@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
@@ -89,6 +89,15 @@ export function Reports() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [fileMsg, setFileMsg] = useState<string | null>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  // The preview panel sits below the whole file table, so with dozens of
+  // files a click would otherwise appear to do nothing. Bring it into view.
+  useEffect(() => {
+    if (preview || previewError) {
+      previewRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [preview, previewError]);
 
   async function generate() {
     setGenerating(true);
@@ -388,6 +397,7 @@ export function Reports() {
               </table>
             </div>
           )}
+          <div ref={previewRef}>
           {previewError && (
             <p className="font-ui" style={{ fontSize: '13px', marginBottom: 0,
                      marginTop: 'var(--space-3)', color: 'var(--negative)' }}>
@@ -434,6 +444,7 @@ export function Reports() {
               )}
             </div>
           )}
+          </div>
         </Panel>
       </div>
     </>

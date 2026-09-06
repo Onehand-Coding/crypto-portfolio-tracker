@@ -82,6 +82,10 @@ function postBody(fetchMock: ReturnType<typeof stubFetch>, part: string): unknow
 
 beforeEach(() => vi.unstubAllGlobals());
 
+beforeEach(() => {
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
+
 describe('Reports fetch failure', () => {
   it('renders a visible error when fetch rejects, not a permanent loading state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
@@ -163,8 +167,7 @@ describe('Reports preview', () => {
     expect(screen.getByText(/101 more lines/)).toBeDefined();
   });
 
-  it('renders image previews as an image, not binary text', async () => {
-    stubFetch();
+  it('renders image previews as an image, not binary text', async () => {    stubFetch();
     render(<Reports />);
     await screen.findByText(IMAGE_NAME);
     const row = screen.getByText(IMAGE_NAME).closest('tr');
@@ -174,6 +177,16 @@ describe('Reports preview', () => {
     expect(img.getAttribute('src')).toBe(IMAGE_PREVIEW.image_url);
     // No binary mojibake alongside it.
     expect(screen.queryByText(/101 more lines/)).toBeNull();
+  });
+
+  it('scrolls the preview into view so long file lists do not hide it', async () => {
+    stubFetch();
+    render(<Reports />);
+    await screen.findByText(FILE_NAME);
+    const row = screen.getByText(FILE_NAME).closest('tr');
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Preview' }));
+    await screen.findByText(/date,asset,type/i);
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });
 
