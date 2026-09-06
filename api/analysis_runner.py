@@ -62,7 +62,7 @@ async def _profit_taking(tracker, params=None) -> dict:
 
 
 async def _dca(tracker, params=None) -> dict:
-    balance = tracker.dca_manager.get_available_usdt_balance()
+    balance = await asyncio.to_thread(tracker.dca_manager.get_available_usdt_balance)
     return {"available": balance}
 
 

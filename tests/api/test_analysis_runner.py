@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import api.analysis_runner as runner_module
-from api.analysis_runner import AnalysisRunner
+from api.analysis_runner import AnalysisRunner, _dca
 
 
 class _StubCache:
@@ -56,3 +56,19 @@ async def test_run_start_keeps_event_loop_responsive(monkeypatch):
 
     await asyncio.wait_for(runner._tasks["dca"], timeout=15)
     assert _StubCache.written == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_dca_balance_fetch_keeps_event_loop_responsive():
+    def slow_balance():
+        time.sleep(0.3)
+        return {"total": 10.0}
+
+    tracker = SimpleNamespace(
+        dca_manager=SimpleNamespace(get_available_usdt_balance=slow_balance)
+    )
+    started = time.monotonic()
+    task = asyncio.create_task(_dca(tracker))
+    await asyncio.sleep(0.05)
+    assert time.monotonic() - started < 0.2
+    assert await task == {"available": {"total": 10.0}}

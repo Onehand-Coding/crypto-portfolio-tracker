@@ -3,6 +3,7 @@ Portfolio Analyzer - Handles all portfolio analysis and metrics calculation
 Moved from CryptoPortfolioTracker to separate concerns.
 """
 
+import asyncio
 import logging
 import datetime
 from typing import Dict, Any, Optional, List
@@ -182,16 +183,19 @@ class PortfolioAnalyzer:
         analyzer = CryptoTrendAnalyzer(
             config=self.config, binance_client=self.binance_client
         )
-        live_balances_df = self.fetcher.fetch_binance_balances()
+        live_balances_df = await asyncio.to_thread(self.fetcher.fetch_binance_balances)
         if live_balances_df.empty:
             self.logger.error("Could not fetch live balances. Cannot rebalance.")
             return None
 
         # Use the data synchronizer to get current prices
+        symbols = list(live_balances_df["symbol"].unique())
         prices = {}
         if self.data_synchronizer:
             try:
-                prices = self.data_synchronizer._get_current_prices(list(live_balances_df["symbol"].unique()))
+                prices = await asyncio.to_thread(
+                    self.data_synchronizer._get_current_prices, symbols
+                )
             except Exception as e:
                 self.logger.error(f"Error fetching prices with data synchronizer: {e}")
                 # Fallback to the enricher if data synchronizer fails
@@ -204,10 +208,14 @@ class PortfolioAnalyzer:
                     except Exception as e2:
                         self.logger.error(f"Error fetching prices with enricher: {e2}")
                         # Final fallback to the stub method
-                        prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
+                        prices = await asyncio.to_thread(
+                            self.data_synchronizer._get_current_prices, symbols
+                        )
                 else:
                     # Fallback to the stub method if enricher is not available
-                    prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
+                    prices = await asyncio.to_thread(
+                        self.data_synchronizer._get_current_prices, symbols
+                    )
         else:
             # Fallback to the enricher if data synchronizer is not available
             if self.enricher:
@@ -218,11 +226,10 @@ class PortfolioAnalyzer:
                         prices["USDT"] = 1.0
                 except Exception as e:
                     self.logger.error(f"Error fetching prices with enricher: {e}")
-                    # Final fallback to the stub method
-                    prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
+                    prices = {}
             else:
                 # Fallback to the stub method if neither data synchronizer nor enricher is available
-                prices = self._get_current_prices(list(live_balances_df["symbol"].unique()))
+                prices = {}
 
         live_balances_df["value_usd"] = (
             live_balances_df["symbol"].map(prices).fillna(0.0)
@@ -324,12 +331,16 @@ class PortfolioAnalyzer:
             return metrics
 
         # 1. Calculate Spot + Earn Value
-        total_balances_api_df = self.fetcher.fetch_binance_balances().rename(
+        total_balances_api_df = (await asyncio.to_thread(
+            self.fetcher.fetch_binance_balances
+        )).rename(
             columns={"quantity": "total_quantity_api"}
         )
         earn_balances_df = pd.DataFrame(columns=["symbol", "earn_quantity"])
         if not getattr(self, 'config_manager', None) or not self.config_manager.is_testnet_mode:
-            earn_dict = self.fetcher.fetch_simple_earn_balances(total_balances_api_df)
+            earn_dict = await asyncio.to_thread(
+                self.fetcher.fetch_simple_earn_balances, total_balances_api_df
+            )
             if earn_dict:
                 earn_balances_df = pd.DataFrame(
                     list(earn_dict.items()), columns=["symbol", "earn_quantity"]
@@ -407,7 +418,7 @@ class PortfolioAnalyzer:
         futures_value = 0
         futures_balances = []
         if not getattr(self, 'config_manager', None) or not self.config_manager.is_testnet_mode:
-            futures_balances = self.fetcher.fetch_futures_balance()
+            futures_balances = await asyncio.to_thread(self.fetcher.fetch_futures_balance)
         for item in futures_balances:
             if item.get("asset") == "USDT":
                 futures_value += float(item.get("balance", 0.0))
@@ -416,7 +427,9 @@ class PortfolioAnalyzer:
         funding_value = 0
         funding_balances_raw = []
         if not getattr(self, 'config_manager', None) or not self.config_manager.is_testnet_mode:
-            funding_balances_raw = self.fetcher.fetch_funding_balance()
+            funding_balances_raw = await asyncio.to_thread(
+                self.fetcher.fetch_funding_balance
+            )
         funding_balances = [
             b for b in funding_balances_raw if float(b.get("free", 0.0)) > 1e-8
         ]
