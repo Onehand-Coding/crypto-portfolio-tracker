@@ -100,6 +100,38 @@ def test_same_testnet_value_does_not_reset_singletons(mock_read_context, monkeyp
     TestClient(app).put("/api/system/settings", json={"testnet_mode": False})
     TestClient(app).put("/api/system/settings", json={"minimum_trade_usd": 9})
     assert resets == []
+
+
+def test_testnet_tracked_symbols_persist_normalised(mock_read_context, monkeypatch):
+    import api.routes.screens as screens
+
+    cm = _cm(mock_read_context)
+    resets = []
+    monkeypatch.setattr(screens, "reset_singletons", lambda: resets.append(1))
+    body = TestClient(app).put(
+        "/api/system/settings",
+        json={"testnet_tracked_symbols": [" btc ", "eth", ""]},
+    ).json()
+    assert body["testnet_tracked_symbols"] == ["BTC", "ETH"]
+    assert cm.config["portfolio"]["testnet_tracked_symbols"] == ["BTC", "ETH"]
+    cm.save_config.assert_called_once()
+    # Editing the list must not disturb live connections: the mapper and the
+    # reads see the same config dict, so no rebuild is needed.
+    assert resets == []
+
+
+def test_testnet_tracked_symbols_default_empty_and_clearable(mock_read_context):
+    cm = _cm(mock_read_context)
+    assert TestClient(app).get("/api/system/settings").json()["testnet_tracked_symbols"] == []
+    cm.config["portfolio"]["testnet_tracked_symbols"] = ["BTC"]
+    body = TestClient(app).put(
+        "/api/system/settings", json={"testnet_tracked_symbols": []}
+    ).json()
+    assert body["testnet_tracked_symbols"] == []
+    assert cm.config["portfolio"]["testnet_tracked_symbols"] == []
+
+
+def test_toggles_default_false_when_absent(mock_read_context):
     _cm(mock_read_context)
     body = TestClient(app).get("/api/system/settings").json()
     assert body["testnet_mode"] is False

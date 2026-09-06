@@ -58,3 +58,15 @@ class CockpitResponse(BaseModel):
                     "total_value_usd is understated by an unknown amount and "
                     "must be presented with that caveat.",
     )
+    excluded_count: int = Field(
+        0,
+        description="Holdings hidden by the testnet track-only list. Unlike "
+                    "unpriced holdings these are a user choice, not a data "
+                    "failure: they must not feed the re-sync loop.",
+    )
+    excluded_symbols: list[str] = Field(
+        default_factory=list,
+        description="Symbols hidden by the testnet track-only list, so a "
+                    "typo in the list is visible instead of silently "
+                    "vanishing a position.",
+    )

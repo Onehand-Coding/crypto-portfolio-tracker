@@ -53,8 +53,37 @@ class SymbolMapper:
         self._coins_list_last_updated: float = 0
         self.derivative_keywords = ["bridged", "wrapped", "peg", "wormhole"]
 
+    def _is_tracked(self, normalized_symbol: str) -> bool:
+        """Whether a symbol may be resolved to a CoinGecko ID.
+
+        Testnet-only track list (`portfolio.testnet_tracked_symbols`): when
+        set, resolving anything off the list is refused *before* discovery,
+        so a sync never spends CoinGecko calls on assets the user chose not
+        to follow. The caller sees the same outcome as a failed lookup
+        (default / KeyError), and the API layer hides those rows with an
+        explicit excluded-count caveat. Live mode and an absent or empty
+        list are unrestricted, exactly as before.
+        """
+        portfolio = self.config.get("portfolio", {}) or {}
+        if not portfolio.get("testnet_mode", False):
+            return True
+        tracked = portfolio.get("testnet_tracked_symbols")
+        if not isinstance(tracked, (list, tuple, set)) or not tracked:
+            return True
+        wanted = {str(s).strip().upper() for s in tracked}
+        wanted.discard("")
+        return normalized_symbol in wanted
+
     def __getitem__(self, symbol: str) -> str:
         normalized_symbol = self.normalize_symbol(symbol)
+        if not self._is_tracked(normalized_symbol):
+            self.logger.info(
+                f"Skipping discovery for '{symbol}': not in "
+                f"testnet_tracked_symbols."
+            )
+            raise KeyError(
+                f"Symbol '{symbol}' is not in testnet_tracked_symbols."
+            )
         if normalized_symbol in self._mappings:
             return self._mappings[normalized_symbol]
 
@@ -74,9 +103,20 @@ class SymbolMapper:
         it triggers the discovery process to find it from the API.
         """
         normalized_symbol = self.normalize_symbol(symbol)
+        tracked = self._is_tracked(normalized_symbol)
         # First, check the existing mappings
-        if normalized_symbol in self._mappings:
+        if tracked and normalized_symbol in self._mappings:
             return self._mappings[normalized_symbol]
+
+        if not tracked:
+            # Same gate as __getitem__: no discovery for off-list symbols.
+            # Logged at info, not error -- this is the user's choice, and the
+            # point is to stop the per-sync discovery-failure noise.
+            self.logger.info(
+                f"Skipping discovery for '{symbol}': not in "
+                f"testnet_tracked_symbols."
+            )
+            return default
 
         # If not found, trigger the discovery process for just this symbol
         self.logger.debug(

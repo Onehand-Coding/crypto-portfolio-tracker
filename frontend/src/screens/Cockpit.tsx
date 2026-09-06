@@ -336,6 +336,14 @@ export function Cockpit() {
             {data.unpriced_count === 1 ? ' is' : ' are'} excluded from this total.
           </p>
         )}
+
+        {(data.excluded_count ?? 0) > 0 && (
+          <p className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '12px',
+                                          marginTop: 'var(--space-3)', marginBottom: 0 }}>
+            Filtered: {(data.excluded_symbols ?? []).join(', ')} hidden by your
+            testnet track list — unpriced on purpose and not shown below.
+          </p>
+        )}
       </Panel>
 
       {/* Chart and drift side by side: value over time is the question the main

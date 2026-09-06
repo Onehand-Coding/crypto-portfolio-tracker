@@ -384,6 +384,7 @@ class SettingsResponse(BaseModel):
     p2p_fiat_currency: str
     crypto_quotes: list[str]
     stablecoin_symbols: list[str]
+    testnet_tracked_symbols: list[str]
     trend_analyzer: TrendAnalyzerSettings
     cleanup_days: int
     automation: AutomationSettings
@@ -403,6 +404,7 @@ class SettingsUpdate(BaseModel):
     p2p_fiat_currency: Optional[str] = None
     crypto_quotes: Optional[list[str]] = None
     stablecoin_symbols: Optional[list[str]] = None
+    testnet_tracked_symbols: Optional[list[str]] = None
     trend_analyzer: Optional[TrendAnalyzerSettings] = None
     cleanup_days: Optional[int] = None
     automation: Optional[AutomationSettings] = None

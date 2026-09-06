@@ -65,6 +65,8 @@ const POPULATED: CockpitResponse = {
   environment: { is_testnet: true, database_path: 'data/testnet_portfolio.db', label: 'TESTNET' },
   has_data: true,
   unpriced_count: 0,
+  excluded_count: 0,
+  excluded_symbols: [],
 };
 
 const EMPTY: CockpitResponse = {
@@ -195,6 +197,24 @@ describe('Cockpit allocation drift basis', () => {
     // Core sleeve is 57.20: BTC 66.43%, ETH 33.57%. Total-basis would read 3.59%.
     expect(await screen.findByText('66.43%')).toBeDefined();
     expect(screen.queryByText('3.59%')).toBeNull();
+  });
+});
+
+describe('Cockpit testnet track list', () => {
+  it('names the holdings hidden by the filter instead of silently dropping them', async () => {
+    mockDashboardFetch(undefined, {
+      ...POPULATED, excluded_count: 2, excluded_symbols: ['WHALE', 'THISISATESTCOIN'],
+    });
+    renderCockpit();
+    expect(await screen.findByText(/hidden by your/)).toBeDefined();
+    expect(screen.getByText(/WHALE, THISISATESTCOIN/)).toBeDefined();
+  });
+
+  it('shows no filter note when nothing is excluded', async () => {
+    mockDashboardFetch(undefined, POPULATED);
+    renderCockpit();
+    await screen.findByText('$57.78');
+    expect(screen.queryByText(/hidden by your/)).toBeNull();
   });
 });
 

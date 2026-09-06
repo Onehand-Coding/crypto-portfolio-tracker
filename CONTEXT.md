@@ -223,6 +223,18 @@ fetching live on read (makes every page load network-dependent).
 **Reason:** Testnet uses a physically separate database. A shared cache file
 would render testnet figures under a LIVE banner.
 
+### Testnet has an opt-in track-only list
+**Choice:** `portfolio.testnet_tracked_symbols`, empty by default. When set, the
+mapper refuses to resolve anything off the list (no CoinGecko discovery spent),
+and reads hide those rows while reporting `excluded_count`/`excluded_symbols`.
+**Status:** Current
+**Reason:** Testnet accounts accumulate junk tokens no price provider lists, and
+each one failed discovery on every sync, erroring the run and pinning a
+DATA QUALITY alert whose "re-sync" advice could never work. Live ignores the
+list: live holdings are real assets worth pricing.
+**Alternatives Considered:** Caching negative mappings (hides the errors but not
+the clutter); display-only hiding (leaves the sync errors in place).
+
 ### Frontend serving is one process, one port
 **Choice:** FastAPI serves the built React bundle; Vite proxies `/api` in dev.
 **Status:** Current

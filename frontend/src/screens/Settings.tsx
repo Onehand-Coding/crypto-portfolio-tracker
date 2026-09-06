@@ -183,6 +183,7 @@ export function Settings() {
         p2p_fiat_currency: form!.p2p_fiat_currency,
         crypto_quotes: form!.crypto_quotes,
         stablecoin_symbols: form!.stablecoin_symbols,
+        testnet_tracked_symbols: form!.testnet_tracked_symbols,
         trend_analyzer: {
           rsi_period: Number(form!.trend_analyzer.rsi_period),
           rsi_oversold: Number(form!.trend_analyzer.rsi_oversold),
@@ -308,6 +309,12 @@ export function Settings() {
               hint="On: real orders are placed. Off: trades are simulated (dry run)."
               accent="var(--negative)"
             />
+            <Field label="Testnet tracked symbols"
+                   hint="Comma-separated, e.g. BTC, ETH, USDT. Testnet only: unlisted assets are never priced and hidden everywhere. Empty means track everything.">
+              <input value={form.testnet_tracked_symbols.join(', ')}
+                     onChange={(e) => setForm((f) => f && { ...f, testnet_tracked_symbols: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
+                     className="font-mono" style={inputStyle} />
+            </Field>
           </div>
         </Panel>
 

@@ -1015,9 +1015,12 @@ def _read_settings(config) -> SettingsResponse:
             max_gain_take_pct=num(pt.get("max_gain_take_pct")),
             default_take_percentage=num(pt.get("default_take_percentage")),
         ),
-        p2p_fiat_currency=str(portfolio.get("p2p_fiat_currency", "") or ""),
-        crypto_quotes=[str(x) for x in (portfolio.get("crypto_quotes") or [])],
-        stablecoin_symbols=[str(x) for x in (portfolio.get("stablecoin_symbols") or [])],
+    p2p_fiat_currency=str(portfolio.get("p2p_fiat_currency", "") or ""),
+    crypto_quotes=[str(x) for x in (portfolio.get("crypto_quotes") or [])],
+    stablecoin_symbols=[str(x) for x in (portfolio.get("stablecoin_symbols") or [])],
+    # Absent or empty means no restriction (see _tracked_symbols and the
+    # mapper gate); only a non-empty list narrows testnet reads and syncs.
+    testnet_tracked_symbols=[str(x) for x in (portfolio.get("testnet_tracked_symbols") or [])],
         trend_analyzer=TrendAnalyzerSettings(
             rsi_period=int(num(ta.get("rsi_period"), 14)),
             rsi_oversold=num(ta.get("rsi_oversold"), 30),
@@ -1114,6 +1117,15 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
     if payload.stablecoin_symbols is not None:
         portfolio["stablecoin_symbols"] = [
             s.strip().upper() for s in payload.stablecoin_symbols if s.strip()
+        ]
+
+    # Testnet track-only list. Normalised like the other symbol lists; an
+    # empty list clears the restriction. Deliberately not a singleton reset
+    # (unlike testnet_mode): the mapper and the reads share this same
+    # config dict, so the next sync and the next read see it with no rebuild.
+    if payload.testnet_tracked_symbols is not None:
+        portfolio["testnet_tracked_symbols"] = [
+            s.strip().upper() for s in payload.testnet_tracked_symbols if s.strip()
         ]
 
     if payload.trend_analyzer is not None:

@@ -63,6 +63,28 @@ def _staleness(age: Optional[float], cached_at: Optional[float]) -> Staleness:
     )
 
 
+def _tracked_symbols(config_manager) -> Optional[set]:
+    """The testnet track-only list, or None when nothing is restricted.
+
+    Testnet-only by design: live holdings are real assets worth pricing.
+    Defensive about shape because the config here can be a Mock in tests
+    and hand-edited on disk: anything that is not a non-empty list is no
+    restriction, never an error.
+    """
+    if not bool(getattr(config_manager, "is_testnet_mode", False)):
+        return None
+    config = getattr(config_manager, "config", None)
+    portfolio = config.get("portfolio", {}) if isinstance(config, dict) else {}
+    if not isinstance(portfolio, dict):
+        return None
+    raw = portfolio.get("testnet_tracked_symbols")
+    if not isinstance(raw, (list, tuple, set)) or not raw:
+        return None
+    wanted = {str(s).strip().upper() for s in raw}
+    wanted.discard("")
+    return wanted or None
+
+
 def _environment(config_manager) -> Environment:
     is_testnet = bool(config_manager.is_testnet_mode)
     return Environment(
@@ -98,6 +120,16 @@ def cockpit(ctx=Depends(get_read_context)) -> CockpitResponse:
 
     holdings = [_holding(row) for row in (cached.get("holdings_df") or [])]
 
+    # Testnet track-only list: hide what the user chose not to follow. The
+    # headline total keeps the cached portfolio figure (rows already need not
+    # sum to it -- unpriced rows carry no value), and the exclusion is
+    # reported so a typo reads as a visible list, not a vanished position.
+    excluded_symbols: list[str] = []
+    tracked = _tracked_symbols(ctx.config_manager)
+    if tracked is not None:
+        excluded_symbols = sorted({h.symbol for h in holdings if h.symbol not in tracked})
+        holdings = [h for h in holdings if h.symbol in tracked]
+
     return CockpitResponse(
         total_value_usd=total_value,
         net_invested=_basis(
@@ -109,4 +141,6 @@ def cockpit(ctx=Depends(get_read_context)) -> CockpitResponse:
         environment=environment,
         has_data=True,
         unpriced_count=sum(1 for h in holdings if h.price_unavailable),
+        excluded_count=len(excluded_symbols),
+        excluded_symbols=excluded_symbols,
     )

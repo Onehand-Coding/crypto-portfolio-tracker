@@ -212,3 +212,82 @@ def test_cockpit_reports_undefined_percentage_when_basis_is_zero(
 
     assert body["net_invested"]["pl_usd"] == 57.78
     assert body["net_invested"]["pl_percent"] is None
+
+
+def _testnet_config(mock_read_context, tracked):
+    mock_read_context.config_manager.is_testnet_mode = True
+    mock_read_context.config_manager.config = {
+        "portfolio": {"testnet_mode": True, "testnet_tracked_symbols": tracked}
+    }
+
+
+def test_cockpit_hides_non_tracked_holdings_in_testnet(
+    mock_read_context, tmp_path, monkeypatch
+):
+    """A track-only list hides the rows the user chose not to follow and
+    reports them, instead of pricing failures looping through re-sync."""
+    cache_file = tmp_path / "metrics.json"
+    monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
+    _write_holdings(cache_file, [
+        {"symbol": "BTC", "total_quantity": 1.0, "current_price": 50000.0,
+         "value_usd": 50000.0},
+        {"symbol": "THISISATESTCOIN", "total_quantity": 5.0,
+         "current_price": 0.0, "value_usd": 0.0},
+    ])
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
+    _testnet_config(mock_read_context, ["BTC"])
+
+    body = _client().get("/api/portfolio/cockpit").json()
+
+    assert [h["symbol"] for h in body["holdings"]] == ["BTC"]
+    assert body["excluded_count"] == 1
+    assert body["excluded_symbols"] == ["THISISATESTCOIN"]
+    # The hidden junk was unpriced, but the user chose not to follow it: it
+    # must not feed the DATA QUALITY re-sync loop.
+    assert body["unpriced_count"] == 0
+
+
+def test_cockpit_track_list_is_ignored_outside_testnet(
+    mock_read_context, tmp_path, monkeypatch
+):
+    cache_file = tmp_path / "metrics.json"
+    monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
+    _write_holdings(cache_file, [
+        {"symbol": "BTC", "total_quantity": 1.0, "current_price": 50000.0,
+         "value_usd": 50000.0},
+        {"symbol": "DOGE", "total_quantity": 2.0, "current_price": 0.2,
+         "value_usd": 0.4},
+    ])
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
+    mock_read_context.config_manager.is_testnet_mode = False
+    mock_read_context.config_manager.config = {
+        "portfolio": {"testnet_mode": False, "testnet_tracked_symbols": ["BTC"]}
+    }
+
+    body = _client().get("/api/portfolio/cockpit").json()
+
+    assert [h["symbol"] for h in body["holdings"]] == ["BTC", "DOGE"]
+    assert body["excluded_count"] == 0
+    assert body["excluded_symbols"] == []
+
+
+def test_cockpit_without_track_list_shows_everything_in_testnet(
+    mock_read_context, tmp_path, monkeypatch
+):
+    cache_file = tmp_path / "metrics.json"
+    monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
+    _write_holdings(cache_file, [
+        {"symbol": "BTC", "total_quantity": 1.0, "current_price": 50000.0,
+         "value_usd": 50000.0},
+        {"symbol": "DOGE", "total_quantity": 2.0, "current_price": 0.2,
+         "value_usd": 0.4},
+    ])
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
+    mock_read_context.config_manager.is_testnet_mode = True
+    mock_read_context.config_manager.config = {"portfolio": {"testnet_mode": True}}
+
+    body = _client().get("/api/portfolio/cockpit").json()
+
+    assert [h["symbol"] for h in body["holdings"]] == ["BTC", "DOGE"]
+    assert body["excluded_count"] == 0
+    assert body["excluded_symbols"] == []

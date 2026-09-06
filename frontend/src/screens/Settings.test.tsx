@@ -14,6 +14,7 @@ const SETTINGS: SettingsResponse = {
   p2p_fiat_currency: 'USD',
   crypto_quotes: ['USDT'],
   stablecoin_symbols: ['USDT', 'USDC'],
+  testnet_tracked_symbols: [],
   trend_analyzer: { rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, cryptocurrencies: ['BTC-USD'] },
   cleanup_days: 90,
   automation: {
@@ -138,8 +139,26 @@ describe('Settings auto-sync save', () => {
   });
 });
 
-describe('Settings trend periods', () => {
-  it('carries edited period strings in the PUT payload', async () => {
+describe('Settings testnet track list', () => {
+  it('carries the edited symbols in the PUT payload', async () => {
+    const fetchMock = stubFetch();
+    render(<Settings />);
+    await screen.findByText('Trading mode');
+
+    fireEvent.change(screen.getByLabelText(/Testnet tracked symbols/), {
+      target: { value: 'BTC, eth, ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/settings saved/i)).toBeDefined();
+    });
+    const body = putBody(fetchMock);
+    expect(body['testnet_tracked_symbols']).toEqual(['BTC', 'eth']);
+  });
+});
+
+describe('Settings trend periods', () => {  it('carries edited period strings in the PUT payload', async () => {
     const fetchMock = stubFetch();
     render(<Settings />);
     await screen.findByText('Trend timeframes');
