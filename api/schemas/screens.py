@@ -429,6 +429,12 @@ class TrackedCandidatesResponse(BaseModel):
         default_factory=list,
         description="What is saved right now (may be empty for automatic).",
     )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Targets missing coverage elsewhere: not tracked (never "
+                    "priced, hidden from reads) or without a trend ticker "
+                    "(skipped in Rebalancing suggestions).",
+    )
 
 
 class GenerateExportRequest(BaseModel):

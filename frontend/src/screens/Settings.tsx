@@ -383,6 +383,12 @@ export function Settings() {
                 Both environments; testnet defaults to core assets when empty. Unlisted
                 assets are never priced and hidden everywhere.
               </span>
+              {(candidates.data?.warnings ?? []).map((warning) => (
+                <span key={warning} className="font-ui"
+                      style={{ color: 'var(--warning)', fontSize: '12px' }}>
+                  ⚠ {warning}
+                </span>
+              ))}
             </div>
           </div>
         </Panel>

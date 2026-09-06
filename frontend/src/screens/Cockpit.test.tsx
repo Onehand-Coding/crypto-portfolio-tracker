@@ -201,13 +201,27 @@ describe('Cockpit allocation drift basis', () => {
 });
 
 describe('Cockpit track list', () => {
-  it('names the holdings hidden by the filter instead of silently dropping them', async () => {
-    mockDashboardFetch(undefined, {
-      ...POPULATED, excluded_count: 2, excluded_symbols: ['WHALE', 'THISISATESTCOIN'],
-    });
+  const MANY = Array.from({ length: 15 }, (_, i) => `JUNK${i}`);
+  const hidden = {
+    ...POPULATED, excluded_count: MANY.length, excluded_symbols: MANY,
+  };
+
+  it('collapses hidden holdings to a count instead of a symbol wall', async () => {
+    mockDashboardFetch(undefined, hidden);
     renderCockpit();
-    expect(await screen.findByText(/hidden by your/)).toBeDefined();
-    expect(screen.getByText(/WHALE, THISISATESTCOIN/)).toBeDefined();
+    expect(await screen.findByText(/15 holdings hidden by your/)).toBeDefined();
+    expect(screen.queryByText(/JUNK14/)).toBeNull();
+  });
+
+  it('reveals the full hidden list only on toggle', async () => {
+    mockDashboardFetch(undefined, hidden);
+    renderCockpit();
+    await screen.findByText(/15 holdings hidden by your/);
+    fireEvent.click(screen.getByRole('button', { name: /hidden by your/ }));
+    expect(screen.getByText(/JUNK0/)).toBeDefined();
+    expect(screen.getByText(/JUNK14/)).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: /hidden by your/ }));
+    expect(screen.queryByText(/JUNK14/)).toBeNull();
   });
 
   it('shows no filter note when nothing is excluded', async () => {

@@ -195,6 +195,9 @@ export function Cockpit() {
   // this section simply contributes no card, so the Dashboard never depends
   // on the analysis pipeline being up.
   const profit = useApi<ProfitResponse>('/api/strategy/profit');
+  // Hundreds of filtered symbols must not render as a wall: collapsed to a
+  // count, full list only on toggle.
+  const [showExcluded, setShowExcluded] = useState(false);
 
   const data = cockpit.data;
 
@@ -338,11 +341,30 @@ export function Cockpit() {
         )}
 
         {(data.excluded_count ?? 0) > 0 && (
-          <p className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '12px',
-                                          marginTop: 'var(--space-3)', marginBottom: 0 }}>
-            Filtered: {(data.excluded_symbols ?? []).join(', ')} hidden by your
-            track list — unpriced on purpose and not shown below.
-          </p>
+          <div style={{ marginTop: 'var(--space-3)' }}>
+            <button type="button" onClick={() => setShowExcluded((v) => !v)}
+                    className="font-ui"
+                    style={{ background: 'transparent', border: 'none', padding: 0,
+                             cursor: 'pointer', color: 'var(--text-secondary)',
+                             fontSize: '12px' }}>
+              Filtered: {data.excluded_count} holding
+              {(data.excluded_count ?? 0) === 1 ? '' : 's'} hidden by your
+              track list ({showExcluded ? 'hide' : 'show'})
+            </button>
+            {showExcluded && (
+              <>
+              <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
+                                              marginTop: 'var(--space-2)', marginBottom: 0 }}>
+                Unpriced on purpose and not shown below.
+              </p>
+              <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
+                                              marginTop: 'var(--space-2)', marginBottom: 0,
+                                              overflowWrap: 'anywhere' }}>
+                {(data.excluded_symbols ?? []).join(', ')}
+              </p>
+              </>
+            )}
+          </div>
         )}
       </Panel>
 

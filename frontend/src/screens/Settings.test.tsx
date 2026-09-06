@@ -51,13 +51,14 @@ const PREVIEW = {
   total_lines: 103,
 };
 
-const CANDIDATES = {
+const CANDIDATES: { symbols: string[]; core: string[]; stored: string[]; warnings: string[] } = {
   symbols: ['BTC', 'ETH', 'QUICK', 'USDT'],
   core: ['BTC', 'ETH'],
   stored: [],
+  warnings: [],
 };
 
-function stubFetch() {
+function stubFetch(candidates = CANDIDATES) {
   const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
     const path = String(url);
     const method = init?.method ?? 'GET';
@@ -65,7 +66,7 @@ function stubFetch() {
       return { ok: true, json: async () => PREVIEW };
     }
     if (path.includes('/api/system/tracked-candidates')) {
-      return { ok: true, json: async () => CANDIDATES };
+      return { ok: true, json: async () => candidates };
     }
     if (path.includes('/api/system/config/import')) {
       return { ok: true, json: async () => SETTINGS };
@@ -203,6 +204,29 @@ describe('Settings track list', () => {
       expect(screen.getByText(/settings saved/i)).toBeDefined();
     });
     expect(putBody(fetchMock)['tracked_symbols']).toEqual(['BTC', 'ETH']);
+  });
+
+  it('shows alignment warnings for targets missing coverage', async () => {
+    stubFetch({
+      ...CANDIDATES,
+      warnings: ['ETH has a target weight but no trend ticker (expected ETH-USD in Cryptocurrencies) — it will be skipped in Rebalancing suggestions.'],
+    });
+    render(<Settings />);
+    await screen.findByText('Trading mode');
+
+    expect(await screen.findByText(/no trend ticker/)).toBeDefined();
+  });
+
+  it('shows no warnings when everything is aligned', async () => {
+    stubFetch();
+    render(<Settings />);
+    await screen.findByText('Trading mode');
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Loading/i)).toBeNull();
+    });
+    expect(screen.queryByText(/no trend ticker/)).toBeNull();
+    expect(screen.queryByText(/not tracked/)).toBeNull();
   });
 });
 

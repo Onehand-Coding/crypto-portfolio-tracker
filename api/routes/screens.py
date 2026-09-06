@@ -86,6 +86,7 @@ from api.schemas.screens import (
     TrendTimeframes,
 )
 from api.serialization import jsonable
+from crypto_portfolio_tracker.symbol_mapper import effective_tracked_symbols
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
 router = APIRouter(prefix="/api", tags=["screens"])
@@ -1340,10 +1341,34 @@ def tracked_candidates(ctx=Depends(get_read_context)) -> TrackedCandidatesRespon
             symbol = row.get("symbol") if isinstance(row, dict) else None
             if symbol and str(symbol).strip():
                 cached.add(str(symbol).strip().upper())
+    # Alignment warnings: a target needs both tracking (otherwise never
+    # priced, hidden from reads) and a trend ticker (otherwise the
+    # rebalance engine skips it for want of analysis). Checked against the
+    # *effective* set, so the automatic default never warns about itself.
+    effective = effective_tracked_symbols(config)
+    trend_raw = (config.get("trend_analyzer", {}) or {}).get("cryptocurrencies") or []
+    trend_bases = set()
+    for ticker in trend_raw:
+        base = str(ticker).strip().upper()
+        trend_bases.add(base[:-4] if base.endswith("-USD") else base)
+    warnings: list[str] = []
+    for symbol in core:
+        if effective is not None and symbol not in effective:
+            warnings.append(
+                f"{symbol} has a target weight but is not tracked -- it will "
+                f"not be priced, and reads hide it."
+            )
+        if symbol not in trend_bases:
+            warnings.append(
+                f"{symbol} has a target weight but no trend ticker (expected "
+                f"{symbol}-USD in Cryptocurrencies) -- it will be skipped in "
+                f"Rebalancing suggestions."
+            )
     return TrackedCandidatesResponse(
         symbols=sorted(set(stored) | set(core) | set(stables) | cached),
         core=core,
         stored=stored,
+        warnings=warnings,
     )
 
 

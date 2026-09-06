@@ -230,9 +230,12 @@ and live stays unrestricted. One rule (`effective_tracked_symbols`)
 shared by the mapper gate and the read filter; reads report
 `excluded_count`/`excluded_symbols`, and the Settings picker
 (`GET /system/tracked-candidates`) offers stored + targets + stables +
-both caches as checkboxes, pre-checked from the effective set.
-**Status:** Current
-**Reason:** Testnet accounts accumulate junk tokens no price provider lists,
+both caches as checkboxes, pre-checked from the effective set. The same
+endpoint warns when a target has no trend ticker (the engine skips it) or is
+outside the effective set (never priced). The Dashboard collapses hidden
+symbols to a count with a show-toggle, so hundreds of filtered dust coins
+cannot flood the page.
+**Status:** Current**Reason:** Testnet accounts accumulate junk tokens no price provider lists,
 and each one failed discovery on every sync, erroring the run and pinning a
 DATA QUALITY alert whose "re-sync" advice could never work. Live defaults to
 unrestricted because hiding real money by default is the failure this tool

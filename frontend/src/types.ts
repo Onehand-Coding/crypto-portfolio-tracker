@@ -461,6 +461,7 @@ export interface TrackedCandidatesResponse {
   symbols: string[];
   core: string[];
   stored: string[];
+  warnings: string[];
 }
 
 export interface SnapshotRow {
