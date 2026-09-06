@@ -4,12 +4,20 @@ import { Reports } from './Reports';
 
 const FILE_NAME = 'transactions_20260101_120000.csv';
 
+const IMAGE_NAME = 'chart_20260101_120000.png';
+
 const FILES = {
   files: [
     {
       name: FILE_NAME,
       path: `/exports/${FILE_NAME}`,
       size_bytes: 1234,
+      modified: '2026-01-01T12:00:00',
+    },
+    {
+      name: IMAGE_NAME,
+      path: `/exports/${IMAGE_NAME}`,
+      size_bytes: 250000,
       modified: '2026-01-01T12:00:00',
     },
   ],
@@ -21,12 +29,27 @@ const PREVIEW = {
   lines: ['Date,Asset,Type', '2026-01-01,BTC,BUY'],
   truncated: true,
   total_lines: 103,
+  kind: 'text',
+  image_url: null,
+};
+
+const IMAGE_PREVIEW = {
+  name: IMAGE_NAME,
+  lines: [],
+  truncated: false,
+  total_lines: 0,
+  kind: 'image',
+  image_url: `/api/reports/download?name=${IMAGE_NAME}`,
 };
 
 function stubFetch() {
   const fetchMock = vi.fn(async (url: unknown, _init?: RequestInit) => {
     const path = String(url);
     if (path.includes('/api/reports/preview')) {
+      // Image previews arrive as a download URL, never as binary lines.
+      if (path.includes(encodeURIComponent(IMAGE_NAME)) || path.includes(IMAGE_NAME)) {
+        return { ok: true, json: async () => IMAGE_PREVIEW };
+      }
       return { ok: true, json: async () => PREVIEW };
     }
     if (path.includes('/api/reports/delete')) {
@@ -131,11 +154,26 @@ describe('Reports preview', () => {
     stubFetch();
     render(<Reports />);
     await screen.findByText(FILE_NAME);
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    const row = screen.getByText(FILE_NAME).closest('tr');
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Preview' }));
     await waitFor(() => {
       expect(screen.getByText(/date,asset,type/i)).toBeDefined();
     });
     expect(screen.getByText(/101 more lines/)).toBeDefined();
+  });
+
+  it('renders image previews as an image, not binary text', async () => {
+    stubFetch();
+    render(<Reports />);
+    await screen.findByText(IMAGE_NAME);
+    const row = screen.getByText(IMAGE_NAME).closest('tr');
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Preview' }));
+    const img = await screen.findByAltText(`Preview of ${IMAGE_NAME}`);
+    expect(img.getAttribute('src')).toBe(IMAGE_PREVIEW.image_url);
+    // No binary mojibake alongside it.
+    expect(screen.queryByText(/101 more lines/)).toBeNull();
   });
 });
 
@@ -144,8 +182,11 @@ describe('Reports delete', () => {
     const fetchMock = stubFetch();
     render(<Reports />);
     await screen.findByText(FILE_NAME);
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    const row = screen.getByText(FILE_NAME).closest('tr');
+    expect(row).not.toBeNull();
+    const scope = within(row as HTMLElement);
+    fireEvent.click(scope.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(scope.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => {
       expect(screen.getByText(/deleted transactions_20260101_120000\.csv/i)).toBeDefined();
     });

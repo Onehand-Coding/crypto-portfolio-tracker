@@ -452,12 +452,40 @@ def download_report(name: str, ctx=Depends(get_read_context)) -> FileResponse:
 
 @router.get("/reports/preview", response_model=PreviewResponse)
 def preview_report(name: str, ctx=Depends(get_read_context)) -> PreviewResponse:
-    """First 50 lines of a generated export for on-screen preview."""
+    """On-screen preview of a generated export, shaped by file type.
+
+    Text exports (CSV/JSON/HTML) return their first 50 lines. Spreadsheets
+    return their first 50 rows rendered as CSV. Images return a download URL
+    for an <img> tag -- reading their bytes as text would splatter binary
+    mojibake across the page, which is what the old code did. Anything else
+    is refused plainly rather than guessed at.
+    """
     if name != Path(name).name:
         raise HTTPException(status_code=400, detail="Invalid file name.")
     target = _export_dir(ctx) / name
     if not target.is_file():
         raise HTTPException(status_code=404, detail=f"No such export: {name}")
+    suffix = target.suffix.lower()
+    if suffix in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        return PreviewResponse(
+            name=name, kind="image",
+            image_url=f"/api/reports/download?name={name}")
+    if suffix in (".xlsx", ".xls"):
+        try:
+            frame = pd.read_excel(target)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Could not preview spreadsheet: {exc}")
+        text = frame.head(50).to_csv(index=False)
+        lines = text.splitlines()
+        return PreviewResponse(
+            name=name, kind="sheet", lines=lines,
+            truncated=len(frame) > 50, total_lines=len(frame) + 1)
+    if suffix not in (".csv", ".json", ".html", ".txt", ".md", ".log"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Preview is not available for {suffix or 'extensionless'} "
+                   "files. Download it instead.")
     try:
         text = target.read_text(errors="replace")
     except OSError as exc:

@@ -5,12 +5,15 @@ import { useApi } from '../lib/useApi';
 import { apiGet, apiPost } from '../lib/api';
 import type { GenerateExportResponse, ReportsResponse } from '../types';
 
-/** First lines of a generated export, for on-screen preview. */
+/** One generated export, for on-screen preview. Text and spreadsheet rows
+ *  arrive as lines; images arrive as a download URL to render. */
 interface ReportPreview {
   name: string;
   lines: string[];
   truncated: boolean;
   total_lines: number;
+  kind: 'text' | 'sheet' | 'image';
+  image_url: string | null;
 }
 
 /** Deletion outcome for a generated export. */
@@ -408,6 +411,12 @@ export function Reports() {
                   Close
                 </button>
               </div>
+              {preview.kind === 'image' && preview.image_url ? (
+                <img src={preview.image_url} alt={`Preview of ${preview.name}`}
+                     style={{ maxWidth: '100%', border: '1px solid var(--border)',
+                              borderRadius: 'var(--radius-control)' }} />
+              ) : (
+              <>
               <pre className="font-mono"
                    style={{ background: 'var(--surface-0)', border: '1px solid var(--border)',
                             borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
@@ -420,6 +429,8 @@ export function Reports() {
                                                 marginBottom: 0, marginTop: 'var(--space-2)' }}>
                   …{preview.total_lines - preview.lines.length} more lines
                 </p>
+              )}
+              </>
               )}
             </div>
           )}

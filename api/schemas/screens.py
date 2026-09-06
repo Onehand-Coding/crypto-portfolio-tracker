@@ -440,6 +440,11 @@ class PreviewResponse(BaseModel):
     lines: list[str] = []
     truncated: bool = False
     total_lines: int = 0
+    # text: first lines as-is. sheet: spreadsheet rows rendered as CSV.
+    # image: view it through image_url; lines stays empty so binary bytes
+    # are never dumped into the page as mojibake.
+    kind: str = "text"
+    image_url: Optional[str] = None
 
 
 class DeleteExportRequest(BaseModel):

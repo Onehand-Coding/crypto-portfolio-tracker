@@ -48,6 +48,39 @@ def test_preview_missing_file_404(export_dir):
     assert response.status_code == 404
 
 
+def test_preview_spreadsheet_renders_rows_as_text(export_dir):
+    pytest.importorskip("openpyxl")
+    import pandas as pd
+
+    pd.DataFrame({"symbol": ["BTC", "ETH"], "value": [1.5, 2.5]}).to_excel(
+        export_dir / "holdings.xlsx", index=False)
+    body = TestClient(app).get(
+        "/api/reports/preview", params={"name": "holdings.xlsx"}).json()
+    assert body["kind"] == "sheet"
+    assert body["lines"][0] == "symbol,value"
+    assert any("BTC" in line for line in body["lines"])
+    assert body["truncated"] is False
+
+
+def test_preview_image_returns_download_url_not_binary(export_dir):
+    (export_dir / "chart.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    body = TestClient(app).get(
+        "/api/reports/preview", params={"name": "chart.png"}).json()
+    assert body["kind"] == "image"
+    assert body["image_url"] == "/api/reports/download?name=chart.png"
+    assert body["lines"] == []
+    assert "PNG" not in str(body)
+
+
+def test_preview_unsupported_type_says_so_plainly(export_dir):
+    (export_dir / "data.bin").write_bytes(b"\x00\x01\x02")
+    response = TestClient(app).get(
+        "/api/reports/preview", params={"name": "data.bin"})
+    assert response.status_code == 422
+    assert "not available" in response.json()["detail"]
+
+
 def test_delete_needs_confirm(export_dir):
     _seed(export_dir, "a.csv", "x\n")
     response = TestClient(app).post("/api/reports/delete", json={"name": "a.csv"})
