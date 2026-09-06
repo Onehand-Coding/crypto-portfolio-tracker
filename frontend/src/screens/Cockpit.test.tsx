@@ -98,7 +98,7 @@ const HEALTH: SystemHealthResponse = {
   binance_configured: true,
 };
 
-function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPULATED, profit: ProfitResponse | Error = PROFIT_EMPTY) {
+function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPULATED, profit: ProfitResponse | Error = PROFIT_EMPTY, health = HEALTH) {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     if (url === '/api/portfolio/cockpit') {
@@ -110,7 +110,7 @@ function mockDashboardFetch(overview?: OverviewResponse | Error, cockpit = POPUL
       return Promise.resolve({ ok: true, json: async () => overview });
     }
     if (url === '/api/system/health') {
-      return Promise.resolve({ ok: true, json: async () => HEALTH });
+      return Promise.resolve({ ok: true, json: async () => health });
     }
     if (url === '/api/strategy/profit') {
       if (profit instanceof Error) return Promise.reject(profit);
@@ -166,6 +166,35 @@ describe('Cockpit unpriced holdings', () => {
     renderCockpit();
     await screen.findByText('$57.78');
     expect(screen.queryByText(/could not be priced/)).toBeNull();
+  });
+});
+
+describe('Cockpit allocation drift basis', () => {
+  it('measures drift against the core sleeve, matching the rebalance engine', async () => {
+    // A whale outside the target allocation must not shrink every core
+    // asset's share: targets are shares of the sleeve, not of everything.
+    const cockpit: CockpitResponse = {
+      ...POPULATED,
+      total_value_usd: 1057.20,
+      holdings: [
+        { ...POPULATED.holdings[0], value_usd: 38.00 },
+        { ...POPULATED.holdings[1], value_usd: 19.20 },
+        {
+          symbol: 'WHALE', total_quantity: 1, spot_quantity: 1, earn_quantity: 0,
+          current_price: 1000, value_usd: 1000, average_cost_basis: 1000,
+          cost_basis_total: 1000, unrealized_pl_usd: 0,
+          unrealized_pl_percent: 0, is_core: false, price_unavailable: false,
+        },
+      ],
+    };
+    const health: SystemHealthResponse = {
+      ...HEALTH, target_allocation: { BTC: 0.5, ETH: 0.5 },
+    };
+    mockDashboardFetch(undefined, cockpit, PROFIT_EMPTY, health);
+    renderCockpit();
+    // Core sleeve is 57.20: BTC 66.43%, ETH 33.57%. Total-basis would read 3.59%.
+    expect(await screen.findByText('66.43%')).toBeDefined();
+    expect(screen.queryByText('3.59%')).toBeNull();
   });
 });
 

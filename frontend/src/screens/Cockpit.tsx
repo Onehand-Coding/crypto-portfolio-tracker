@@ -8,6 +8,7 @@ import { HoldingsTable } from '../components/HoldingsTable';
 import { Panel } from '../components/Panel';
 import { Empty, ErrorPanel } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { coreTotalUsd } from '../lib/allocation';
 import { formatPercent, formatPercentPlain, formatSigned, formatUsd } from '../lib/format';
 import type {
   AccountingBasis, CockpitResponse, OverviewResponse, ProfitResponse, SystemHealthResponse,
@@ -205,14 +206,18 @@ export function Cockpit() {
     // A health response without a target allocation is a valid state, not a
     // crash: the drift rail simply has nothing to compare against.
     const targets = health.data.target_allocation ?? {};
-    const total = data.total_value_usd;
-    if (!total) return [];
+    // Shares of the core sleeve, not of the whole portfolio: the rebalance
+    // engine and DCA divide by this same subtotal, and measuring against the
+    // grand total instead reads every target two ways at once whenever
+    // non-core positions are large.
+    const coreTotal = coreTotalUsd(data.holdings, targets);
+    if (!coreTotal) return [];
     return Object.entries(targets)
       .map(([symbol, weight]) => {
         const holding = data.holdings.find((h) => h.symbol === symbol);
         return {
           symbol,
-          currentPct: ((holding?.value_usd ?? 0) / total) * 100,
+          currentPct: ((holding?.value_usd ?? 0) / coreTotal) * 100,
           targetPct: weight * 100,
         };
       })
@@ -344,6 +349,9 @@ export function Cockpit() {
             <Empty>No target allocation configured.</Empty>
           ) : (
             <div className="flex flex-col" style={{ gap: 'var(--space-3)' }}>
+              <span className="font-ui" style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+                Shares of core holdings, not of the whole portfolio.
+              </span>
               {drift.map((row) => <DriftRow key={row.symbol} {...row} />)}
             </div>
           )}

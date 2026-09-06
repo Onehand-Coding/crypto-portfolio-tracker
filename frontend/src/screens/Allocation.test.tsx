@@ -212,3 +212,25 @@ describe('Allocation colour dots', () => {
     expect(solDot?.style.background).toBe('var(--text-tertiary)');
   });
 });
+
+describe('Allocation drift basis', () => {
+  it('measures current against the core sleeve, matching the rebalance engine', async () => {
+    stubFetch({
+      health: { target_allocation: { BTC: 0.5, ETH: 0.5 } },
+      cockpit: {
+        total_value_usd: 1057.20,
+        holdings: [
+          { symbol: 'BTC', value_usd: 38, unrealized_pl_usd: 0 },
+          { symbol: 'ETH', value_usd: 19.2, unrealized_pl_usd: 0 },
+          { symbol: 'WHALE', value_usd: 1000, unrealized_pl_usd: 0 },
+        ],
+        staleness: STALENESS,
+      },
+    });
+    render(<Allocation />);
+    await screen.findByText('Current vs target');
+    // Core sleeve is 57.20: BTC 66.43%. Total-basis would read 3.59%.
+    expect(screen.getByText('66.43%')).toBeDefined();
+    expect(screen.queryByText('3.59%')).toBeNull();
+  });
+});

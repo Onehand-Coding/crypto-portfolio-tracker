@@ -265,7 +265,10 @@ the deprecated Simple Earn rewards endpoint is deliberately non-blocking.
   with quantity but no price as *unpriced* and nulls every figure derived from it.
 - **Core holdings vs other holdings** are distinct: only assets in
   `target_allocation` participate in rebalancing, but all assets count toward
-  portfolio value.
+  portfolio value. Targets are shares of the **core sleeve**, not of the whole
+  portfolio: the engine, DCA, and every drift display divide by the core
+  subtotal (`frontend/src/lib/allocation.ts::coreTotalUsd`). Measuring any
+  target against the grand total reads it two ways at once.
 - **Rebalancing is regime-aware.** Bear market is defined as BTC below its SMA200,
   and buys can be suppressed in that regime. Majors (BTC/ETH) use tighter drift
   thresholds than alts.

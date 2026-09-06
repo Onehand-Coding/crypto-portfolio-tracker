@@ -5,6 +5,7 @@ import {
 import { Panel } from '../components/Panel';
 import { Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
+import { coreTotalUsd } from '../lib/allocation';
 import { formatPercentPlain, formatSigned, formatUsd } from '../lib/format';
 import type { CockpitResponse, SystemHealthResponse } from '../types';
 
@@ -71,13 +72,16 @@ export function Allocation() {
   const drift = useMemo(() => {
     const data = cockpit.data;
     const targets = health.data?.target_allocation ?? {};
-    const total = data?.total_value_usd ?? 0;
-    if (!data || !total) return [];
+    // Same ruler as the rebalance engine and the Dashboard rail: shares of
+    // the core sleeve, not of the whole portfolio (see lib/allocation.ts).
+    // The ring above stays total-based -- it is composition, not vs target.
+    const coreTotal = data ? coreTotalUsd(data.holdings, targets) : 0;
+    if (!data || !coreTotal) return [];
     return Object.entries(targets).map(([symbol, weight]) => {
       const holding = data.holdings.find((h) => h.symbol === symbol);
       return {
         name: symbol,
-        current: ((holding?.value_usd ?? 0) / total) * 100,
+        current: ((holding?.value_usd ?? 0) / coreTotal) * 100,
         target: weight * 100,
       };
     }).sort((a, b) => b.target - a.target);
@@ -130,6 +134,10 @@ export function Allocation() {
             {drift.length === 0 ? (
               <Empty>No target allocation configured.</Empty>
             ) : (
+              <>
+              <span className="font-ui" style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+                Shares of core holdings, not of the whole portfolio.
+              </span>
               <div className="table-scroll">
                 <table className="data">
                   <thead>
@@ -168,6 +176,7 @@ export function Allocation() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </Panel>
         </div>
