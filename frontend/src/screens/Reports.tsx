@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
@@ -20,10 +20,22 @@ interface ReportPreview {
 }
 
 /** File preview in a modal dialog -- the Drive/Dropbox/GitHub pattern. The
- *  table below the fold made the old inline panel look dead on click. */
+ *  table below the fold made the old inline panel look dead on click.
+ *  Movable by its header and resizable by its corner grip, so wide tables
+ *  can take the space they need. Plain mouse events, no new dependencies. */
 function PreviewModal({ preview, onClose }: {
   preview: ReportPreview; onClose: () => void;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const gesture = useRef<
+    | { kind: 'move'; startX: number; startY: number; origX: number; origY: number }
+    | { kind: 'resize'; startX: number; startY: number; origW: number; origH: number }
+    | null
+  >(null);
+
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose();
@@ -31,6 +43,75 @@ function PreviewModal({ preview, onClose }: {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // A new file opens centred at the default size, wherever the last one
+  // was left.
+  useEffect(() => {
+    setOffset({ x: 0, y: 0 });
+    setSize(null);
+  }, [preview.name]);
+
+  useEffect(() => {
+    function onMove(event: MouseEvent) {
+      const g = gesture.current;
+      if (!g) return;
+      if (g.kind === 'move') {
+        const rect = panelRef.current?.getBoundingClientRect();
+        let x = g.origX + event.clientX - g.startX;
+        let y = g.origY + event.clientY - g.startY;
+        // Keep a grabbable slice on screen. Zero-size rects (jsdom) skip
+        // the clamp so tests see the raw delta.
+        if (rect && rect.width > 0 && rect.height > 0) {
+          const margin = 80;
+          x = Math.min(Math.max(x, -rect.width + margin),
+                       window.innerWidth - margin);
+          y = Math.min(Math.max(y, 0), window.innerHeight - margin);
+        }
+        setOffset({ x, y });
+      } else {
+        setSize({
+          w: Math.min(Math.max(g.origW + event.clientX - g.startX, 360),
+                      window.innerWidth - 40),
+          h: Math.min(Math.max(g.origH + event.clientY - g.startY, 240),
+                      window.innerHeight - 40),
+        });
+      }
+    }
+    function onUp() {
+      gesture.current = null;
+      setDragging(false);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  function beginMove(event: React.MouseEvent) {
+    // The Close button lives in the header; dragging starts anywhere else.
+    if ((event.target as HTMLElement).closest('button')) return;
+    gesture.current = {
+      kind: 'move',
+      startX: event.clientX, startY: event.clientY,
+      origX: offset.x, origY: offset.y,
+    };
+    setDragging(true);
+  }
+
+  function beginResize(event: React.MouseEvent) {
+    event.stopPropagation();
+    const rect = panelRef.current?.getBoundingClientRect();
+    gesture.current = {
+      kind: 'resize',
+      startX: event.clientX, startY: event.clientY,
+      // jsdom reports zero rects; fall back to the default size so the
+      // delta stays deterministic in tests.
+      origW: rect && rect.width > 0 ? rect.width : 800,
+      origH: rect && rect.height > 0 ? rect.height : 600,
+    };
+  }
 
   let body: React.ReactNode;
   if (preview.kind === 'table') {
@@ -143,13 +224,19 @@ function PreviewModal({ preview, onClose }: {
          style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
                   zIndex: 50, display: 'flex', alignItems: 'center',
                   justifyContent: 'center', padding: 'var(--space-5)' }}>
-      <div onClick={(e) => e.stopPropagation()}
+      <div ref={panelRef}
+           onClick={(e) => e.stopPropagation()}
            style={{ background: 'var(--surface-1)', border: '1px solid var(--border)',
                     borderRadius: 'var(--radius-panel)', padding: 'var(--space-4)',
-                    maxWidth: '960px', width: '100%', maxHeight: '85vh',
+                    maxWidth: size ? 'none' : '960px', width: size ? size.w : '100%',
+                    maxHeight: '85vh', height: size ? size.h : undefined,
+                    minWidth: 360, minHeight: 240, position: 'relative',
+                    transform: `translate(${offset.x}px, ${offset.y}px)`,
                     display: 'flex', flexDirection: 'column' }}>
         <div className="flex items-center justify-between"
-             style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+             onMouseDown={beginMove}
+             style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)',
+                      cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none' }}>
           <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
             Preview: {preview.name}
           </span>
@@ -163,9 +250,15 @@ function PreviewModal({ preview, onClose }: {
             Close
           </button>
         </div>
-        <div style={{ overflow: 'auto' }}>
+        <div style={{ overflow: 'auto', minHeight: 0, flex: 1 }}>
           {body}
         </div>
+        <div title="Resize" onMouseDown={beginResize} aria-hidden="true"
+             style={{ position: 'absolute', right: 0, bottom: 0, width: 20, height: 20,
+                      cursor: 'nwse-resize',
+                      borderRight: '2px solid var(--border-strong)',
+                      borderBottom: '2px solid var(--border-strong)',
+                      borderBottomRightRadius: 'var(--radius-panel)' }} />
       </div>
     </div>
   );

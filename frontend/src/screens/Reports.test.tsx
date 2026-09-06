@@ -253,8 +253,34 @@ describe('Reports preview', () => {
     expect(within(dialog as HTMLElement).getByText(/"a": 1/)).toBeDefined();
   });
 
-  it('closes the modal on Close, backdrop click, and Escape', async () => {
+  it('moves the dialog when dragged by its header', async () => {
     stubFetch();
+    render(<Reports />);
+    await openPreview(FILE_NAME);
+    const dialog = screen.getByRole('dialog', { name: `Preview of ${FILE_NAME}` });
+    const header = screen.getByText(`Preview: ${FILE_NAME}`).closest('div');
+    expect(header).not.toBeNull();
+    fireEvent.mouseDown(header as HTMLElement, { clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 130 });
+    fireEvent.mouseUp(window);
+    const panel = (dialog as HTMLElement).firstElementChild as HTMLElement;
+    expect(panel.style.transform).toBe('translate(50px, 30px)');
+  });
+
+  it('resizes the dialog from its corner grip', async () => {
+    stubFetch();
+    render(<Reports />);
+    await openPreview(FILE_NAME);
+    const dialog = screen.getByRole('dialog', { name: `Preview of ${FILE_NAME}` });
+    fireEvent.mouseDown(screen.getByTitle('Resize'), { clientX: 0, clientY: 0 });
+    fireEvent.mouseMove(window, { clientX: 100, clientY: 50 });
+    fireEvent.mouseUp(window);
+    const panel = (dialog as HTMLElement).firstElementChild as HTMLElement;
+    expect(panel.style.width).toBe('900px');
+    expect(panel.style.height).toBe('650px');
+  });
+
+  it('closes the modal on Close, backdrop click, and Escape', async () => {    stubFetch();
     const { container } = render(<Reports />);
     await openPreview(FILE_NAME);
 
