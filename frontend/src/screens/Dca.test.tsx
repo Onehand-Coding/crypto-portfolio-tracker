@@ -67,6 +67,23 @@ describe('Dca completion plan', () => {
   });
 });
 
+describe('Dca preview pending state', () => {
+  it('disables the button and swaps the label while the preview is in flight', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const path = String(url);
+      if (path.includes('/api/strategy/dca/preview')) {
+        return new Promise<never>(() => {});
+      }
+      const payload = path.includes('/api/strategy/completion') ? COMPLETION
+        : path.includes('/api/execute/status') ? STATUS : DCA_STATE;
+      return { ok: true, json: async () => payload };
+    }));
+    render(<Dca />);
+    fireEvent.click(await screen.findByRole('button', { name: /preview allocation/i }));
+    expect(await screen.findByRole('button', { name: /previewing/i })).toBeDisabled();
+  });
+});
+
 describe('Dca per-trade selection', () => {
   const PREVIEW = {
     strategy: 'target_weight', amount_usd: 50, valid: true, message: null,

@@ -28,6 +28,7 @@ export function Dca() {
   const [amount, setAmount] = useState('50');
   const [strategy, setStrategy] = useState('target_weight');
   const [preview, setPreview] = useState<DcaPreviewResponse | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const isChecked = (s: string) => selected[s] ?? true;
@@ -43,6 +44,7 @@ export function Dca() {
   }
 
   async function runPreview() {
+    setPreviewBusy(true);
     setPreviewError(null);
     try {
       const result = await apiPost<DcaPreviewResponse>('/api/strategy/dca/preview', {
@@ -52,6 +54,8 @@ export function Dca() {
     } catch (e) {
       setPreview(null);
       setPreviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPreviewBusy(false);
     }
   }
 
@@ -186,7 +190,9 @@ export function Dca() {
               </div>
             </div>
 
-            <Button onClick={runPreview}>Preview allocation</Button>
+            <Button onClick={runPreview} disabled={previewBusy}>
+              {previewBusy ? 'Previewing…' : 'Preview allocation'}
+            </Button>
           </div>
 
           <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
