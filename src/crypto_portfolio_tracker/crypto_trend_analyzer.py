@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import functools
+import threading
 from enum import Enum
 from pathlib import Path
 from datetime import datetime
@@ -13,6 +14,9 @@ import pandas_ta as ta
 from binance.client import Client
 
 from .config import ConfigManager
+
+
+_YFINANCE_DOWNLOAD_LOCK = threading.Lock()
 
 # Suppress yfinance verbose error logging
 logging.getLogger("yfinance").setLevel(logging.WARNING)
@@ -117,16 +121,27 @@ class CryptoTrendAnalyzer:
             self.logger.info(
                 f"Fetching {period} of {interval} data for {yf_ticker} from yfinance..."
             )
-            data = yf.download(
-                tickers=yf_ticker,
-                period=period,
-                interval=interval,
-                auto_adjust=True,
-                progress=False,
-            )
+            # yfinance's downloader uses shared process state and can return
+            # another ticker's frame when called concurrently. Keep the
+            # blocking call in a worker, but serialize the downloader itself.
+            def download():
+                with _YFINANCE_DOWNLOAD_LOCK:
+                    return yf.download(
+                        tickers=yf_ticker,
+                        period=period,
+                        interval=interval,
+                        auto_adjust=True,
+                        progress=False,
+                    )
+
+            data = await asyncio.to_thread(download)
             if not data.empty:
                 if isinstance(data.columns, pd.MultiIndex):
                     data.columns = data.columns.get_level_values(0)
+                    # yfinance can return duplicate OHLC names for a single
+                    # ticker; retaining them makes data["Close"] a Series
+                    # instead of a scalar column during analysis.
+                    data = data.loc[:, ~data.columns.duplicated()]
                 # yfinance data is typically already tz-aware
                 return data
         except Exception as e:

@@ -4,6 +4,8 @@ Integration tests for API interactions.
 
 import pytest
 import asyncio
+import threading
+import time
 import pandas as pd
 from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime, timezone
@@ -247,3 +249,75 @@ class TestCryptoTrendAnalyzer:
 
             assert isinstance(data, pd.DataFrame)
             assert len(data) == 3
+
+    @pytest.mark.asyncio
+    async def test_yfinance_fetch_does_not_block_event_loop(self, trend_analyzer):
+        """A slow yfinance request must not stall API status polling."""
+        def slow_download(*args, **kwargs):
+            time.sleep(0.3)
+            return pd.DataFrame(
+                {"Open": [100], "High": [105], "Low": [95], "Close": [102], "Volume": [1000]},
+                index=pd.date_range("2025-01-01", periods=1),
+            )
+
+        with patch("yfinance.download", side_effect=slow_download):
+            started = time.monotonic()
+            task = asyncio.create_task(
+                trend_analyzer.fetch_crypto_data_async("BTC-USD", "7d", "1d")
+            )
+            await asyncio.sleep(0.05)
+            assert time.monotonic() - started < 0.2
+            await task
+
+    @pytest.mark.asyncio
+    async def test_yfinance_multiindex_does_not_leave_duplicate_price_columns(
+        self, trend_analyzer
+    ):
+        """Flattening a single-ticker response must leave scalar OHLC columns."""
+        columns = pd.MultiIndex.from_tuples([
+            ("Close", "BTC-USD"), ("Close", "BTC-USD"),
+            ("High", "BTC-USD"), ("Low", "BTC-USD"),
+            ("Open", "BTC-USD"), ("Volume", "BTC-USD"),
+        ])
+        duplicate_data = pd.DataFrame(
+            [[100, 101, 105, 95, 99, 1000]],
+            columns=columns,
+            index=pd.date_range("2025-01-01", periods=1),
+        )
+
+        with patch("yfinance.download", return_value=duplicate_data):
+            data = await trend_analyzer.fetch_crypto_data_async("BTC-USD", "7d", "1d")
+
+        assert not data.columns.duplicated().any()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_yfinance_fetches_are_serialized(self, trend_analyzer):
+        """The yfinance downloader must not serve one ticker's data to another."""
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        def download(tickers, **kwargs):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            price = 100 if tickers == "BTC-USD" else 200
+            return pd.DataFrame(
+                {"Close": [price], "High": [price + 1], "Low": [price - 1],
+                 "Open": [price], "Volume": [1000]},
+                index=pd.date_range("2025-01-01", periods=1),
+            )
+
+        with patch("yfinance.download", side_effect=download):
+            btc, eth = await asyncio.gather(
+                trend_analyzer.fetch_crypto_data_async("BTC-USD", "7d", "1d"),
+                trend_analyzer.fetch_crypto_data_async("ETH-USD", "7d", "1d"),
+            )
+
+        assert max_active == 1
+        assert btc["Close"].iloc[0] == 100
+        assert eth["Close"].iloc[0] == 200
