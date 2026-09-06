@@ -217,7 +217,7 @@ def test_cockpit_reports_undefined_percentage_when_basis_is_zero(
 def _testnet_config(mock_read_context, tracked):
     mock_read_context.config_manager.is_testnet_mode = True
     mock_read_context.config_manager.config = {
-        "portfolio": {"testnet_mode": True, "testnet_tracked_symbols": tracked}
+        "portfolio": {"testnet_mode": True, "tracked_symbols": tracked}
     }
 
 
@@ -247,9 +247,11 @@ def test_cockpit_hides_non_tracked_holdings_in_testnet(
     assert body["unpriced_count"] == 0
 
 
-def test_cockpit_track_list_is_ignored_outside_testnet(
+def test_cockpit_explicit_list_filters_live_too(
     mock_read_context, tmp_path, monkeypatch
 ):
+    """An explicit list is a choice about what to follow, in both
+    environments. Only the *default* differs (core on testnet)."""
     cache_file = tmp_path / "metrics.json"
     monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
     _write_holdings(cache_file, [
@@ -261,7 +263,58 @@ def test_cockpit_track_list_is_ignored_outside_testnet(
     mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
     mock_read_context.config_manager.is_testnet_mode = False
     mock_read_context.config_manager.config = {
-        "portfolio": {"testnet_mode": False, "testnet_tracked_symbols": ["BTC"]}
+        "portfolio": {"testnet_mode": False, "tracked_symbols": ["BTC"]}
+    }
+
+    body = _client().get("/api/portfolio/cockpit").json()
+
+    assert [h["symbol"] for h in body["holdings"]] == ["BTC"]
+    assert body["excluded_count"] == 1
+    assert body["excluded_symbols"] == ["DOGE"]
+
+
+def test_cockpit_empty_list_falls_back_to_core_on_testnet(
+    mock_read_context, tmp_path, monkeypatch
+):
+    cache_file = tmp_path / "metrics.json"
+    monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
+    _write_holdings(cache_file, [
+        {"symbol": "BTC", "total_quantity": 1.0, "current_price": 50000.0,
+         "value_usd": 50000.0},
+        {"symbol": "QUICK", "total_quantity": 9.0, "current_price": 100.0,
+         "value_usd": 900.0},
+    ])
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
+    mock_read_context.config_manager.is_testnet_mode = True
+    mock_read_context.config_manager.config = {
+        "portfolio": {"testnet_mode": True, "tracked_symbols": []},
+        "target_allocation": {"BTC": 1.0},
+    }
+
+    body = _client().get("/api/portfolio/cockpit").json()
+
+    assert [h["symbol"] for h in body["holdings"]] == ["BTC"]
+    assert body["excluded_count"] == 1
+    assert body["excluded_symbols"] == ["QUICK"]
+
+
+def test_cockpit_live_default_shows_everything(
+    mock_read_context, tmp_path, monkeypatch
+):
+    """Live must never hide real money by default: no list means no filter."""
+    cache_file = tmp_path / "metrics.json"
+    monkeypatch.setattr("api.routes.portfolio.cache_path_for", lambda cm: cache_file)
+    _write_holdings(cache_file, [
+        {"symbol": "BTC", "total_quantity": 1.0, "current_price": 50000.0,
+         "value_usd": 50000.0},
+        {"symbol": "DOGE", "total_quantity": 2.0, "current_price": 0.2,
+         "value_usd": 0.4},
+    ])
+    mock_read_context.db_manager.get_holdings.return_value = pd.DataFrame()
+    mock_read_context.config_manager.is_testnet_mode = False
+    mock_read_context.config_manager.config = {
+        "portfolio": {"testnet_mode": False, "tracked_symbols": []},
+        "target_allocation": {"BTC": 1.0},
     }
 
     body = _client().get("/api/portfolio/cockpit").json()

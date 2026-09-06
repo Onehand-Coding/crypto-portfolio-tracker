@@ -14,7 +14,7 @@ const SETTINGS: SettingsResponse = {
   p2p_fiat_currency: 'USD',
   crypto_quotes: ['USDT'],
   stablecoin_symbols: ['USDT', 'USDC'],
-  testnet_tracked_symbols: [],
+  tracked_symbols: [],
   trend_analyzer: { rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70, cryptocurrencies: ['BTC-USD'] },
   cleanup_days: 90,
   automation: {
@@ -51,12 +51,21 @@ const PREVIEW = {
   total_lines: 103,
 };
 
+const CANDIDATES = {
+  symbols: ['BTC', 'ETH', 'QUICK', 'USDT'],
+  core: ['BTC', 'ETH'],
+  stored: [],
+};
+
 function stubFetch() {
   const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
     const path = String(url);
     const method = init?.method ?? 'GET';
     if (path.includes('/api/system/logs/preview')) {
       return { ok: true, json: async () => PREVIEW };
+    }
+    if (path.includes('/api/system/tracked-candidates')) {
+      return { ok: true, json: async () => CANDIDATES };
     }
     if (path.includes('/api/system/config/import')) {
       return { ok: true, json: async () => SETTINGS };
@@ -139,22 +148,61 @@ describe('Settings auto-sync save', () => {
   });
 });
 
-describe('Settings testnet track list', () => {
-  it('carries the edited symbols in the PUT payload', async () => {
+describe('Settings track list', () => {
+  async function openPicker() {
+    fireEvent.click(await screen.findByRole('button', { name: /Select assets/ }));
+  }
+
+  it('pre-checks the core default when nothing is stored', async () => {
+    stubFetch();
+    render(<Settings />);
+    await screen.findByText('Trading mode');
+    await openPicker();
+
+    // Stored is empty, so the boxes show the automatic set: core checked,
+    // QUICK and USDT unchecked.
+    const btc = screen.getByRole('checkbox', { name: 'BTC' }) as HTMLInputElement;
+    const eth = screen.getByRole('checkbox', { name: 'ETH' }) as HTMLInputElement;
+    const quick = screen.getByRole('checkbox', { name: 'QUICK' }) as HTMLInputElement;
+    expect(btc.checked).toBe(true);
+    expect(eth.checked).toBe(true);
+    expect(quick.checked).toBe(false);
+  });
+
+  it('carries checkbox toggles in the PUT payload, starting from the default', async () => {
     const fetchMock = stubFetch();
     render(<Settings />);
     await screen.findByText('Trading mode');
+    await openPicker();
 
-    fireEvent.change(screen.getByLabelText(/Testnet tracked symbols/), {
-      target: { value: 'BTC, eth, ' },
-    });
+    // Stored is empty so toggling starts from the core default: unchecking
+    // ETH and checking QUICK saves exactly [BTC, QUICK], never dropping the
+    // core silently.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'ETH' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'QUICK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
 
     await waitFor(() => {
       expect(screen.getByText(/settings saved/i)).toBeDefined();
     });
     const body = putBody(fetchMock);
-    expect(body['testnet_tracked_symbols']).toEqual(['BTC', 'eth']);
+    expect(body['tracked_symbols']).toEqual(['BTC', 'QUICK']);
+  });
+
+  it('resets to the core set on demand', async () => {
+    const fetchMock = stubFetch();
+    render(<Settings />);
+    await screen.findByText('Trading mode');
+    await openPicker();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'QUICK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to core' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/settings saved/i)).toBeDefined();
+    });
+    expect(putBody(fetchMock)['tracked_symbols']).toEqual(['BTC', 'ETH']);
   });
 });
 

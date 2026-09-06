@@ -10,6 +10,7 @@ from api.cache import MetricsCache, cache_path_for
 from api.deps import get_read_context
 from api.schemas.portfolio import AccountingBasis, CockpitResponse, Holding
 from api.schemas.system import Environment, Staleness
+from crypto_portfolio_tracker.symbol_mapper import effective_tracked_symbols
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
@@ -64,25 +65,19 @@ def _staleness(age: Optional[float], cached_at: Optional[float]) -> Staleness:
 
 
 def _tracked_symbols(config_manager) -> Optional[set]:
-    """The testnet track-only list, or None when nothing is restricted.
+    """The asset allow-list in force, or None when nothing is restricted.
 
-    Testnet-only by design: live holdings are real assets worth pricing.
+    One rule shared with the mapper gate
+    (`symbol_mapper.effective_tracked_symbols`): an explicit list always
+    wins, otherwise testnet falls back to core and live stays unrestricted.
     Defensive about shape because the config here can be a Mock in tests
-    and hand-edited on disk: anything that is not a non-empty list is no
-    restriction, never an error.
+    and hand-edited on disk: anything unexpected is no restriction.
     """
-    if not bool(getattr(config_manager, "is_testnet_mode", False)):
-        return None
     config = getattr(config_manager, "config", None)
-    portfolio = config.get("portfolio", {}) if isinstance(config, dict) else {}
-    if not isinstance(portfolio, dict):
+    if not isinstance(config, dict):
         return None
-    raw = portfolio.get("testnet_tracked_symbols")
-    if not isinstance(raw, (list, tuple, set)) or not raw:
-        return None
-    wanted = {str(s).strip().upper() for s in raw}
-    wanted.discard("")
-    return wanted or None
+    effective = effective_tracked_symbols(config)
+    return set(effective) if effective is not None else None
 
 
 def _environment(config_manager) -> Environment:

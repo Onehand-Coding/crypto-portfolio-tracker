@@ -3,7 +3,7 @@ import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { apiGet, apiPut } from '../lib/api';
-import type { LogPreviewResponse, SettingsResponse } from '../types';
+import type { LogPreviewResponse, SettingsResponse, TrackedCandidatesResponse } from '../types';
 
 function Field({ label, hint, children }: {
   label: string; hint?: string; children: React.ReactNode;
@@ -76,8 +76,7 @@ function NumberInput({ value, onChange, width }: {
   );
 }
 
-const FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly'] as const;
-const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const;
+const FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'quarterly'] as const;const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'] as const;
 const LOOKBACK_KEYS = [
   'trades', 'deposits', 'withdrawals', 'p2p_buys',
   'internal_transfers', 'spot_futures_transfers', 'spot_convert_history',
@@ -86,8 +85,68 @@ const LOOKBACK_KEYS = [
 ] as const;
 const TIMEFRAMES = ['long_term', 'swing', 'day'] as const;
 
+/** Checkbox picker for the track list, fed by /api/system/tracked-candidates. */
+function TrackListPicker({ stored, candidates, onChange }: {
+  stored: string[];
+  candidates: TrackedCandidatesResponse | null;
+  onChange: (symbols: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Candidates unavailable (still loading or fetch failed): fall back to the
+  // plain comma input rather than blocking the whole panel.
+  if (!candidates) {
+    return (
+      <input value={stored.join(', ')}
+             onChange={(e) => onChange(e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
+             className="font-mono" style={inputStyle} aria-label="Tracked symbols" />
+    );
+  }
+  // What the boxes show: the explicit list, or the automatic set (core
+  // assets) when nothing is stored. Toggling from automatic starts from
+  // that set, so saving can never silently drop the core.
+  const effective = stored.length > 0 ? stored : candidates.core;
+  const toggle = (symbol: string) =>
+    onChange(effective.includes(symbol)
+      ? effective.filter((s) => s !== symbol)
+      : [...effective, symbol]);
+  const summary = stored.length > 0
+    ? `${stored.length} selected`
+    : candidates.core.length > 0
+      ? `${candidates.core.length} selected (core default)`
+      : 'All assets (no filter)';
+  return (
+    <div>
+      <Button variant="secondary" onClick={() => setOpen((o) => !o)}>
+        Select assets ({summary})
+      </Button>
+      {open && (
+      <>
+      <div className="flex flex-col"
+           style={{ gap: 'var(--space-2)', marginTop: 'var(--space-2)',
+                    maxHeight: 220, overflowY: 'auto' }}>
+        {candidates.symbols.map((symbol) => (
+          <label key={symbol} className="flex items-center font-mono"
+                 style={{ gap: 'var(--space-2)', fontSize: '13px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={effective.includes(symbol)}
+                   onChange={() => toggle(symbol)} />
+            {symbol}
+          </label>
+        ))}
+      </div>
+      <div className="flex" style={{ gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+        <Button variant="secondary" onClick={() => onChange(candidates.symbols)}>Select all</Button>
+        <Button variant="secondary" onClick={() => onChange([])}>Clear</Button>
+        <Button variant="secondary" onClick={() => onChange(candidates.core)}>Reset to core</Button>
+      </div>
+      </>
+      )}
+    </div>
+  );
+}
+
 export function Settings() {
   const { data, error, reload } = useApi<SettingsResponse>('/api/system/settings');
+  const candidates = useApi<TrackedCandidatesResponse>('/api/system/tracked-candidates');
   const [form, setForm] = useState<SettingsResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -183,7 +242,7 @@ export function Settings() {
         p2p_fiat_currency: form!.p2p_fiat_currency,
         crypto_quotes: form!.crypto_quotes,
         stablecoin_symbols: form!.stablecoin_symbols,
-        testnet_tracked_symbols: form!.testnet_tracked_symbols,
+        tracked_symbols: form!.tracked_symbols,
         trend_analyzer: {
           rsi_period: Number(form!.trend_analyzer.rsi_period),
           rsi_oversold: Number(form!.trend_analyzer.rsi_oversold),
@@ -309,12 +368,22 @@ export function Settings() {
               hint="On: real orders are placed. Off: trades are simulated (dry run)."
               accent="var(--negative)"
             />
-            <Field label="Testnet tracked symbols"
-                   hint="Comma-separated, e.g. BTC, ETH, USDT. Testnet only: unlisted assets are never priced and hidden everywhere. Empty means track everything.">
-              <input value={form.testnet_tracked_symbols.join(', ')}
-                     onChange={(e) => setForm((f) => f && { ...f, testnet_tracked_symbols: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                     className="font-mono" style={inputStyle} />
-            </Field>
+            {/* Not a Field: a <label> must not wrap interactive content,
+                and this picker is all checkboxes and buttons. Visuals match
+                Field deliberately. */}
+            <div className="flex flex-col" style={{ gap: 'var(--space-2)' }}>
+              <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px',
+                                                 letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                Tracked symbols
+              </span>
+              <TrackListPicker stored={form.tracked_symbols}
+                               candidates={candidates.data ?? null}
+                               onChange={(v) => setForm((f) => f && { ...f, tracked_symbols: v })} />
+              <span className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>
+                Both environments; testnet defaults to core assets when empty. Unlisted
+                assets are never priced and hidden everywhere.
+              </span>
+            </div>
           </div>
         </Panel>
 

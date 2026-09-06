@@ -341,7 +341,7 @@ export function Cockpit() {
           <p className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '12px',
                                           marginTop: 'var(--space-3)', marginBottom: 0 }}>
             Filtered: {(data.excluded_symbols ?? []).join(', ')} hidden by your
-            testnet track list — unpriced on purpose and not shown below.
+            track list — unpriced on purpose and not shown below.
           </p>
         )}
       </Panel>

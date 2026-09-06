@@ -384,7 +384,7 @@ class SettingsResponse(BaseModel):
     p2p_fiat_currency: str
     crypto_quotes: list[str]
     stablecoin_symbols: list[str]
-    testnet_tracked_symbols: list[str]
+    tracked_symbols: list[str]
     trend_analyzer: TrendAnalyzerSettings
     cleanup_days: int
     automation: AutomationSettings
@@ -404,7 +404,7 @@ class SettingsUpdate(BaseModel):
     p2p_fiat_currency: Optional[str] = None
     crypto_quotes: Optional[list[str]] = None
     stablecoin_symbols: Optional[list[str]] = None
-    testnet_tracked_symbols: Optional[list[str]] = None
+    tracked_symbols: Optional[list[str]] = None
     trend_analyzer: Optional[TrendAnalyzerSettings] = None
     cleanup_days: Optional[int] = None
     automation: Optional[AutomationSettings] = None
@@ -414,10 +414,26 @@ class SettingsUpdate(BaseModel):
     trend_timeframes: Optional[TrendTimeframes] = None
 
 
+class TrackedCandidatesResponse(BaseModel):
+    symbols: list[str] = Field(
+        default_factory=list,
+        description="Every symbol the track list could name: stored list, "
+                    "targets, stables, and both metrics caches, sorted.",
+    )
+    core: list[str] = Field(
+        default_factory=list,
+        description="The automatic set (target allocation): what an empty "
+                    "list means on testnet.",
+    )
+    stored: list[str] = Field(
+        default_factory=list,
+        description="What is saved right now (may be empty for automatic).",
+    )
+
+
 class GenerateExportRequest(BaseModel):
     data_type: str  # transactions | holdings
     format: str  # csv | excel
-
 
 class GenerateExportResponse(BaseModel):
     name: str

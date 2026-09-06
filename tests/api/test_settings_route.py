@@ -102,7 +102,7 @@ def test_same_testnet_value_does_not_reset_singletons(mock_read_context, monkeyp
     assert resets == []
 
 
-def test_testnet_tracked_symbols_persist_normalised(mock_read_context, monkeypatch):
+def test_tracked_symbols_persist_normalised(mock_read_context, monkeypatch):
     import api.routes.screens as screens
 
     cm = _cm(mock_read_context)
@@ -110,25 +110,27 @@ def test_testnet_tracked_symbols_persist_normalised(mock_read_context, monkeypat
     monkeypatch.setattr(screens, "reset_singletons", lambda: resets.append(1))
     body = TestClient(app).put(
         "/api/system/settings",
-        json={"testnet_tracked_symbols": [" btc ", "eth", ""]},
+        json={"tracked_symbols": [" btc ", "eth", ""]},
     ).json()
-    assert body["testnet_tracked_symbols"] == ["BTC", "ETH"]
-    assert cm.config["portfolio"]["testnet_tracked_symbols"] == ["BTC", "ETH"]
+    assert body["tracked_symbols"] == ["BTC", "ETH"]
+    assert cm.config["portfolio"]["tracked_symbols"] == ["BTC", "ETH"]
     cm.save_config.assert_called_once()
     # Editing the list must not disturb live connections: the mapper and the
     # reads see the same config dict, so no rebuild is needed.
     assert resets == []
 
 
-def test_testnet_tracked_symbols_default_empty_and_clearable(mock_read_context):
+def test_tracked_symbols_default_empty_and_clearable(mock_read_context):
+    # Empty means automatic (core on testnet, everything on live) -- it is
+    # stored as-is; the fallback lives in effective_tracked_symbols.
     cm = _cm(mock_read_context)
-    assert TestClient(app).get("/api/system/settings").json()["testnet_tracked_symbols"] == []
-    cm.config["portfolio"]["testnet_tracked_symbols"] = ["BTC"]
+    assert TestClient(app).get("/api/system/settings").json()["tracked_symbols"] == []
+    cm.config["portfolio"]["tracked_symbols"] = ["BTC"]
     body = TestClient(app).put(
-        "/api/system/settings", json={"testnet_tracked_symbols": []}
+        "/api/system/settings", json={"tracked_symbols": []}
     ).json()
-    assert body["testnet_tracked_symbols"] == []
-    assert cm.config["portfolio"]["testnet_tracked_symbols"] == []
+    assert body["tracked_symbols"] == []
+    assert cm.config["portfolio"]["tracked_symbols"] == []
 
 
 def test_toggles_default_false_when_absent(mock_read_context):

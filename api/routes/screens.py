@@ -19,7 +19,12 @@ import psutil
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from api.cache import MetricsCache, analysis_cache_path, cache_path_for
+from api.cache import (
+    MetricsCache,
+    all_metrics_paths,
+    analysis_cache_path,
+    cache_path_for,
+)
 from api.deps import get_read_context, get_tracker, reset_singletons
 from api.routes.common import num, opt, staleness_for
 from api.schemas.screens import (
@@ -73,6 +78,7 @@ from api.schemas.screens import (
     TargetAllocationRequest,
     TargetAllocationResponse,
     TimeframeWindows,
+    TrackedCandidatesResponse,
     TransactionRow,
     TransactionsResponse,
     TrendAnalyzerSettings,
@@ -1018,9 +1024,9 @@ def _read_settings(config) -> SettingsResponse:
     p2p_fiat_currency=str(portfolio.get("p2p_fiat_currency", "") or ""),
     crypto_quotes=[str(x) for x in (portfolio.get("crypto_quotes") or [])],
     stablecoin_symbols=[str(x) for x in (portfolio.get("stablecoin_symbols") or [])],
-    # Absent or empty means no restriction (see _tracked_symbols and the
-    # mapper gate); only a non-empty list narrows testnet reads and syncs.
-    testnet_tracked_symbols=[str(x) for x in (portfolio.get("testnet_tracked_symbols") or [])],
+    # Empty means automatic (see effective_tracked_symbols): core assets on
+    # testnet, everything on live. Stored as-is.
+    tracked_symbols=[str(x) for x in (portfolio.get("tracked_symbols") or [])],
         trend_analyzer=TrendAnalyzerSettings(
             rsi_period=int(num(ta.get("rsi_period"), 14)),
             rsi_oversold=num(ta.get("rsi_oversold"), 30),
@@ -1119,13 +1125,14 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
             s.strip().upper() for s in payload.stablecoin_symbols if s.strip()
         ]
 
-    # Testnet track-only list. Normalised like the other symbol lists; an
-    # empty list clears the restriction. Deliberately not a singleton reset
-    # (unlike testnet_mode): the mapper and the reads share this same
-    # config dict, so the next sync and the next read see it with no rebuild.
-    if payload.testnet_tracked_symbols is not None:
-        portfolio["testnet_tracked_symbols"] = [
-            s.strip().upper() for s in payload.testnet_tracked_symbols if s.strip()
+    # Track list, both environments. Normalised like the other symbol lists;
+    # an empty list means automatic (core on testnet, everything on live).
+    # Deliberately not a singleton reset (unlike testnet_mode): the mapper
+    # and the reads share this same config dict, so the next sync and the
+    # next read see it with no rebuild.
+    if payload.tracked_symbols is not None:
+        portfolio["tracked_symbols"] = [
+            s.strip().upper() for s in payload.tracked_symbols if s.strip()
         ]
 
     if payload.trend_analyzer is not None:
@@ -1307,6 +1314,37 @@ def update_settings(payload: SettingsUpdate, ctx=Depends(get_read_context)) -> S
         # directly, and concurrent syncs are refused with 409.
         reset_singletons()
     return _read_settings(cm.config)
+
+
+@router.get("/system/tracked-candidates", response_model=TrackedCandidatesResponse)
+def tracked_candidates(ctx=Depends(get_read_context)) -> TrackedCandidatesResponse:
+    """Every symbol the track list could name, for the checkbox picker.
+
+    Union of the stored list, the target allocation (the automatic set),
+    stables, and both metrics caches -- so testnet symbols are offered even
+    while the server runs live. Local reads only, never the network; a
+    missing cache simply contributes nothing.
+    """
+    config = ctx.config_manager.config or {}
+    portfolio = config.get("portfolio", {}) or {}
+    stored = [str(s).strip().upper()
+              for s in (portfolio.get("tracked_symbols") or []) if str(s).strip()]
+    targets = config.get("target_allocation", {}) or {}
+    core = sorted({str(k).strip().upper() for k in targets.keys()} - {""})
+    stables = [str(s).strip().upper()
+               for s in (portfolio.get("stablecoin_symbols") or []) if str(s).strip()]
+    cached: set[str] = set()
+    for path in all_metrics_paths():
+        data = MetricsCache(path).read()
+        for row in ((data or {}).get("holdings_df") or []):
+            symbol = row.get("symbol") if isinstance(row, dict) else None
+            if symbol and str(symbol).strip():
+                cached.add(str(symbol).strip().upper())
+    return TrackedCandidatesResponse(
+        symbols=sorted(set(stored) | set(core) | set(stables) | cached),
+        core=core,
+        stored=stored,
+    )
 
 
 def _sanitized_config_copy(config) -> dict:

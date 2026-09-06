@@ -4,7 +4,7 @@ import json
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, FrozenSet, Optional, List
 
 import requests
 from requests.exceptions import HTTPError
@@ -15,6 +15,39 @@ from tenacity import (
     retry_if_exception_type,
 )
 from .exceptions import NetworkOperationError
+
+
+def _normalise_list(raw) -> FrozenSet[str]:
+    wanted = {str(s).strip().upper() for s in raw}
+    wanted.discard("")
+    return frozenset(wanted)
+
+
+def effective_tracked_symbols(config: Dict[str, Any]) -> Optional[FrozenSet[str]]:
+    """The asset allow-list in force, or None when nothing is restricted.
+
+    Single source of truth shared by the mapper gate below and the API read
+    filter: an explicit non-empty `portfolio.tracked_symbols` always wins;
+    otherwise testnet falls back to the target allocation (the core sleeve),
+    and live -- where hiding real money by default would be dangerous -- plus
+    a target-less testnet stay unrestricted. Anything malformed is no
+    restriction, never an error.
+    """
+    portfolio = config.get("portfolio", {}) or {}
+    if not isinstance(portfolio, dict):
+        return None
+    raw = portfolio.get("tracked_symbols")
+    if isinstance(raw, (list, tuple, set)) and raw:
+        return _normalise_list(raw) or None
+    if not portfolio.get("testnet_mode", False):
+        return None
+    targets = config.get("target_allocation", {}) or {}
+    if not isinstance(targets, dict) or not targets:
+        return None
+    core = frozenset(
+        {str(k).strip().upper() for k in targets.keys()}
+    ) - frozenset({""})
+    return core or None
 
 
 class SymbolMapper:
@@ -56,33 +89,22 @@ class SymbolMapper:
     def _is_tracked(self, normalized_symbol: str) -> bool:
         """Whether a symbol may be resolved to a CoinGecko ID.
 
-        Testnet-only track list (`portfolio.testnet_tracked_symbols`): when
-        set, resolving anything off the list is refused *before* discovery,
-        so a sync never spends CoinGecko calls on assets the user chose not
-        to follow. The caller sees the same outcome as a failed lookup
-        (default / KeyError), and the API layer hides those rows with an
-        explicit excluded-count caveat. Live mode and an absent or empty
-        list are unrestricted, exactly as before.
+        Refuses off-list symbols *before* discovery, so a sync never spends
+        CoinGecko calls on assets outside `effective_tracked_symbols`. The
+        caller sees the same outcome as a failed lookup (default / KeyError).
         """
-        portfolio = self.config.get("portfolio", {}) or {}
-        if not portfolio.get("testnet_mode", False):
-            return True
-        tracked = portfolio.get("testnet_tracked_symbols")
-        if not isinstance(tracked, (list, tuple, set)) or not tracked:
-            return True
-        wanted = {str(s).strip().upper() for s in tracked}
-        wanted.discard("")
-        return normalized_symbol in wanted
+        effective = effective_tracked_symbols(self.config)
+        return True if effective is None else normalized_symbol in effective
 
     def __getitem__(self, symbol: str) -> str:
         normalized_symbol = self.normalize_symbol(symbol)
         if not self._is_tracked(normalized_symbol):
             self.logger.info(
                 f"Skipping discovery for '{symbol}': not in "
-                f"testnet_tracked_symbols."
+                f"tracked_symbols."
             )
             raise KeyError(
-                f"Symbol '{symbol}' is not in testnet_tracked_symbols."
+                f"Symbol '{symbol}' is not in tracked_symbols."
             )
         if normalized_symbol in self._mappings:
             return self._mappings[normalized_symbol]
@@ -114,7 +136,7 @@ class SymbolMapper:
             # point is to stop the per-sync discovery-failure noise.
             self.logger.info(
                 f"Skipping discovery for '{symbol}': not in "
-                f"testnet_tracked_symbols."
+                f"tracked_symbols."
             )
             return default
 

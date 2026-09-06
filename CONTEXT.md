@@ -223,17 +223,23 @@ fetching live on read (makes every page load network-dependent).
 **Reason:** Testnet uses a physically separate database. A shared cache file
 would render testnet figures under a LIVE banner.
 
-### Testnet has an opt-in track-only list
-**Choice:** `portfolio.testnet_tracked_symbols`, empty by default. When set, the
-mapper refuses to resolve anything off the list (no CoinGecko discovery spent),
-and reads hide those rows while reporting `excluded_count`/`excluded_symbols`.
+### The track list narrows both environments, with a safe default
+**Choice:** `portfolio.tracked_symbols`, empty by default. An explicit list
+always wins; otherwise testnet falls back to the target allocation (core)
+and live stays unrestricted. One rule (`effective_tracked_symbols`)
+shared by the mapper gate and the read filter; reads report
+`excluded_count`/`excluded_symbols`, and the Settings picker
+(`GET /system/tracked-candidates`) offers stored + targets + stables +
+both caches as checkboxes, pre-checked from the effective set.
 **Status:** Current
-**Reason:** Testnet accounts accumulate junk tokens no price provider lists, and
-each one failed discovery on every sync, erroring the run and pinning a
-DATA QUALITY alert whose "re-sync" advice could never work. Live ignores the
-list: live holdings are real assets worth pricing.
-**Alternatives Considered:** Caching negative mappings (hides the errors but not
-the clutter); display-only hiding (leaves the sync errors in place).
+**Reason:** Testnet accounts accumulate junk tokens no price provider lists,
+and each one failed discovery on every sync, erroring the run and pinning a
+DATA QUALITY alert whose "re-sync" advice could never work. Live defaults to
+unrestricted because hiding real money by default is the failure this tool
+exists to prevent; an explicit list still applies there as a focus mode.
+**Alternatives Considered:** Caching negative mappings (hides the errors but
+not the clutter); display-only hiding (leaves the sync errors in place);
+testnet-only scoping (rejected: the same selection is useful live focus).
 
 ### Frontend serving is one process, one port
 **Choice:** FastAPI serves the built React bundle; Vite proxies `/api` in dev.

@@ -60,13 +60,13 @@ class CockpitResponse(BaseModel):
     )
     excluded_count: int = Field(
         0,
-        description="Holdings hidden by the testnet track-only list. Unlike "
+        description="Holdings hidden by the track list. Unlike "
                     "unpriced holdings these are a user choice, not a data "
                     "failure: they must not feed the re-sync loop.",
     )
     excluded_symbols: list[str] = Field(
         default_factory=list,
-        description="Symbols hidden by the testnet track-only list, so a "
+        description="Symbols hidden by the track list, so a "
                     "typo in the list is visible instead of silently "
                     "vanishing a position.",
     )

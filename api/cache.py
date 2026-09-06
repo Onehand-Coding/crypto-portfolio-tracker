@@ -57,6 +57,17 @@ def cache_path_for(config_manager) -> Path:
     return Path("data") / "api_cache" / f"metrics_{suffix}.json"
 
 
+def all_metrics_paths() -> list[Path]:
+    """Both environment caches, for mode-independent reads.
+
+    The track-list candidate picker must offer testnet symbols while the
+    server runs live (and vice versa); per-mode cache_path_for cannot do
+    that. Local JSON reads only -- never the network.
+    """
+    base = Path("data") / "api_cache"
+    return [base / "metrics_live.json", base / "metrics_testnet.json"]
+
+
 def analysis_cache_path(config_manager, kind: str) -> Path:
     """Cache for one kind of live analysis (rebalance, dca, profit, technical).
 

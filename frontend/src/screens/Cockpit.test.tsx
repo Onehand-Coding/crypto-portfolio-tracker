@@ -200,7 +200,7 @@ describe('Cockpit allocation drift basis', () => {
   });
 });
 
-describe('Cockpit testnet track list', () => {
+describe('Cockpit track list', () => {
   it('names the holdings hidden by the filter instead of silently dropping them', async () => {
     mockDashboardFetch(undefined, {
       ...POPULATED, excluded_count: 2, excluded_symbols: ['WHALE', 'THISISATESTCOIN'],

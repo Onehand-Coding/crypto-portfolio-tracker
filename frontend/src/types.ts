@@ -50,9 +50,9 @@ export interface CockpitResponse {
   has_data: boolean;
   /** >0 means total_value_usd is understated by an unknown amount. */
   unpriced_count: number;
-  /** Holdings hidden by the testnet track-only list: a user choice, not a failure. */
+  /** Holdings hidden by the track list: a user choice, not a failure. */
   excluded_count: number;
-  /** Symbols hidden by the testnet track-only list. */
+  /** Symbols hidden by the track list. */
   excluded_symbols: string[];
 }
 
@@ -446,8 +446,8 @@ export interface SettingsResponse {
   p2p_fiat_currency: string;
   crypto_quotes: string[];
   stablecoin_symbols: string[];
-  /** Testnet-only track list. Empty means no restriction. */
-  testnet_tracked_symbols: string[];
+  /** Explicit track list. Empty means automatic (core on testnet, all on live). */
+  tracked_symbols: string[];
   trend_analyzer: TrendAnalyzerSettings;
   cleanup_days: number;
   automation: AutomationSettings;
@@ -455,6 +455,12 @@ export interface SettingsResponse {
   history_lookback_days: Record<string, number>;
   logging: LoggingSettings;
   trend_timeframes: TrendTimeframes;
+}
+
+export interface TrackedCandidatesResponse {
+  symbols: string[];
+  core: string[];
+  stored: string[];
 }
 
 export interface SnapshotRow {
