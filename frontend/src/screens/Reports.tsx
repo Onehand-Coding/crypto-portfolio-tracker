@@ -35,6 +35,11 @@ function PreviewModal({ preview, onClose }: {
     | { kind: 'resize'; startX: number; startY: number; origW: number; origH: number }
     | null
   >(null);
+  // Where the press started when it landed on the backdrop. A drag released
+  // over the backdrop must not close the dialog: click fires on the common
+  // ancestor of press and release, so without this every drag ending outside
+  // the panel reads as "click backdrop to close".
+  const backdropPress = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -77,21 +82,38 @@ function PreviewModal({ preview, onClose }: {
         });
       }
     }
-    function onUp() {
+    function endGesture() {
       gesture.current = null;
       setDragging(false);
     }
+    function onUp() {
+      endGesture();
+    }
+    // Releasing outside the browser window fires no mouseup; without these
+    // the panel would stay glued to the cursor until the next click.
+    function onBlur() {
+      endGesture();
+    }
+    function onLeave() {
+      endGesture();
+    }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('mouseleave', onLeave);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('mouseleave', onLeave);
     };
   }, []);
 
   function beginMove(event: React.MouseEvent) {
     // The Close button lives in the header; dragging starts anywhere else.
     if ((event.target as HTMLElement).closest('button')) return;
+    // Kill the browser's own drag (text ghost stuck to the cursor).
+    event.preventDefault();
     gesture.current = {
       kind: 'move',
       startX: event.clientX, startY: event.clientY,
@@ -102,6 +124,7 @@ function PreviewModal({ preview, onClose }: {
 
   function beginResize(event: React.MouseEvent) {
     event.stopPropagation();
+    event.preventDefault();
     const rect = panelRef.current?.getBoundingClientRect();
     gesture.current = {
       kind: 'resize',
@@ -111,6 +134,23 @@ function PreviewModal({ preview, onClose }: {
       origW: rect && rect.width > 0 ? rect.width : 800,
       origH: rect && rect.height > 0 ? rect.height : 600,
     };
+  }
+
+  function onBackdropMouseDown(event: React.MouseEvent) {
+    backdropPress.current = { x: event.clientX, y: event.clientY };
+  }
+
+  function onBackdropClick(event: React.MouseEvent) {
+    const press = backdropPress.current;
+    backdropPress.current = null;
+    // No backdrop press means the press began inside the panel: a drag
+    // released outside, never a click to close.
+    if (!press) return;
+    // A press that travelled is a released drag, not a click to close.
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 6) {
+      return;
+    }
+    onClose();
   }
 
   let body: React.ReactNode;
@@ -220,7 +260,8 @@ function PreviewModal({ preview, onClose }: {
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`Preview of ${preview.name}`}
-         onClick={onClose}
+         onMouseDown={onBackdropMouseDown}
+         onClick={onBackdropClick}
          style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
                   zIndex: 50, display: 'flex', alignItems: 'center',
                   justifyContent: 'center', padding: 'var(--space-5)' }}>

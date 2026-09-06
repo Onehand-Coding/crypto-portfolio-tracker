@@ -279,8 +279,8 @@ describe('Reports preview', () => {
     expect(panel.style.width).toBe('900px');
     expect(panel.style.height).toBe('650px');
   });
-
-  it('closes the modal on Close, backdrop click, and Escape', async () => {    stubFetch();
+  it('closes the modal on Close, backdrop click, and Escape', async () => {
+    stubFetch();
     const { container } = render(<Reports />);
     await openPreview(FILE_NAME);
 
@@ -290,7 +290,9 @@ describe('Reports preview', () => {
     });
 
     await openPreview(FILE_NAME);
-    fireEvent.click(screen.getByRole('dialog'));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.mouseDown(dialog, { clientX: 10, clientY: 10 });
+    fireEvent.click(dialog, { clientX: 10, clientY: 10 });
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
@@ -301,6 +303,34 @@ describe('Reports preview', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
     expect(container).toBeDefined();
+  });
+
+  it('does not close when a header drag is released over the backdrop', async () => {
+    stubFetch();
+    render(<Reports />);
+    await openPreview(FILE_NAME);
+    const header = screen.getByText(`Preview: ${FILE_NAME}`).closest('div');
+    fireEvent.mouseDown(header as HTMLElement, { clientX: 500, clientY: 200 });
+    fireEvent.mouseMove(window, { clientX: 100, clientY: 600 });
+    fireEvent.mouseUp(window);
+    // Release lands on the backdrop: the resulting click must not close.
+    fireEvent.click(screen.getByRole('dialog'), { clientX: 100, clientY: 600 });
+    expect(screen.getByRole('dialog', { name: `Preview of ${FILE_NAME}` })).toBeDefined();
+  });
+
+  it('drops a stuck gesture when the window loses focus', async () => {
+    stubFetch();
+    render(<Reports />);
+    await openPreview(FILE_NAME);
+    const dialog = screen.getByRole('dialog', { name: `Preview of ${FILE_NAME}` });
+    const header = screen.getByText(`Preview: ${FILE_NAME}`).closest('div');
+    fireEvent.mouseDown(header as HTMLElement, { clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 130 });
+    // Released outside the window: no mouseup ever arrives.
+    fireEvent.blur(window);
+    fireEvent.mouseMove(window, { clientX: 400, clientY: 400 });
+    const panel = (dialog as HTMLElement).firstElementChild as HTMLElement;
+    expect(panel.style.transform).toBe('translate(50px, 30px)');
   });
 });
 
