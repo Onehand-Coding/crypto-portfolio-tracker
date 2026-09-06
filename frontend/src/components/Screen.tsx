@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Panel } from './Panel';
 import { StalenessNote } from './StalenessNote';
 import type { AnalysisState, Staleness } from '../types';
+import { ApiError, NetworkError } from '../lib/api';
 
 /** Page title row. Gives every screen the same anchor and staleness position. */
 export function ScreenHeader({
@@ -140,13 +141,24 @@ export function AnalysisBar({
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
+  function startErrorMessage(error: unknown): string {
+    if (error instanceof ApiError && error.status === 409) {
+      return 'This analysis is already running. Please wait for it to finish.';
+    }
+    if (error instanceof NetworkError) {
+      return 'The server could not be reached. Check that it is running, then try again.';
+    }
+    if (error instanceof ApiError) return error.message;
+    return 'This analysis could not be started. Please try again.';
+  }
+
   async function handleRun() {
     setStarting(true);
     setStartError(null);
     try {
       await onRun();
     } catch (e) {
-      setStartError(e instanceof Error ? e.message : String(e));
+      setStartError(startErrorMessage(e));
     } finally {
       setStarting(false);
     }
@@ -169,7 +181,7 @@ export function AnalysisBar({
           )}
           {startError && !state.is_running && (
             <p className="font-mono" style={{ color: 'var(--negative)', fontSize: '12px', margin: 0 }}>
-              Could not start a run: {startError}
+              {startError}
             </p>
           )}
         </div>

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AnalysisBar } from './Screen';
 import type { AnalysisState } from '../types';
+import { ApiError } from '../lib/api';
 
 const IDLE: AnalysisState = {
   has_data: true,
@@ -22,14 +23,14 @@ describe('AnalysisBar run feedback', () => {
   });
 
   it('reverts and names the failure when the start request rejects', async () => {
-    const onRun = vi.fn().mockRejectedValue(new Error('already running'));
+    const onRun = vi.fn().mockRejectedValue(new ApiError(409, 'rebalance analysis already running'));
     render(<AnalysisBar state={IDLE} onRun={onRun} label="Rebalancing analysis" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Run analysis' }));
 
     // A rejected start used to be silent: try/finally with no catch anywhere.
     await waitFor(() =>
-      expect(screen.getByText(/could not start a run: already running/i)).toBeDefined());
+      expect(screen.getByText(/this analysis is already running/i)).toBeDefined());
     expect(screen.getByRole('button', { name: 'Run analysis' })).not.toBeDisabled();
   });
 

@@ -18,7 +18,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const detail = await response.text();
-    throw new ApiError(response.status, detail || response.statusText);
+    let message = detail || response.statusText;
+    try {
+      const parsed = JSON.parse(detail);
+      if (typeof parsed.detail === 'string') message = parsed.detail;
+    } catch {
+      // Plain-text error responses are already suitable for display.
+    }
+    throw new ApiError(response.status, message);
   }
   return (await response.json()) as T;
 }
