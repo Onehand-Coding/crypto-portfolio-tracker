@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Panel } from './Panel';
 import { StalenessNote } from './StalenessNote';
 import type { AnalysisState, Staleness } from '../types';
@@ -129,9 +129,30 @@ export function AnalysisBar({
   state, onRun, label,
 }: {
   state: AnalysisState;
-  onRun: () => void;
+  onRun: () => void | Promise<unknown>;
   label: string;
 }) {
+  // Optimistic "Starting" state: the run adapters do blocking network I/O
+  // before their first await, so the reload that would flip is_running can
+  // queue seconds behind the click. Without this the button sits dead, then
+  // flashes "Running…". Every screen's onRun is try/finally with no catch,
+  // so a rejected start propagates here -- and would otherwise be silent.
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  async function handleRun() {
+    setStarting(true);
+    setStartError(null);
+    try {
+      await onRun();
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const running = state.is_running || starting;
   return (
     <Panel>
       <div className="flex items-center justify-between" style={{ gap: 'var(--space-5)' }}>
@@ -146,11 +167,16 @@ export function AnalysisBar({
               {state.has_data && ' - the figures below are from the previous run.'}
             </p>
           )}
+          {startError && !state.is_running && (
+            <p className="font-mono" style={{ color: 'var(--negative)', fontSize: '12px', margin: 0 }}>
+              Could not start a run: {startError}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center" style={{ gap: 'var(--space-4)' }}>
           <StalenessNote staleness={state.staleness} verb="run" />
-          <Button onClick={onRun} disabled={state.is_running}>
-            {state.is_running ? 'Running…' : 'Run analysis'}
+          <Button onClick={handleRun} disabled={running}>
+            {state.is_running ? 'Running…' : starting ? 'Starting…' : 'Run analysis'}
           </Button>
         </div>
       </div>
