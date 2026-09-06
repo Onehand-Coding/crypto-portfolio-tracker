@@ -19,10 +19,6 @@ interface ReportPreview {
   image_url: string | null;
 }
 
-function downloadUrl(name: string): string {
-  return `/api/reports/download?name=${encodeURIComponent(name)}`;
-}
-
 /** File preview in a modal dialog -- the Drive/Dropbox/GitHub pattern. The
  *  table below the fold made the old inline panel look dead on click. */
 function PreviewModal({ preview, onClose }: {
@@ -40,12 +36,21 @@ function PreviewModal({ preview, onClose }: {
   if (preview.kind === 'table') {
     body = (
       <>
-        <div className="table-scroll">
-          <table className="data">
+        {/* No .table-scroll wrapper: its overflow-x makes it the sticky
+            context, so headers would scroll away with the rows. The modal
+            body scrolls both axes instead. */}
+        <table className="data" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
             <thead>
               <tr>
                 {preview.columns.map((col) => (
-                  <th key={col} className="text-left">{col}</th>
+                  // Sticky so the header survives scrolling through 50 rows.
+                  // Opaque background: rows sliding underneath must not
+                  // show through.
+                  <th key={col} className="text-left"
+                      style={{ position: 'sticky', top: 0,
+                               background: 'var(--surface-1)', zIndex: 1 }}>
+                    {col}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -62,7 +67,6 @@ function PreviewModal({ preview, onClose }: {
               ))}
             </tbody>
           </table>
-        </div>
         {preview.truncated && (
           <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
                                           marginBottom: 0, marginTop: 'var(--space-2)' }}>
@@ -72,11 +76,13 @@ function PreviewModal({ preview, onClose }: {
       </>
     );
   } else if (preview.kind === 'html') {
-    // Sandboxed and origin-less, so embedded scripts cannot run -- the
-    // exports are style-only templates, which render faithfully anyway.
+    // Rendered via srcDoc, not by navigating to the download URL: that
+    // serves Content-Disposition attachment and leaves the frame blank.
+    // Sandbox is script-less and origin-less; the exports are style-only
+    // templates, which render faithfully anyway.
     body = (
       <iframe sandbox="" title={`Preview of ${preview.name}`}
-              src={downloadUrl(preview.name)}
+              srcDoc={preview.lines.join('\n')}
               style={{ width: '100%', height: '60vh', background: '#fff',
                        border: '1px solid var(--border)',
                        borderRadius: 'var(--radius-control)' }} />

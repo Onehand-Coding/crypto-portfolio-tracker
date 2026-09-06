@@ -84,7 +84,9 @@ def test_preview_html_is_flagged_for_rendering(export_dir):
     body = TestClient(app).get(
         "/api/reports/preview", params={"name": "report.html"}).json()
     assert body["kind"] == "html"
-    assert body["lines"] == []
+    # Whole document, not truncated: the viewer renders it via srcDoc.
+    assert body["lines"] == ["<html><body>hi</body></html>"]
+    assert body["truncated"] is False
 
 
 def test_preview_json_is_flagged_for_pretty_print(export_dir):

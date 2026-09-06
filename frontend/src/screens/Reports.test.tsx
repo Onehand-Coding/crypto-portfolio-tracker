@@ -64,9 +64,9 @@ const IMAGE_PREVIEW = {
 
 const HTML_PREVIEW = {
   name: HTML_NAME,
-  lines: [],
+  lines: ['<!DOCTYPE html>', '<html><body>hi</body></html>'],
   truncated: false,
-  total_lines: 0,
+  total_lines: 2,
   kind: 'html',
   columns: [],
   rows: [],
@@ -218,6 +218,10 @@ describe('Reports preview', () => {
     // Unknown is never blank or zero: the null cell renders N/A.
     expect(scope.getByText('N/A')).toBeDefined();
     expect(scope.getByText(/101 more rows/)).toBeDefined();
+    // Headers freeze while the rows scroll underneath.
+    const header = scope.getByText('Date');
+    expect(header.style.position).toBe('sticky');
+    expect(header.style.top).toBe('0px');
   });
 
   it('renders image previews as an image, not binary text', async () => {
@@ -234,8 +238,10 @@ describe('Reports preview', () => {
     await openPreview(HTML_NAME);
     const dialog = screen.getByRole('dialog', { name: `Preview of ${HTML_NAME}` });
     const frame = within(dialog as HTMLElement).getByTitle(`Preview of ${HTML_NAME}`);
-    expect(frame.getAttribute('src')).toBe(
-      `/api/reports/download?name=${encodeURIComponent(HTML_NAME)}`);
+    // Rendered via srcDoc: the download URL serves attachment, which leaves
+    // a navigated frame blank.
+    expect(frame.getAttribute('src')).toBeNull();
+    expect(frame.getAttribute('srcdoc')).toContain('<html>');
     expect(frame.getAttribute('sandbox')).not.toBeNull();
   });
 

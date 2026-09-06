@@ -488,7 +488,18 @@ def preview_report(name: str, ctx=Depends(get_read_context)) -> PreviewResponse:
                   for record in head.itertuples(index=False, name=None)],
             truncated=len(frame) > 50, total_lines=len(frame))
     if suffix == ".html":
-        return PreviewResponse(name=name, kind="html")
+        # Returned whole, not truncated: the viewer renders it via srcDoc,
+        # not by navigating to the download URL (which serves attachment
+        # and would leave the frame blank). Reports are ~10KB templates.
+        try:
+            text = target.read_text(errors="replace")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Could not read export: {exc}")
+        if len(text) > 200_000:
+            text = text[:200_000]
+        return PreviewResponse(name=name, kind="html", lines=text.splitlines(),
+                               total_lines=len(text.splitlines()))
     if suffix == ".json":
         try:
             text = target.read_text(errors="replace")
