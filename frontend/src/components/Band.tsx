@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
  */
 export function KpiBand({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-end" style={{ gap: 'var(--space-6)' }}>
+    <div className="flex flex-wrap items-start" style={{ gap: 'var(--space-6)' }}>
       {children}
     </div>
   );
