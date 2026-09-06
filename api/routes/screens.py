@@ -79,6 +79,7 @@ from api.schemas.screens import (
     TrendExportRequest,
     TrendTimeframes,
 )
+from api.serialization import jsonable
 from crypto_portfolio_tracker.utils import calculate_fifo_realized_gains
 
 router = APIRouter(prefix="/api", tags=["screens"])
@@ -454,11 +455,13 @@ def download_report(name: str, ctx=Depends(get_read_context)) -> FileResponse:
 def preview_report(name: str, ctx=Depends(get_read_context)) -> PreviewResponse:
     """On-screen preview of a generated export, shaped by file type.
 
-    Text exports (CSV/JSON/HTML) return their first 50 lines. Spreadsheets
-    return their first 50 rows rendered as CSV. Images return a download URL
-    for an <img> tag -- reading their bytes as text would splatter binary
-    mojibake across the page, which is what the old code did. Anything else
-    is refused plainly rather than guessed at.
+    Mirrors the Streamlit export viewer: tabular files (CSV/spreadsheets)
+    come back as columns plus rows for a real table, HTML reports are
+    flagged for rendering (they are Jinja templates meant to be viewed, not
+    read as source), JSON is flagged for pretty-printing, and images return
+    a download URL for an <img> tag -- reading their bytes as text would
+    splatter binary mojibake across the page. Anything else is refused
+    plainly rather than guessed at.
     """
     if name != Path(name).name:
         raise HTTPException(status_code=400, detail="Invalid file name.")
@@ -470,18 +473,33 @@ def preview_report(name: str, ctx=Depends(get_read_context)) -> PreviewResponse:
         return PreviewResponse(
             name=name, kind="image",
             image_url=f"/api/reports/download?name={name}")
-    if suffix in (".xlsx", ".xls"):
+    if suffix in (".csv", ".xlsx", ".xls"):
         try:
-            frame = pd.read_excel(target)
+            frame = (pd.read_excel(target) if suffix != ".csv"
+                     else pd.read_csv(target))
         except Exception as exc:
             raise HTTPException(
-                status_code=422, detail=f"Could not preview spreadsheet: {exc}")
-        text = frame.head(50).to_csv(index=False)
-        lines = text.splitlines()
+                status_code=422, detail=f"Could not preview table: {exc}")
+        head = frame.head(50)
         return PreviewResponse(
-            name=name, kind="sheet", lines=lines,
-            truncated=len(frame) > 50, total_lines=len(frame) + 1)
-    if suffix not in (".csv", ".json", ".html", ".txt", ".md", ".log"):
+            name=name, kind="table",
+            columns=[str(col) for col in head.columns],
+            rows=[[jsonable(value) for value in record]
+                  for record in head.itertuples(index=False, name=None)],
+            truncated=len(frame) > 50, total_lines=len(frame))
+    if suffix == ".html":
+        return PreviewResponse(name=name, kind="html")
+    if suffix == ".json":
+        try:
+            text = target.read_text(errors="replace")
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Could not read export: {exc}")
+        return PreviewResponse(
+            name=name, kind="json", lines=text.splitlines()[:50],
+            truncated=len(text.splitlines()) > 50,
+            total_lines=len(text.splitlines()))
+    if suffix not in (".txt", ".md", ".log"):
         raise HTTPException(
             status_code=422,
             detail=f"Preview is not available for {suffix or 'extensionless'} "

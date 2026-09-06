@@ -25,17 +25,19 @@ def test_preview_returns_first_lines(export_dir):
     _seed(export_dir, "a.csv", "\n".join(f"row{i},x" for i in range(100)))
     body = TestClient(app).get("/api/reports/preview", params={"name": "a.csv"}).json()
     assert body["name"] == "a.csv"
-    assert body["total_lines"] == 100
-    assert len(body["lines"]) == 50
+    assert body["kind"] == "table"
+    assert body["columns"] == ["row0", "x"]
+    assert body["total_lines"] == 99
+    assert len(body["rows"]) == 50
     assert body["truncated"] is True
-    assert body["lines"][0] == "row0,x"
+    assert body["rows"][0] == ["row1", "x"]
 
 
 def test_preview_short_file_not_truncated(export_dir):
     _seed(export_dir, "b.csv", "h1,h2\n1,2\n")
     body = TestClient(app).get("/api/reports/preview", params={"name": "b.csv"}).json()
     assert body["truncated"] is False
-    assert body["total_lines"] == 2
+    assert body["total_lines"] == 1
 
 
 def test_preview_rejects_path_traversal(export_dir):
@@ -56,10 +58,41 @@ def test_preview_spreadsheet_renders_rows_as_text(export_dir):
         export_dir / "holdings.xlsx", index=False)
     body = TestClient(app).get(
         "/api/reports/preview", params={"name": "holdings.xlsx"}).json()
-    assert body["kind"] == "sheet"
-    assert body["lines"][0] == "symbol,value"
-    assert any("BTC" in line for line in body["lines"])
+    assert body["kind"] == "table"
+    assert body["columns"] == ["symbol", "value"]
+    assert body["rows"][0] == ["BTC", 1.5]
     assert body["truncated"] is False
+
+
+def test_preview_csv_returns_structured_table(export_dir):
+    # A frontend string-split on commas would shred the quoted field; the
+    # backend must parse it so columns survive intact.
+    _seed(export_dir, "report.csv",
+          'name,detail,value\n"a","x, y",1.5\nb,plain,\n')
+    body = TestClient(app).get(
+        "/api/reports/preview", params={"name": "report.csv"}).json()
+    assert body["kind"] == "table"
+    assert body["columns"] == ["name", "detail", "value"]
+    assert body["rows"][0] == ["a", "x, y", 1.5]
+    # Unknown stays unknown: the empty cell is null, never zero or "".
+    assert body["rows"][1] == ["b", "plain", None]
+    assert body["truncated"] is False
+
+
+def test_preview_html_is_flagged_for_rendering(export_dir):
+    _seed(export_dir, "report.html", "<html><body>hi</body></html>\n")
+    body = TestClient(app).get(
+        "/api/reports/preview", params={"name": "report.html"}).json()
+    assert body["kind"] == "html"
+    assert body["lines"] == []
+
+
+def test_preview_json_is_flagged_for_pretty_print(export_dir):
+    _seed(export_dir, "trend.json", '{"a": 1}\n')
+    body = TestClient(app).get(
+        "/api/reports/preview", params={"name": "trend.json"}).json()
+    assert body["kind"] == "json"
+    assert body["lines"] == ['{"a": 1}']
 
 
 def test_preview_image_returns_download_url_not_binary(export_dir):

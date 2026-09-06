@@ -440,10 +440,13 @@ class PreviewResponse(BaseModel):
     lines: list[str] = []
     truncated: bool = False
     total_lines: int = 0
-    # text: first lines as-is. sheet: spreadsheet rows rendered as CSV.
-    # image: view it through image_url; lines stays empty so binary bytes
-    # are never dumped into the page as mojibake.
+    # text: first lines as-is. table: tabular exports (CSV/spreadsheets) as
+    # columns plus rows -- parsed server-side so quoted commas survive.
+    # html/json/image: rendered by the viewer, not read as source. image
+    # keeps lines empty so binary bytes never reach the page as mojibake.
     kind: str = "text"
+    columns: list[str] = []
+    rows: list[list[Any]] = []
     image_url: Optional[str] = None
 
 

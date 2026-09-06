@@ -1,19 +1,168 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { apiGet, apiPost } from '../lib/api';
+import { NULL_GLYPH } from '../lib/format';
 import type { GenerateExportResponse, ReportsResponse } from '../types';
 
-/** One generated export, for on-screen preview. Text and spreadsheet rows
- *  arrive as lines; images arrive as a download URL to render. */
+/** One generated export, for on-screen preview. Tabular files arrive as
+ *  columns plus rows; HTML/JSON/images are flagged for their viewer. */
 interface ReportPreview {
   name: string;
   lines: string[];
   truncated: boolean;
   total_lines: number;
-  kind: 'text' | 'sheet' | 'image';
+  kind: 'text' | 'table' | 'html' | 'json' | 'image';
+  columns: string[];
+  rows: (string | number | boolean | null)[][];
   image_url: string | null;
+}
+
+function downloadUrl(name: string): string {
+  return `/api/reports/download?name=${encodeURIComponent(name)}`;
+}
+
+/** File preview in a modal dialog -- the Drive/Dropbox/GitHub pattern. The
+ *  table below the fold made the old inline panel look dead on click. */
+function PreviewModal({ preview, onClose }: {
+  preview: ReportPreview; onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  let body: React.ReactNode;
+  if (preview.kind === 'table') {
+    body = (
+      <>
+        <div className="table-scroll">
+          <table className="data">
+            <thead>
+              <tr>
+                {preview.columns.map((col) => (
+                  <th key={col} className="text-left">{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {preview.rows.map((row, i) => (
+                <tr key={i}>
+                  {row.map((cell, j) => (
+                    <td key={j} className="text-left"
+                        style={cell === null ? { color: 'var(--text-tertiary)' } : undefined}>
+                      {cell === null ? NULL_GLYPH : String(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {preview.truncated && (
+          <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
+                                          marginBottom: 0, marginTop: 'var(--space-2)' }}>
+            …{preview.total_lines - preview.rows.length} more rows
+          </p>
+        )}
+      </>
+    );
+  } else if (preview.kind === 'html') {
+    // Sandboxed and origin-less, so embedded scripts cannot run -- the
+    // exports are style-only templates, which render faithfully anyway.
+    body = (
+      <iframe sandbox="" title={`Preview of ${preview.name}`}
+              src={downloadUrl(preview.name)}
+              style={{ width: '100%', height: '60vh', background: '#fff',
+                       border: '1px solid var(--border)',
+                       borderRadius: 'var(--radius-control)' }} />
+    );
+  } else if (preview.kind === 'json') {
+    let pretty = preview.lines.join('\n');
+    try {
+      pretty = JSON.stringify(JSON.parse(pretty), null, 2);
+    } catch {
+      // Not parseable JSON: show the raw lines rather than failing.
+    }
+    body = (
+      <>
+        <pre className="font-mono"
+             style={{ background: 'var(--surface-0)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                      padding: 'var(--space-3)', fontSize: '12px', overflowX: 'auto',
+                      whiteSpace: 'pre-wrap', margin: 0 }}>
+          {pretty}
+        </pre>
+        {preview.truncated && (
+          <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
+                                          marginBottom: 0, marginTop: 'var(--space-2)' }}>
+            …{preview.total_lines - preview.lines.length} more lines
+          </p>
+        )}
+      </>
+    );
+  } else if (preview.kind === 'image' && preview.image_url) {
+    body = (
+      <img src={preview.image_url} alt={`Preview of ${preview.name}`}
+           style={{ maxWidth: '100%', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-control)' }} />
+    );
+  } else {
+    body = (
+      <>
+        <pre className="font-mono"
+             style={{ background: 'var(--surface-0)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
+                      padding: 'var(--space-3)', fontSize: '12px', overflowX: 'auto',
+                      whiteSpace: 'pre-wrap', margin: 0 }}>
+          {preview.lines.join('\n')}
+        </pre>
+        {preview.truncated && (
+          <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
+                                          marginBottom: 0, marginTop: 'var(--space-2)' }}>
+            …{preview.total_lines - preview.lines.length} more lines
+          </p>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`Preview of ${preview.name}`}
+         onClick={onClose}
+         style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.65)',
+                  zIndex: 50, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', padding: 'var(--space-5)' }}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{ background: 'var(--surface-1)', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-panel)', padding: 'var(--space-4)',
+                    maxWidth: '960px', width: '100%', maxHeight: '85vh',
+                    display: 'flex', flexDirection: 'column' }}>
+        <div className="flex items-center justify-between"
+             style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+          <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+            Preview: {preview.name}
+          </span>
+          <button
+            onClick={onClose}
+            className="font-ui transition-colors"
+            style={{ background: 'transparent', color: 'var(--text-tertiary)',
+                     border: '1px solid var(--border)', borderRadius: 'var(--radius-control)',
+                     padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
+          >
+            Close
+          </button>
+        </div>
+        <div style={{ overflow: 'auto' }}>
+          {body}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** Deletion outcome for a generated export. */
@@ -89,15 +238,6 @@ export function Reports() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [fileMsg, setFileMsg] = useState<string | null>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-
-  // The preview panel sits below the whole file table, so with dozens of
-  // files a click would otherwise appear to do nothing. Bring it into view.
-  useEffect(() => {
-    if (preview || previewError) {
-      previewRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [preview, previewError]);
 
   async function generate() {
     setGenerating(true);
@@ -397,55 +537,14 @@ export function Reports() {
               </table>
             </div>
           )}
-          <div ref={previewRef}>
           {previewError && (
             <p className="font-ui" style={{ fontSize: '13px', marginBottom: 0,
                      marginTop: 'var(--space-3)', color: 'var(--negative)' }}>
               {previewError}
             </p>
           )}
-          {preview && (
-            <div style={{ marginTop: 'var(--space-3)' }}>
-              <div className="flex items-center justify-between"
-                   style={{ gap: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
-                <span className="font-ui" style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                  Preview: {preview.name}
-                </span>
-                <button
-                  onClick={() => setPreview(null)}
-                  className="font-ui transition-colors"
-                  style={{ background: 'transparent', color: 'var(--text-tertiary)',
-                           border: '1px solid var(--border)', borderRadius: 'var(--radius-control)',
-                           padding: '2px var(--space-3)', fontSize: '12px', cursor: 'pointer' }}
-                >
-                  Close
-                </button>
-              </div>
-              {preview.kind === 'image' && preview.image_url ? (
-                <img src={preview.image_url} alt={`Preview of ${preview.name}`}
-                     style={{ maxWidth: '100%', border: '1px solid var(--border)',
-                              borderRadius: 'var(--radius-control)' }} />
-              ) : (
-              <>
-              <pre className="font-mono"
-                   style={{ background: 'var(--surface-0)', border: '1px solid var(--border)',
-                            borderRadius: 'var(--radius-control)', color: 'var(--text-primary)',
-                            padding: 'var(--space-3)', fontSize: '12px', overflowX: 'auto',
-                            whiteSpace: 'pre-wrap', margin: 0 }}>
-                {preview.lines.join('\n')}
-              </pre>
-              {preview.truncated && (
-                <p className="font-ui" style={{ color: 'var(--text-tertiary)', fontSize: '12px',
-                                                marginBottom: 0, marginTop: 'var(--space-2)' }}>
-                  …{preview.total_lines - preview.lines.length} more lines
-                </p>
-              )}
-              </>
-              )}
-            </div>
-          )}
-          </div>
         </Panel>
+        {preview && <PreviewModal preview={preview} onClose={() => setPreview(null)} />}
       </div>
     </>
   );
