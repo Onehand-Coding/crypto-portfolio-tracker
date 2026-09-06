@@ -381,7 +381,15 @@ class AnalysisRunner:
         try:
             # Built inside the try: the tracker constructor pings Binance and
             # can raise, and that failure must be reported rather than escaping.
-            tracker = get_tracker()
+            #
+            # In a thread, not inline: construction is synchronous network I/O
+            # (server-time ping plus client setup, ~12s observed). Inline it
+            # wedges the event loop, so no other request is answered until it
+            # returns -- the UI's own reload cannot learn the run started, and
+            # every Run button sits dead for the whole stall, then flashes
+            # "Running…" for a moment at the end. Same reason _backtest pushes
+            # its synchronous work to a thread below.
+            tracker = await asyncio.to_thread(get_tracker)
             result = await KINDS[kind](tracker, params)
             MetricsCache(analysis_cache_path(tracker.config_manager, kind)).write(result)
         except Exception as exc:
