@@ -1,7 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#121418"/>
-  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" fill="none" stroke="#343945" stroke-width="3"/>
-  <circle cx="32" cy="34" r="17" fill="#E0A94A"/>
-  <circle cx="32" cy="34" r="11.5" fill="none" stroke="#121418" stroke-width="3.5"/>
-  <ellipse cx="26" cy="27.5" rx="6" ry="3.5" fill="#F2C878" transform="rotate(-25 26 27.5)"/>
+  <title>Portfolio Tracker</title>
+  <text x="32" y="47" text-anchor="middle" font-size="44">&#x1FA99;</text>
 </svg>

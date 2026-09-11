@@ -44,12 +44,10 @@ function Rail() {
     >
       <div className="flex items-center"
            style={{ gap: 'var(--space-3)', padding: `var(--space-2) var(--space-3) var(--space-5)` }}>
-        <div className="flex items-center justify-center shrink-0"
-             style={{ width: '26px', height: '26px', borderRadius: 'var(--radius-control)',
-                      background: 'var(--action)', color: '#fff', fontSize: '13px',
-                      fontWeight: 700, letterSpacing: '-0.03em' }}>
-          ₿
-        </div>
+        <span style={{ flexShrink: 0, fontSize: '20px', lineHeight: 1 }}
+              role="img" aria-label="Portfolio Tracker">
+          🪙
+        </span>
         <div className="flex flex-col" style={{ lineHeight: 1.25 }}>
           <span className="font-ui" style={{ fontSize: '13px', fontWeight: 600 }}>
             Portfolio Tracker
