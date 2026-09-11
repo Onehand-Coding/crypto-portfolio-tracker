@@ -94,6 +94,52 @@ describe('App', () => {
     expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull();
   });
 
+    it('refetches the environment when notified of a settings flip, without a page reload', async () => {
+    const base = {
+      total_value_usd: 0,
+      net_invested: { label: '', question: '', basis_usd: 0, pl_usd: 0, pl_percent: null },
+      fifo: { label: '', question: '', basis_usd: 0, pl_usd: 0, pl_percent: null },
+      holdings: [],
+      staleness: { cached_at: null, age_seconds: null, is_stale: false },
+      has_data: false,
+    };
+    // Must match ENVIRONMENT_CHANGED_EVENT in lib/environment.ts.
+    const NOTIFY = 'environment-changed';
+    let live = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        if (String(url).includes('/api/portfolio/cockpit')) {
+          return {
+            ok: true,
+            json: async () => ({
+              ...base,
+              environment: live
+                ? { is_testnet: false, database_path: 'data/portfolio.db', label: 'LIVE' }
+                : { is_testnet: true, database_path: 'data/testnet_portfolio.db', label: 'TESTNET' },
+            }),
+          };
+        }
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText('TESTNET').length).toBeGreaterThanOrEqual(2);
+    });
+    live = true;
+    window.dispatchEvent(new Event(NOTIFY));
+    await waitFor(() => {
+      expect(screen.getAllByText('LIVE').length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it('replaces the legacy overview route with Dashboard', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 

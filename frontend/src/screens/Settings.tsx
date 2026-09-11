@@ -3,6 +3,7 @@ import { Panel } from '../components/Panel';
 import { Button, Empty, ErrorPanel, ScreenHeader } from '../components/Screen';
 import { useApi } from '../lib/useApi';
 import { apiGet, apiPut } from '../lib/api';
+import { notifyEnvironmentChanged } from '../lib/environment';
 import type { LogPreviewResponse, SettingsResponse, TrackedCandidatesResponse } from '../types';
 
 function Field({ label, hint, children }: {
@@ -289,6 +290,10 @@ export function Settings() {
         },
       });
       setForm(structuredClone(result));
+      // The shell badges (and DB path) come from a mount-time cockpit read.
+      // Only a mode flip rebuilds the backend context, so only then must the
+      // shell refetch immediately instead of waiting for a page reload.
+      if (data!.testnet_mode !== form!.testnet_mode) notifyEnvironmentChanged();
       setMessage('Settings saved.');
       reload();
     } catch (e) {

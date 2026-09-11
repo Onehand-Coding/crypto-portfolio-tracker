@@ -230,7 +230,52 @@ describe('Settings track list', () => {
   });
 });
 
-describe('Settings trend periods', () => {  it('carries edited period strings in the PUT payload', async () => {
+describe('Settings testnet flip notification', () => {
+  // Must match ENVIRONMENT_CHANGED_EVENT in lib/environment.ts.
+  const NOTIFY = 'environment-changed';
+
+  function listen() {
+    const seen: string[] = [];
+    const onNotify = (e: Event) => seen.push(e.type);
+    window.addEventListener(NOTIFY, onNotify);
+    return { seen, stop: () => window.removeEventListener(NOTIFY, onNotify) };
+  }
+
+  it('notifies the shell when saving a changed testnet mode', async () => {
+    stubFetch();
+    const { seen, stop } = listen();
+    try {
+      render(<Settings />);
+      await screen.findByText('Trading mode');
+      fireEvent.click(screen.getByRole('switch', { name: /binance testnet mode/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+      await waitFor(() => expect(screen.getByText(/settings saved/i)).toBeDefined());
+      expect(seen).toEqual([NOTIFY]);
+    } finally {
+      stop();
+    }
+  });
+
+  it('stays silent when testnet mode is unchanged', async () => {
+    stubFetch();
+    const { seen, stop } = listen();
+    try {
+      render(<Settings />);
+      await screen.findByText('Trading mode');
+      // Dirty the form through an unrelated field: the save must go through
+      // (the button stays disabled while pristine) without touching the mode.
+      fireEvent.change(screen.getByLabelText('DCA frequency'), { target: { value: 'weekly' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+      await waitFor(() => expect(screen.getByText(/settings saved/i)).toBeDefined());
+      expect(seen).toEqual([]);
+    } finally {
+      stop();
+    }
+  });
+});
+
+describe('Settings trend periods', () => {
+  it('carries edited period strings in the PUT payload', async () => {
     const fetchMock = stubFetch();
     render(<Settings />);
     await screen.findByText('Trend timeframes');

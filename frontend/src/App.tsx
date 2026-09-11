@@ -4,6 +4,7 @@ import { EnvBanner } from './components/EnvBanner';
 import { StalenessNote } from './components/StalenessNote';
 import { NAV_SECTIONS, sectionForPath } from './nav';
 import { apiGet } from './lib/api';
+import { ENVIRONMENT_CHANGED_EVENT } from './lib/environment';
 import { useSyncStatus } from './lib/useSyncStatus';
 import type { CockpitResponse } from './types';
 import { Cockpit } from './screens/Cockpit';
@@ -165,9 +166,18 @@ export default function App() {
   const [cockpit, setCockpit] = useState<CockpitResponse | null>(null);
 
   useEffect(() => {
-    apiGet<CockpitResponse>('/api/portfolio/cockpit')
-      .then(setCockpit)
-      .catch(() => setCockpit(null));
+    let stop = false;
+    const load = () => {
+      apiGet<CockpitResponse>('/api/portfolio/cockpit')
+        .then((result) => { if (!stop) setCockpit(result); })
+        .catch(() => { if (!stop) setCockpit(null); });
+    };
+    load();
+    window.addEventListener(ENVIRONMENT_CHANGED_EVENT, load);
+    return () => {
+      stop = true;
+      window.removeEventListener(ENVIRONMENT_CHANGED_EVENT, load);
+    };
   }, []);
 
   return (
