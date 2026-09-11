@@ -563,6 +563,8 @@ class TradeExecutor:
                             self.logger.info(f"LIVE SELL ORDER PLACED: {order}")
                             trades_executed_count += 1
                             simulated_balances[symbol] -= adjusted_quantity
+                            # Mirror settlement: the proceeds fund later BUY legs.
+                            simulated_balances["USDT"] += final_notional_value
 
                             # Record trade
                             if self.data_manager:
@@ -591,6 +593,8 @@ class TradeExecutor:
                         )
                         trades_executed_count += 1
                         simulated_balances[symbol] -= adjusted_quantity
+                        # Mirror settlement: the proceeds fund later BUY legs.
+                        simulated_balances["USDT"] += final_notional_value
 
                         # Record simulated trade
                         if self.data_manager:
@@ -634,6 +638,10 @@ class TradeExecutor:
                                 )
                                 price_now = prices.get(symbol, 0.0) or 0.0
                             qty = (usd_value / price_now) if price_now > 0 else 0.0
+                            # Mirror settlement: the bought coins cover later SELL guards.
+                            simulated_balances[symbol] = (
+                                simulated_balances.get(symbol, 0.0) + qty
+                            )
 
                             if self.data_manager:
                                 self.data_manager._record_trade_transaction(
@@ -669,6 +677,10 @@ class TradeExecutor:
                             )
                             price_now = prices.get(symbol, 0.0) or 0.0
                         qty = (usd_value / price_now) if price_now > 0 else 0.0
+                        # Mirror settlement: the bought coins cover later SELL guards.
+                        simulated_balances[symbol] = (
+                            simulated_balances.get(symbol, 0.0) + qty
+                        )
 
                         if self.data_manager:
                             self.data_manager._record_trade_transaction(
