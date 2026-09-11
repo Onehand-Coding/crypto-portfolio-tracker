@@ -23,12 +23,16 @@ const STATE = {
   ],
 };
 
-function stubFetch(captured: { body?: Record<string, unknown> }) {
+function stubFetch(captured: { body?: Record<string, unknown>; runs?: number }, ok = true) {
   vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: { body?: unknown }) => {
     const path = String(url);
+    if (path.includes('/api/strategy/rebalance/run')) {
+      captured.runs = (captured.runs ?? 0) + 1;
+      return { ok: true, json: async () => ({ status: 'started' }) };
+    }
     if (path.includes('/api/execute/rebalance')) {
       if (typeof init?.body === 'string') captured.body = JSON.parse(init.body);
-      return { ok: true, json: async () => ({ success: true, testnet: true, messages: [], errors: [] }) };
+      return { ok: true, json: async () => ({ success: ok, testnet: true, messages: [], errors: [] }) };
     }
     const payload = path.includes('/api/execute/status') ? STATUS : STATE;
     return { ok: true, json: async () => payload };
@@ -77,5 +81,30 @@ describe('Rebalance per-trade selection', () => {
     expect(await screen.findByText(/select at least one trade/i)).toBeDefined();
     expect(screen.getByRole('button', { name: /simulate rebalance/i })).toBeDisabled();
     expect(captured.body).toBeUndefined();
+  });
+
+  it('triggers a fresh analysis run after a successful execution', async () => {
+    const captured: { body?: Record<string, unknown>; runs?: number } = {};
+    stubFetch(captured);
+    render(<Rebalance />);
+    await screen.findByRole('checkbox', { name: 'Include BTC' });
+    fireEvent.change(screen.getByPlaceholderText('EXECUTE'), { target: { value: 'EXECUTE' } });
+    fireEvent.click(screen.getByRole('button', { name: /simulate rebalance/i }));
+    await waitFor(() => expect(screen.getByText('EXECUTED')).toBeDefined());
+    await waitFor(() => expect(captured.runs ?? 0).toBeGreaterThan(0));
+  });
+
+  it('does not trigger a fresh run after a failed execution', async () => {
+    const captured: { body?: Record<string, unknown>; runs?: number } = {};
+    stubFetch(captured, false);
+    render(<Rebalance />);
+    await screen.findByRole('checkbox', { name: 'Include BTC' });
+    fireEvent.change(screen.getByPlaceholderText('EXECUTE'), { target: { value: 'EXECUTE' } });
+    fireEvent.click(screen.getByRole('button', { name: /simulate rebalance/i }));
+    await waitFor(() => expect(screen.getByText('FAILED')).toBeDefined());
+    // Let any follow-up requests settle, then assert none was a fresh run.
+    await waitFor(() => expect(captured.body).toBeDefined());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(captured.runs ?? 0).toBe(0);
   });
 });

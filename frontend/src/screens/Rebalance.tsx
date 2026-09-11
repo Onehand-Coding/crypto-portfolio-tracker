@@ -164,6 +164,18 @@ export function Rebalance() {
                   '/api/execute/rebalance',
                   { confirm: true, symbols: checked.map((r) => r.symbol) });
                 reload();
+                if (res.success) {
+                  // The table above is the pre-trade plan. Kick off a fresh
+                  // run so the new drifts arrive on their own; a 409 just
+                  // means one is already in flight, and polling picks it up.
+                  try {
+                    await apiPost('/api/strategy/rebalance/run');
+                  } catch {
+                    // Stale table with its age stays until the run lands.
+                  } finally {
+                    reload();
+                  }
+                }
                 return res;
               }}
             >
