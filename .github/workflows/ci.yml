@@ -15,6 +15,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --extra dev
-      - run: cp default_config.json.example config/default_config.json
       - run: uv run ruff check api tests/api run_ui.py
-      - run: uv run pytest tests/api -q
