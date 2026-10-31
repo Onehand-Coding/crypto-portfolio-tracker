@@ -62,7 +62,7 @@ existing Streamlit dashboard.
 | Container | None |
 | Reverse Proxy | None |
 | Deployment | Runs locally; `uv` manages the environment |
-| CI | None |
+| CI | GitHub Actions: pytest + ruff on `api`, `tests/api`, `run_ui.py` |
 
 ---
 
@@ -499,7 +499,8 @@ against the other database and endpoint. The typed
   interpolating.
 - **CoinGecko free-tier rate limits** constrain sync frequency; mitigated by disk
   caching and batched requests.
-- **No CI.** Verification is whatever gets run locally.
+- **CI covers the API layer and its tests only.** `src/` has a pre-existing lint backlog
+  and is excluded from the ruff gate.
 
 ---
 
