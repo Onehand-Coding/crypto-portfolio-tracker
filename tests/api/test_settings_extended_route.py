@@ -1,7 +1,7 @@
 """GET/PUT /api/system/settings: automation, APIs, lookbacks, logging, trend windows.
 
-Seeds the mock config from the repo default_config.json so GET expectations
-match the shipped defaults, not hand-written guesses.
+Seeds the mock config from the tracked example so GET expectations match the
+shipped defaults, not a developer's gitignored runtime config.
 """
 
 import json
@@ -15,14 +15,16 @@ REPO_ROOT = Path(__file__).parents[2]
 
 
 def _seed(mock_read_context, tmp_path):
-    config = json.loads((REPO_ROOT / "config" / "default_config.json").read_text())
+    config = json.loads((REPO_ROOT / "default_config.json.example").read_text())
     config["exports"] = {"path": str(tmp_path)}
-    # default_config.json is gitignored local runtime state, not shipped
-    # content: a live Settings PUT (e.g. enabling auto-sync) persists into it.
-    # Strip the auto_sync group so these tests pin the shipped dca/rebalancing
-    # defaults plus the schema fallbacks, immune to whoever last saved settings.
-    # The pre-auto-sync-config path this creates is itself valuable: it proves
-    # an old config without the group still reads the schema defaults.
+    # The example is the tracked, shipped default. Pin a non-default
+    # rebalancing value here so the test still proves a configured value comes
+    # through unchanged rather than silently falling back to the schema default.
+    config.setdefault("automation", {}).setdefault("rebalancing", {})[
+        "frequency"
+    ] = "quarterly"
+    # Strip the auto_sync group so these tests also pin the schema fallbacks
+    # (disabled, five minutes) for a config written before the group existed.
     config.setdefault("automation", {}).pop("auto_sync", None)
     mock_read_context.config_manager.config = config
     mock_read_context.config_manager.main_api_keys = {"api_key": "SECRET"}
@@ -32,8 +34,8 @@ def _seed(mock_read_context, tmp_path):
 def test_get_returns_extended_groups_with_config_values(mock_read_context, tmp_path):
     _seed(mock_read_context, tmp_path)
     body = TestClient(app).get("/api/system/settings").json()
-    # Automation mirrors the Streamlit fallbacks (monthly/weekly); the shipped
-    # file itself sets rebalancing to quarterly, which must come through as-is.
+    # Automation mirrors the Streamlit fallbacks (monthly/weekly); the value
+    # pinned in _seed must come through as-is.
     assert body["automation"] == {
         "dca_frequency": "monthly",
         "rebalancing_frequency": "quarterly",

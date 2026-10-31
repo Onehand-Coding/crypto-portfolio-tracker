@@ -14,5 +14,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: uv sync --extra dev
+      - run: cp default_config.json.example config/default_config.json
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
       - run: uv run ruff check api tests/api run_ui.py
+      - run: uv run pytest tests/api -q

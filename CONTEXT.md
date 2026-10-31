@@ -62,7 +62,7 @@ existing Streamlit dashboard.
 | Container | None |
 | Reverse Proxy | None |
 | Deployment | Runs locally; `uv` manages the environment |
-| CI | GitHub Actions: ruff on `api`, `tests/api`, `run_ui.py` |
+| CI | GitHub Actions: frontend build, pytest (`tests/api`), ruff on `api`, `tests/api`, `run_ui.py` |
 
 ---
 
@@ -499,10 +499,11 @@ against the other database and endpoint. The typed
   interpolating.
 - **CoinGecko free-tier rate limits** constrain sync frequency; mitigated by disk
   caching and batched requests.
-- **CI gates lint only, not tests.** The suite depends on a gitignored
-  `config/default_config.json` and a built `frontend/dist`, so a fresh clone fails
-  before those exist. `src/` also has a pre-existing lint backlog and is excluded
-  from the ruff gate.
+- **CI gates the API layer, not the core suite.** It seeds
+  `config/default_config.json` from the tracked example and builds `frontend/dist`
+  (both are gitignored) before running `tests/api`. Core tests that touch Binance
+  stay local. `src/` also has a pre-existing lint backlog and is excluded from the
+  ruff gate.
 
 ---
 
